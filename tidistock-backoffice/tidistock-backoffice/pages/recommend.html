@@ -1,0 +1,628 @@
+
+<style>
+
+        .recommendation-card {
+            background: linear-gradient(135deg, #ffffff, #e9f5ff);
+            border-radius: 16px;
+            padding: 20px;
+            box-shadow: 0 6px 18px rgba(0,0,0,0.08);
+            transition: transform 0.25s, box-shadow 0.25s, background 0.3s;
+        }
+
+        .recommendation-card:hover {
+            transform: translateY(-8px) scale(1.02);
+            box-shadow: 0 12px 24px rgba(0,0,0,0.15);
+            background: linear-gradient(135deg, #d0ebff, #ffffff);
+        }
+
+        .stock-title {
+            font-weight: 700;
+            font-size: 1.2rem;
+            height: 4rem; /* fix height to roughly 2 lines */
+            overflow: hidden;
+            display: -webkit-box;
+            -webkit-line-clamp: 2; /* show max 2 lines */
+            -webkit-box-orient: vertical;
+            text-overflow: ellipsis;
+        }
+
+
+        .stock-symbol { font-size: 0.9rem; color: #6c757d; }
+        .stock-info { margin-top: 12px; }
+        .stock-info div { margin-bottom: 5px; font-size: 0.95rem; }
+
+        .badge-status { font-size: 0.85rem; font-weight: 600; padding: 5px 12px; border-radius: 20px; }
+        .badge-LIVE { background-color: #0d6efd; color: #fff; }
+        .badge-BOOKED_LOSS { background-color: #f60217; color: #fff; }
+        .badge-BOOKED_PROFIT { background-color: #39f604; color: #fff; }
+        .badge-CANCELLED { background-color: #6c757d; color: #fff; }
+
+        .pagination .page-item .page-link {
+            border-radius: 50%;
+            width: 40px; height: 40px;
+            display: flex; align-items: center; justify-content: center;
+            margin: 0 3px; transition: all 0.2s;
+        }
+        .pagination .page-item.active .page-link { background-color: #0d6efd; color: #fff; border: none; }
+
+        .typeahead-suggestions {
+            position: absolute;
+            z-index: 9999;
+            background: #fff;
+            border: 1px solid #ced4da;
+            border-radius: 6px;
+            max-height: 200px;
+            overflow-y: auto;
+            width: 100%;
+        }
+        .typeahead-suggestion { padding: 8px 12px; cursor: pointer; }
+        .typeahead-suggestion:hover { background-color: #0d6efd; color: #fff; }
+
+        .term-badge {
+            display: inline-block;
+            padding: 6px 14px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+            letter-spacing: 0.5px;
+            color: #fff;
+            text-transform: uppercase;
+        }
+
+        /* SHORT TERM */
+        .term-SHORT_TERM {
+            background: linear-gradient(135deg, #ff512f, #f09819);
+        }
+
+        /* MEDIUM TERM */
+        .term-MEDIUM_TERM {
+            background: linear-gradient(135deg, #2193b0, #6dd5ed);
+        }
+
+        /* LONG TERM */
+        .term-LONG_TERM {
+            background: linear-gradient(135deg, #11998e, #38ef7d);
+        }
+
+</style>
+
+
+<div class="container my-4">
+    <h3 class="mb-3 fw-bold text-center">Stock Recommendations</h3>
+
+    <div class="text-end mb-3 text-center">
+        <button class="btn btn-success" id="openCreateModal">➕ Create Recommendation</button>
+    </div>
+
+
+    <!-- Filters -->
+    <div class="row mb-4 g-3 position-relative">
+        <div class="col-md-4 position-relative">
+            <input type="text" id="filterStock" class="form-control" placeholder="Filter by Stock Symbol">
+            <div id="stockSuggestions" class="typeahead-suggestions d-none"></div>
+        </div>
+        <div class="col-md-4">
+            <select id="filterStatus" class="form-select">
+                <option value="">All Status</option>
+                <option value="LIVE">LIVE</option>
+                <option value="BOOKED_PROFIT">BOOKED PROFIT</option>
+                <option value="BOOKED_LOSS">BOOKED LOSS</option>
+            </select>
+        </div>
+        <div class="col-md-4">
+            <select id="filterType" class="form-select">
+                <option value="">All Types</option>
+                <option value="SHORT_TERM">Short Term</option>
+                <option value="MEDIUM_TERM">Medium Term</option>
+                <option value="LONG_TERM">Long Term</option>
+            </select>
+        </div>
+
+        <div class="col-md-4">
+            <button id="filterBtn" class="btn btn-primary w-100">Apply Filters</button>
+        </div>
+    </div>
+
+    <!-- Recommendations Cards -->
+    <div id="recommendationsContainer" class="row g-4"></div>
+
+    <!-- Pagination -->
+    <nav aria-label="Recommendation pagination" class="mt-4">
+        <ul id="recommendationPagination" class="pagination justify-content-center"></ul>
+    </nav>
+
+    <!-- BOOK MODAL -->
+    <div class="modal fade" id="bookModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Book Recommendation</h5>
+                    <button class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+
+                <div class="modal-body">
+                    <label class="form-label">Enter Price</label>
+                    <input type="number" class="form-control" id="bookPriceInput" placeholder="Enter booked price">
+                </div>
+
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button class="btn btn-primary" id="confirmBookBtn">Submit</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- CREATE RECOMMENDATION MODAL -->
+    <div class="modal fade" id="createModal" tabindex="-1">
+        <div class="modal-dialog">
+            <form id="createForm" class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Create Recommendation</h5>
+                    <button class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+
+                <div class="modal-body">
+
+                    <div>
+                        <label class="form-label fw-bold">Start Date</label>
+                        <input type="date" id="createStartDate" name="startDate" class="form-control" required>
+
+                    </div>
+
+                    <div>
+                        <label class="form-label fw-bold mt-3">Stock</label>
+                        <input type="text" id="createStockInput" name="stock" class="form-control" placeholder="Search stock" required>
+                        <div id="createStockSuggestions" class="typeahead-suggestions d-none"></div>
+
+                    </div>
+
+                    <div>
+                        <label class="form-label fw-bold mt-3">Recommendation Type</label>
+                        <select id="createType" name="type" class="form-select" required>
+                            <option value="">Select Type</option>
+                            <option value="SHORT_TERM">Short Term</option>
+                            <option value="MEDIUM_TERM">Medium Term</option>
+                            <option value="LONG_TERM">Long Term</option>
+                        </select>
+                    </div>
+
+
+                    <div>
+                        <label class="form-label fw-bold mt-3">Trigger Price</label>
+                        <input type="number" step="0.01" id="createTriggerPrice" name="triggerPrice" class="form-control" required>
+
+                    </div>
+                    <label class="form-label fw-bold mt-3">Target Price</label>
+                    <input type="number" step="0.01" id="createTargetPrice" name="targetPrice" class="form-control" required>
+
+                    <div>
+                        <label class="form-label fw-bold mt-3">Stop Loss</label>
+                        <input type="number" step="0.01" id="createStopLoss" name="stopLoss" class="form-control" required>
+
+                    </div>
+
+                </div>
+
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button class="btn btn-success" id="submitCreate">Create</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+
+</div>
+
+
+
+
+<script>
+    $(document).ready(function () {
+        const limit = 10;
+        let offset = 0;
+        let totalCount = 0;
+        let typingTimer;
+        const typingDelay = 300;
+
+        function fetchRecommendations(stockFilter = "", statusFilter = "", typeFilter = "") {
+            showLoading();
+            $.ajax({
+                url: `${localStorage.getItem('url')}/api/admin/stock/recommend/get`,
+                method: "POST",
+                contentType: "application/json",
+                headers: getAuthHeaders(),
+                data: JSON.stringify({
+                    limit,
+                    offset,
+                    stock: stockFilter,
+                    status: statusFilter,
+                    type: typeFilter   // ✅ ADD THIS
+                }),
+                success: function(res) {
+                    totalCount = res.totalCount;
+                    renderRecommendations(res.data);
+                    renderPagination(stockFilter, statusFilter, typeFilter);
+                },
+                error: function() { toastr.error("Error fetching recommendations."); },
+                complete: function() { setTimeout(hideLoading, 200); }
+            });
+        }
+
+
+        function renderRecommendations(data) {
+            const container = $("#recommendationsContainer");
+            container.empty();
+            if (!data.length) { container.html(`<div class="col-12 text-center text-muted">No recommendations found.</div>`); return; }
+
+            data.forEach(item => {
+                const isBooked = item.stockRecommendationStatus === "BOOKED";
+
+                const card = $(`
+    <div class="col-md-6 col-lg-4">
+        <div class="recommendation-card">
+            <div class="d-flex justify-content-between align-items-center">
+                <div>
+                    <div class="stock-title">${item.stockName}</div>
+                    <div class="stock-symbol">${item.stockSymbol}</div>
+                </div>
+                <div class="badge-status badge-${item.stockRecommendationStatus}">${item.stockRecommendationStatus}</div>
+            </div>
+
+            <div class="text-center mt-2">
+                <span class="term-badge term-${item.type}">
+                    ${item.type.replace("_", " ")}
+                </span>
+            </div>
+
+
+            <div class="stock-info mt-2">
+                <div><strong>Start Date:</strong> ${item.startDate}</div>
+                <div><strong>Trigger Price:</strong> ₹${item.triggerPrice}</div>
+                <div><strong>Target:</strong> ₹${item.targetPrice}</div>
+                <div><strong>Stop Loss:</strong> ₹${item.stopLoss}</div>
+                <div><strong>Booked Price:</strong> ${item.bookedPrice || "-"}</div>
+            </div>
+
+            <div class="mt-3 d-flex justify-content-between">
+                <a href="https://www.tradingview.com/chart/?symbol=NSE%3A${item.stockSymbol}"
+                   target="_blank"
+                   class="btn btn-sm btn-outline-primary">Chart</a>
+
+                <button class="btn btn-sm btn-warning book-btn"
+                        data-id="${item.id}"
+                        data-status="${item.stockRecommendationStatus}"
+                        data-booked="${item.bookedPrice || ''}">
+                    ${item.stockRecommendationStatus != 'LIVE' ? 'Update Booked Price' : 'Book'}
+                </button>
+
+                <button class="btn btn-sm btn-danger delete-recommendation" data-id="${item.id}">
+                    Delete
+                </button>
+            </div>
+        </div>
+    </div>
+`);
+
+                container.append(card);
+            });
+
+
+        }
+
+        function renderPagination(stockFilter, statusFilter) {
+            const pagination = $("#recommendationPagination");
+            pagination.empty();
+            const totalPages = Math.ceil(totalCount / limit);
+            const currentPage = Math.floor(offset / limit) + 1;
+            for (let i=1;i<=totalPages;i++){
+                const li = $(`<li class="page-item ${i===currentPage?'active':''}"><a class="page-link" href="#">${i}</a></li>`);
+                li.on('click', function(e){
+                    e.preventDefault();
+                    offset = (i - 1) * limit;
+                    fetchRecommendations(
+                        $("#filterStock").val().trim(),
+                        $("#filterStatus").val(),
+                        $("#filterType").val()
+                    );
+                });
+                pagination.append(li);
+            }
+        }
+
+        // Dynamic stock typeahead
+        $("#filterStock").on("input", function() {
+            clearTimeout(typingTimer);
+            const query = $(this).val().trim();
+            if(!query) { $("#stockSuggestions").addClass("d-none"); return; }
+            typingTimer = setTimeout(() => {
+                $.ajax({
+                    url: `${localStorage.getItem('url')}/api/stock/${query}`,
+                    method: "GET",
+                    headers: getAuthHeaders(),
+                    success: function(res){
+                        var stocks = res.data || res;
+                        const suggestionBox = $("#stockSuggestions");
+                        suggestionBox.empty();
+                        if(stocks.length){
+                            stocks.forEach(stock=>{
+                                suggestionBox.append(`<div class="typeahead-suggestion" data-symbol="${stock.symbol}">${stock.name} (${stock.symbol})</div>`);
+                            });
+                            suggestionBox.removeClass("d-none");
+                        } else {
+                            suggestionBox.addClass("d-none");
+                        }
+                    },
+                    error: function(){ toastr.error("Error fetching stock suggestions."); }
+                });
+            }, typingDelay);
+        });
+
+
+        $(document).on("click", "#createStockSuggestions .typeahead-suggestion", function () {
+            const symbol = $(this).data("symbol");
+            $("#createStockInput").val(symbol);
+            $("#createStockSuggestions").addClass("d-none");
+        });
+
+        $(document).on("click", "#stockSuggestions .typeahead-suggestion", function () {
+            const symbol = $(this).data("symbol");
+            $("#filterStock").val(symbol);
+            $("#stockSuggestions").addClass("d-none");
+        });
+
+        $(document).click(function(e){
+            if(!$(e.target).closest('#filterStock, #stockSuggestions').length){
+                $("#stockSuggestions").addClass("d-none");
+            }
+        });
+
+
+
+        // Initial fetch
+        fetchRecommendations();
+
+        $("#filterBtn").on('click', function(){
+            offset = 0;
+            fetchRecommendations(
+                $("#filterStock").val().trim(),
+                $("#filterStatus").val(),
+                $("#filterType").val()
+            );
+        });
+
+
+        $(document).on('click', '.delete-recommendation', function() {
+            const recommendationId = $(this).data('id');
+
+            if (!recommendationId) return;
+
+            // Ask for confirmation
+            if (!confirm("Are you sure you want to delete this recommendation?")) return;
+
+            showLoading();
+
+            $.ajax({
+                url: `${localStorage.getItem('url')}/api/admin/stock/recommend/${recommendationId}`,
+                method: "DELETE",
+                headers: getAuthHeaders(),
+                success: function() {
+                    toastr.success("Recommendation deleted!");
+                    fetchRecommendations($("#filterStock").val().trim(), $("#filterStatus").val()); // refresh cards
+                },
+                error: function() {
+                    toastr.error("Error deleting recommendation.");
+                },
+                complete: function() {
+                    fetchRecommendations();
+                    setTimeout(hideLoading, 200); }
+            });
+        });
+
+        let selectedRecommendationId = null;
+
+        $(document).on("click", ".book-btn", function () {
+            selectedRecommendationId = $(this).data("id");
+            const existingPrice = $(this).data("booked");
+
+            $("#bookPriceInput").val(existingPrice || "");
+
+            new bootstrap.Modal(document.getElementById("bookModal")).show();
+        });
+
+        $("#confirmBookBtn").click(function () {
+            const price = $("#bookPriceInput").val().trim();
+
+            if (!price || isNaN(price)) {
+                toastr.error("Enter a valid price");
+                return;
+            }
+
+            showLoading();
+
+            $.ajax({
+                url: `${localStorage.getItem("url")}/api/admin/stock/recommend/book/${selectedRecommendationId}/${price}`,
+                method: "PATCH",
+                headers: getAuthHeaders(),
+                success: function () {
+                    toastr.success("Recommendation booked successfully!");
+                    fetchRecommendations($("#filterStock").val(), $("#filterStatus").val());
+                    bootstrap.Modal.getInstance(document.getElementById("bookModal")).hide();
+                },
+                error: function () {
+                    toastr.error("Failed to book recommendation.");
+                },
+                complete: function () {
+                    hideLoading();
+                }
+            });
+        });
+
+
+        // ------------------------------
+// CREATE RECOMMENDATION
+// ------------------------------
+        let createTypingTimer;
+        const createTypingDelay = 300;
+
+// Open modal
+        $("#openCreateModal").click(() => {
+            $("#createForm")[0].reset();
+            $("#createForm").validate().resetForm();   // clears error messages
+            $("#createForm").find(".error").removeClass("error"); // removes red borders
+            $("#createStockSuggestions").addClass("d-none");
+            new bootstrap.Modal(document.getElementById("createModal")).show();
+        });
+
+// Stock autocomplete for Create Modal
+        $("#createStockInput").on("input", function () {
+            clearTimeout(createTypingTimer);
+            const query = $(this).val().trim();
+            if (!query) {
+                $("#createStockSuggestions").addClass("d-none");
+                return;
+            }
+
+            createTypingTimer = setTimeout(() => {
+                $.ajax({
+                    url: `${localStorage.getItem('url')}/api/stock/${query}`,
+                    method: "GET",
+                    headers: getAuthHeaders(),
+                    success: function (res) {
+                        var stocks = res.data || res;
+                        const box = $("#createStockSuggestions");
+                        box.empty();
+
+                        if (stocks.length) {
+                            stocks.forEach(stock => {
+                                box.append(`<div class="typeahead-suggestion" data-symbol="${stock.symbol}">${stock.name} (${stock.symbol})</div>`);
+                            });
+                            box.removeClass("d-none");
+                        } else {
+                            box.addClass("d-none");
+                        }
+                    }
+                });
+            }, createTypingDelay);
+        });
+
+// Select item
+        $(document).on("click", "#createStockSuggestions .typeahead-suggestion", function () {
+            $("#createStockInput").val($(this).data("symbol"));
+            $("#createStockSuggestions").addClass("d-none");
+        });
+
+// Hide suggestions on outside click
+        $(document).click(function (e) {
+            if (!$(e.target).closest('#createStockInput, #createStockSuggestions').length) {
+                $("#createStockSuggestions").addClass("d-none");
+            }
+        });
+
+// ------------------------------
+// jQuery Validation
+// ------------------------------
+        $("#createForm").validate({
+            rules: {
+                startDate: { required: true },
+                stock: { required: true },
+                type: { required: true },
+                triggerPrice: { required: true, number: true },
+                targetPrice: { required: true, number: true },
+                stopLoss: { required: true, number: true }
+            },
+            messages: {
+                type: "Select recommendation type"
+            },
+            errorClass: "text-danger"
+        });
+
+
+// ------------------------------
+// Submit Create
+// ------------------------------
+        $("#submitCreate").click(function (e) {
+            e.preventDefault();
+            if (!$("#createForm").valid()) return;
+
+            const payload = {
+                startDate: $("#createStartDate").val(),
+                stock: $("#createStockInput").val().trim(),
+                type: $("#createType").val(),
+                triggerPrice: parseFloat($("#createTriggerPrice").val()),
+                targetPrice: parseFloat($("#createTargetPrice").val()),
+                stopLoss: parseFloat($("#createStopLoss").val())
+            };
+
+
+            showLoading();
+
+            $.ajax({
+                url: `${localStorage.getItem('url')}/api/admin/stock/recommend`,
+                method: "POST",
+                contentType: "application/json",
+                headers: getAuthHeaders(),
+                data: JSON.stringify(payload),
+                success: function () {
+                    toastr.success("Recommendation created!");
+                    bootstrap.Modal.getInstance(document.getElementById("createModal")).hide();
+                    fetchRecommendations();
+                },
+                error: function (res) {
+                    toastr.error(res.responseJSON.message);
+                },
+                complete: hideLoading
+            });
+        });
+
+        // SSE: live updates for recommendations
+        (function connectSSE() {
+            const token = localStorage.getItem('token');
+            if (!token) return;
+
+            const url = `${localStorage.getItem('url') || ''}/api/stock/recommend/live?token=${encodeURIComponent(token)}`;
+            const es = new EventSource(url);
+
+            function refreshList() {
+                fetchRecommendations(
+                    $("#filterStock").val().trim(),
+                    $("#filterStatus").val(),
+                    $("#filterType").val()
+                );
+            }
+
+            es.addEventListener('recommendation:created', function() {
+                toastr.info('New recommendation created');
+                refreshList();
+            });
+
+            es.addEventListener('recommendation:updated', function() {
+                toastr.info('Recommendation updated');
+                refreshList();
+            });
+
+            es.addEventListener('recommendation:booked', function() {
+                toastr.info('Recommendation booked');
+                refreshList();
+            });
+
+            es.addEventListener('recommendation:deleted', function() {
+                toastr.info('Recommendation deleted');
+                refreshList();
+            });
+
+            es.onerror = function() {
+                es.close();
+                setTimeout(connectSSE, 5000);
+            };
+        })();
+
+    });
+
+    // Auth headers mock
+    function getAuthHeaders(){ return { Authorization: `Bearer ${localStorage.getItem('token')||''}` }; }
+
+</script>
+
+

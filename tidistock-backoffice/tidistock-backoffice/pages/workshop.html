@@ -1,0 +1,186 @@
+
+<style>
+
+        #workshopTable tbody tr:hover {
+            background-color: #e9f5ff;
+            transition: background-color 0.25s ease;
+            cursor: pointer;
+        }
+
+        .dataTables_wrapper .paginate_button.current,
+        .dataTables_wrapper .paginate_button:hover {
+            background-color: #0d6efd !important;
+            color: #fff !important;
+        }
+
+        .input-group:focus-within {
+            box-shadow: 0 0 0 0.2rem rgba(13,110,253,.15);
+            border-radius: .375rem;
+        }
+    </style>
+
+<h3 class="mb-3 fw-bold text-center">Workshop</h3>
+
+<div class="container-fluid shadow-sm p-3 rounded bg-white">
+
+    <div class="container-fluid">
+        <div class="row mb-4 g-3 align-items-end">
+
+            <!-- Date Filter -->
+            <div class="col-md-3">
+                <label class="form-label fw-semibold text-muted">Workshop Date</label>
+                <div class="input-group shadow-sm">
+                <span class="input-group-text bg-light">
+                    <i class="bi bi-calendar-event text-primary"></i>
+                </span>
+                    <input type="text" id="dateFilter" class="form-control" placeholder="Select a weekend">
+                </div>
+            </div>
+
+            <!-- Branch Filter -->
+            <div class="col-md-3">
+                <label class="form-label fw-semibold text-muted">Branch</label>
+                <div class="input-group shadow-sm">
+                <span class="input-group-text bg-light">
+                    <i class="bi bi-geo-alt-fill text-success"></i>
+                </span>
+                    <select id="branchFilter" class="form-select">
+                        <option value="">All Branches</option>
+                    </select>
+                </div>
+            </div>
+
+            <!-- Clear Filters -->
+            <div class="col-md-2">
+                <button id="clearFilters" class="btn btn-outline-secondary w-100">
+                    <i class="bi bi-x-circle"></i> Clear
+                </button>
+            </div>
+
+        </div>
+
+        <table id="workshopTable" class="table table-hover table-striped table-bordered align-middle w-100">
+            <thead class="table-light">
+            <tr>
+                <th>Phone Number</th>
+                <th>First Name</th>
+                <th>Last Name</th>
+                <th>Workshop Date</th>
+                <th>Branch</th>
+                <th>Registered On</th>
+            </tr>
+            </thead>
+        </table>
+    </div>
+</div>
+
+
+
+<script>
+    $(document).ready(function() {
+
+        toastr.options = {
+            "closeButton": true,
+            "progressBar": true,
+            "positionClass": "toast-top-right",
+            "timeOut": "3000",
+            "preventDuplicates": true
+        };
+
+        // Load Branches
+        function loadBranches() {
+            $.ajax({
+                url: localStorage.getItem("url").replace(/\/$/, "") + "/api/branch",
+                method: "GET",
+                headers: getAuthHeaders(),
+                success: function(res) {
+                    if (res.status && res.data) {
+                        res.data.forEach(branch => {
+                            $('#branchFilter').append(
+                                `<option value="${branch.id}">${branch.name}</option>`
+                            );
+                        });
+                    }
+                }
+            });
+        }
+        loadBranches();
+
+        // Flatpickr: Only weekends
+        flatpickr("#dateFilter", {
+            enable: [
+                function(date) {
+                    // Only Saturdays (6) and Sundays (0)
+                    return date.getDay() === 0;
+                }
+            ],
+            dateFormat: "Y-m-d",
+            allowInput: false
+        });
+
+        // DataTable without search
+        const table = $('#workshopTable').DataTable({
+            processing: true,
+            serverSide: true,
+            ordering: false,
+            searching: false,
+            ajax: function(data, callback) {
+                showLoading();
+                $.ajax({
+                    url: localStorage.getItem("url").replace(/\/$/, "") + "/api/admin/workshop",
+                    method: "POST",
+                    contentType: "application/json",
+                    headers: getAuthHeaders(),
+                    data: JSON.stringify({
+                        limit: data.length,
+                        offset: data.start,
+                        date: $('#dateFilter').val() || null,
+                        branchId: $('#branchFilter').val() || null
+                    }),
+                    success: function(res) {
+                        callback({
+                            draw: data.draw,
+                            recordsTotal: res.totalCount,
+                            recordsFiltered: res.totalCount,
+                            data: res.data
+                        });
+                    },
+                    complete: function() {
+                        setTimeout(hideLoading, 200);
+                    }
+                });
+            },
+            columns: [
+                { data: 'username', className: "text-center" },
+                { data: 'firstName', className: "text-center" },
+                { data: 'lastName', className: "text-center" },
+                { data: 'date', className: "text-center", render: d => new Date(d).toLocaleDateString() },
+                { data: 'branch', className: "text-center" },
+                { data: 'dateCreated', className: "text-center", render: d => new Date(d).toLocaleString() }
+            ],
+            pageLength: 10,
+            lengthMenu: [10, 20, 50],
+            scrollY: '60vh',
+            scrollCollapse: true
+        });
+
+        // Reload table on filter change
+        $('#dateFilter, #branchFilter').on('change', function() {
+            table.ajax.reload();
+        });
+
+        // Clear filters
+        $('#clearFilters').on('click', function() {
+            $('#dateFilter').val('');
+            $('#branchFilter').val('');
+            table.ajax.reload();
+        });
+
+    });
+
+    // Mock functions (replace with your actual implementation)
+    function showLoading() { /* show spinner */ }
+    function hideLoading() { /* hide spinner */ }
+    function getAuthHeaders() { return { Authorization: 'Bearer ' + localStorage.getItem("token") }; }
+</script>
+

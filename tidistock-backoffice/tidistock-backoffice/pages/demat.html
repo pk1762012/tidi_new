@@ -1,0 +1,313 @@
+<style>
+    #dematTable tbody tr:hover {
+        background-color: #e9f5ff;
+        transition: background-color 0.25s ease;
+        cursor: pointer;
+    }
+
+    .dataTables_filter input {
+        border-radius: 20px;
+        padding: 6px 12px;
+        border: 1px solid #ced4da;
+        transition: border-color 0.3s ease;
+        width: 250px;
+    }
+
+    .dataTables_filter input:focus {
+        outline: none;
+        border-color: #0d6efd;
+        box-shadow: 0 0 5px rgba(13, 110, 253, 0.5);
+    }
+
+    .dataTables_wrapper .dataTables_paginate .paginate_button {
+        border-radius: 8px;
+        padding: 5px 12px;
+        margin: 0 2px;
+    }
+
+    .dataTables_wrapper .dataTables_paginate .paginate_button.current,
+    .dataTables_wrapper .dataTables_paginate .paginate_button:hover {
+        background-color: #0d6efd !important;
+        color: white !important;
+    }
+
+    @media (max-width: 576px) {
+        #dematTable {
+            font-size: 0.85rem;
+        }
+    }
+
+    #dematTable_filter {
+        display: flex;
+        justify-content: flex-end;
+    }
+
+    textarea {
+        resize: vertical;
+        min-height: 120px;
+    }
+</style>
+
+<h3 class="mb-3 fw-bold text-center">Demat Bazaar Leads</h3>
+
+<div class="container-fluid shadow-sm p-3 rounded bg-white">
+
+    <div class="row mb-4 g-3 align-items-end">
+
+        <div class="col-md-3">
+            <label class="form-label fw-semibold text-muted">Course Status</label>
+            <div class="input-group shadow-sm">
+                <span class="input-group-text bg-light">
+                    <i class="bi bi-flag-fill text-primary"></i>
+                </span>
+                <select id="statusFilter" class="form-select">
+                    <option value="">All Status</option>
+                    <option value="ENQUIRED">Enquired</option>
+                    <option value="CONTACTED">Contacted</option>
+                    <option value="PENDING">Pending</option>
+                    <option value="ACCOUNT_CREATED">Account Created</option>
+                </select>
+            </div>
+        </div>
+
+        <div class="col-md-3">
+            <label class="form-label fw-semibold text-muted">Lead Date</label>
+            <div class="input-group shadow-sm">
+                <span class="input-group-text bg-light">
+                    <i class="bi bi-calendar-event text-primary"></i>
+                </span>
+                <input type="date" id="dateFilter" class="form-control">
+            </div>
+        </div>
+
+        <div class="col-md-2">
+            <button id="clearFilters" class="btn btn-outline-secondary w-100">
+                <i class="bi bi-x-circle"></i> Clear
+            </button>
+        </div>
+
+    </div>
+
+    <table id="dematTable" class="table table-hover table-striped table-bordered align-middle" style="width:100%">
+        <thead class="table-light">
+        <tr>
+            <th>Phone</th>
+            <th>First Name</th>
+            <th>Last Name</th>
+            <th>Lead Date</th>
+            <th>Status</th>
+            <th>Remarks</th>
+            <th>Actions</th>
+        </tr>
+        </thead>
+    </table>
+</div>
+
+<!-- UPDATE STATUS + REMARKS MODAL -->
+<div class="modal fade" id="statusModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <form id="statusForm" class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Update Enquiry</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+
+            <div class="modal-body">
+
+                <div class="mb-3">
+                    <label class="form-label">Status</label>
+                    <select id="enquiryStatus" class="form-select" required>
+                        <option value="">Select Status</option>
+                        <option value="ENQUIRED">Enquired</option>
+                        <option value="CONTACTED">Contacted</option>
+                        <option value="PENDING">Pending</option>
+                        <option value="ACCOUNT_CREATED">Account Created</option>
+                    </select>
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label">Remarks</label>
+                    <textarea id="enquiryRemarks" class="form-control"
+                              placeholder="Enter detailed remarks..."></textarea>
+                </div>
+
+            </div>
+
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">
+                    Cancel
+                </button>
+                <button type="submit" class="btn btn-primary">
+                    Update
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- VIEW REMARKS MODAL -->
+<div class="modal fade" id="remarksModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Lead Remarks</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+
+            <div class="modal-body">
+                <p id="remarksContent" class="mb-0 text-muted"></p>
+            </div>
+
+            <div class="modal-footer">
+                <button class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    $(document).ready(function () {
+
+        let selectedEnquiryId;
+        let typingTimer;
+        const typingDelay = 500;
+
+        const table = $('#dematTable').DataTable({
+            processing: true,
+            serverSide: true,
+            rowId: 'id',
+            ordering: false,
+
+            ajax: function (data, callback) {
+                $.ajax({
+                    url: localStorage.getItem("url").replace(/\/$/, "") + "/api/admin/demat/getEnquiries",
+                    method: "POST",
+                    headers: getAuthHeaders(),
+                    contentType: "application/json",
+                    data: JSON.stringify({
+                        limit: data.length,
+                        offset: data.start,
+                        search: data.search.value || null,
+                        status: $('#statusFilter').val() || null,
+                        date: $('#dateFilter').val() || null
+                    }),
+                    success: function (res) {
+                        callback({
+                            draw: data.draw,
+                            recordsTotal: res.totalCount,
+                            recordsFiltered: res.totalCount,
+                            data: res.data
+                        });
+                    }
+                });
+            },
+
+            columns: [
+                { data: 'phoneNumber', className: "text-center" },
+                { data: 'firstName', className: "text-center" },
+                { data: 'lastName', className: "text-center" },
+                {
+                    data: 'dateCreated',
+                    className: "text-center",
+                    render: d => new Date(d).toLocaleString()
+                },
+                {
+                    data: 'status',
+                    className: "text-center",
+                    render: s => getStatusBadge(s)
+                },
+                {
+                    data: 'remarks',
+                    className: "text-center",
+                    render: r => `
+                        <button class="btn btn-outline-info btn-sm view-remarks"
+                            ${!r ? 'disabled' : ''}
+                            data-remarks="${encodeURIComponent(r || '')}">
+                            View
+                        </button>`
+                },
+                {
+                    data: null,
+                    className: "text-center",
+                    render: row => `
+                        <button class="btn btn-primary btn-sm update-status"
+                                data-id="${row.id}">
+                            Update
+                        </button>`
+                }
+            ],
+
+            pageLength: 10,
+            language: { searchPlaceholder: "Search leads..." }
+        });
+
+        $('#dematTable_filter input').unbind().on('input', function () {
+            clearTimeout(typingTimer);
+            typingTimer = setTimeout(() => {
+                table.search(this.value).draw();
+            }, typingDelay);
+        });
+
+        $('#statusFilter, #dateFilter').on('change', () => table.ajax.reload());
+
+        $('#clearFilters').on('click', function () {
+            $('#statusFilter').val('');
+            $('#dateFilter').val('');
+            table.search('').draw();
+        });
+
+        $('#dematTable').on('click', '.update-status', function () {
+            const rowData = table.row($(this).closest('tr')).data();
+            selectedEnquiryId = rowData.id;
+
+            $('#enquiryStatus').val(rowData.status);
+            $('#enquiryRemarks').val(rowData.remarks || '');
+
+            $('#statusModal').modal('show');
+        });
+
+        $('#dematTable').on('click', '.view-remarks', function () {
+            const remarks = decodeURIComponent($(this).data('remarks'));
+            $('#remarksContent').text(remarks || 'No remarks available');
+            $('#remarksModal').modal('show');
+        });
+
+        $('#statusForm').on('submit', function (e) {
+            e.preventDefault();
+
+            $.ajax({
+                url: localStorage.getItem("url").replace(/\/$/, "") + "/api/admin/demat/updateEnquiries",
+                method: "POST",
+                headers: getAuthHeaders(),
+                contentType: "application/json",
+                data: JSON.stringify({
+                    id: selectedEnquiryId,
+                    status: $('#enquiryStatus').val(),
+                    remarks: $('#enquiryRemarks').val() || null
+                }),
+                success: function () {
+                    $('#statusModal').modal('hide');
+                    toastr.success("Enquiry updated successfully");
+                    table.ajax.reload(null, false);
+                }
+            });
+        });
+
+        function getStatusBadge(status) {
+            const map = {
+                ENQUIRED: 'primary',
+                CONTACTED: 'warning',
+                PENDING: 'secondary',
+                ACCOUNT_CREATED: 'success'
+            };
+
+            const color = map[status] || 'dark';
+            const label = status.replace(/_/g, ' ')
+                .toLowerCase()
+                .replace(/\b\w/g, c => c.toUpperCase());
+
+            return `<span class="badge bg-${color} px-3 py-2">${label}</span>`;
+        }
+
+    });
+</script>

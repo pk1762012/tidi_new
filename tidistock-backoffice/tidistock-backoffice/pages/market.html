@@ -1,0 +1,197 @@
+<div class="container-fluid">
+    <h3 class="mt-5 mb-5 fw-bold text-center">Market Data Upload</h3>
+    <div class="row g-4 shadow-sm p-4 rounded bg-white mb-4  justify-content-center">
+        <!-- Market Holidays -->
+        <div class="col-md-2">
+            <label class=" mb-2">Upload Market Holidays</label>
+            <input type="file" id="holidayCsv" class="form-control mb-2" accept=".csv">
+            <span id="holidayCsvError" class="error-text"></span>
+            <button class="btn btn-primary w-100" id="uploadHolidayBtn">Upload</button>
+        </div>
+
+        <!-- Stocks -->
+        <div class="col-md-2">
+            <label class=" mb-2">Upload Stocks</label>
+            <input type="file" id="stockCsv" class="form-control mb-2" accept=".csv">
+            <span id="stockCsvError" class="error-text"></span>
+            <button class="btn btn-primary w-100" id="uploadStockBtn">Upload</button>
+        </div>
+
+        <!-- Stocks -->
+        <div class="col-md-2">
+            <label class=" mb-2">Upload Nifty 50 Stocks</label>
+            <input type="file" id="niftyStockCsv" class="form-control mb-2" accept=".csv">
+            <span id="niftyStockCsvError" class="error-text"></span>
+            <button class="btn btn-primary w-100" id="uploadNiftyStockBtn">Upload</button>
+        </div>
+
+        <!-- Stocks -->
+        <div class="col-md-2">
+            <label class=" mb-2">Upload Nifty FNO Stocks</label>
+            <input type="file" id="niftyFNOStockCsv" class="form-control mb-2" accept=".csv">
+            <span id="niftyFNOStockCsvError" class="error-text"></span>
+            <button class="btn btn-primary w-100" id="uploadNiftyFNOStockBtn">Upload</button>
+        </div>
+
+        <!-- ETFs -->
+        <div class="col-md-2">
+            <label class=" mb-2">Upload ETFs</label>
+            <input type="file" id="etfCsv" class="form-control mb-2" accept=".csv">
+            <span id="etfCsvError" class="error-text"></span>
+            <button class="btn btn-primary w-100" id="uploadEtfBtn">Upload</button>
+        </div>
+    </div>
+
+    <!-- Market Holidays Table -->
+    <h3 class="mt-5 mb-3 fw-bold text-center">Market Holidays</h3>
+    <div class="table-responsive shadow-sm p-4 rounded bg-white mb-4">
+        <table class="table table-bordered align-middle">
+            <thead class="table-light">
+            <tr>
+                <th>#</th>
+                <th>Occasion</th>
+                <th>Date</th>
+                <th>Day</th>
+            </tr>
+            </thead>
+            <tbody id="holidayTableBody">
+            <tr><td colspan="4" class="text-center">Loading...</td></tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<script>
+
+    // Clear file input
+    function clearFileInput(inputId) {
+        $('#' + inputId).val('');
+    }
+
+    // File validation
+    function validateFileInput(fileInputId, errorSpanId) {
+        const fileInput = $('#' + fileInputId);
+        const errorSpan = $('#' + errorSpanId);
+        const file = fileInput[0].files[0];
+
+        if (!file) {
+            errorSpan.text("Please select a CSV file to upload.");
+            fileInput.focus();
+            return false;
+        }
+
+        const validExtensions = ['csv'];
+        const fileExtension = file.name.split('.').pop().toLowerCase();
+        if (!validExtensions.includes(fileExtension)) {
+            errorSpan.text("Only CSV files are allowed.");
+            fileInput.focus();
+            return false;
+        }
+
+        errorSpan.text("");
+        return true;
+    }
+
+    // Upload CSV
+    function uploadCsv(fileInputId, endpoint, errorSpanId) {
+        if (!validateFileInput(fileInputId, errorSpanId)) return;
+
+        const fileInput = document.getElementById(fileInputId);
+        const file = fileInput.files[0];
+        const formData = new FormData();
+        formData.append("file", file);
+
+        showLoading();
+
+        $.ajax({
+            url: localStorage.getItem("url").replace(/\/$/, "") + endpoint,
+            method: "POST",
+            headers: { "Authorization": "Bearer " + localStorage.getItem("token") },
+            data: formData,
+            processData: false,
+            contentType: false,
+            success: function () {
+                fetchMarketHolidays();
+                toastr.success("Upload successful");
+                clearFileInput(fileInputId); // Clear file after upload
+            },
+            error: function (xhr) {
+                let msg = xhr.responseJSON?.message || "Upload failed";
+                $('#' + errorSpanId).text(msg);
+                toastr.error(msg);
+            },
+            complete: function () {
+                setTimeout(hideLoading, 200)
+            }
+        });
+    }
+
+    // Fetch market holidays
+    function fetchMarketHolidays() {
+        showLoading();
+        $.ajax({
+            url: localStorage.getItem("url").replace(/\/$/, "") + "/api/market/holiday",
+            method: "GET",
+            headers: { "Authorization": "Bearer " + localStorage.getItem("token") },
+            success: function (res) {
+                var data = res.data || res;
+                let tbody = $("#holidayTableBody");
+                tbody.empty();
+
+                if (!data || data.length === 0) {
+                    tbody.append("<tr><td colspan='4' class='text-center'>No holidays found</td></tr>");
+                    return;
+                }
+
+                let today = new Date();
+                let upcomingHolidayId = null;
+
+                let futureHolidays = data
+                    .map(h => ({ ...h, jsDate: new Date(h.date + "T00:00:00") }))
+                    .filter(h => h.jsDate >= today)
+                    .sort((a, b) => a.jsDate - b.jsDate);
+
+                if (futureHolidays.length > 0) upcomingHolidayId = futureHolidays[0].id;
+
+                data.forEach((holiday, index) => {
+                    let formattedDate = new Date(holiday.date + "T00:00:00").toLocaleDateString("en-GB", {
+                        day: "2-digit", month: "short", year: "numeric"
+                    });
+
+                    let rowClass = (holiday.id === upcomingHolidayId) ? "table-warning fw-bold" : "";
+
+                    tbody.append(`
+                        <tr class="${rowClass}">
+                            <td>${index + 1}</td>
+                            <td>${holiday.occasion}</td>
+                            <td>${formattedDate}</td>
+                            <td>${holiday.day}</td>
+                        </tr>
+                    `);
+                });
+            },
+            error: function () {
+                $("#holidayTableBody").html("<tr><td colspan='4' class='text-center text-danger'>Failed to load holidays</td></tr>");
+                toastr.error("Failed to load holidays");
+            },
+            complete: function () {
+                setTimeout(hideLoading, 200)
+            }
+        });
+    }
+
+    $(document).ready(function () {
+        $("#uploadHolidayBtn").click(() => uploadCsv("holidayCsv", "/api/admin/holiday/upload", "holidayCsvError"));
+        $("#uploadStockBtn").click(() => uploadCsv("stockCsv", "/api/admin/stock/upload", "stockCsvError"));
+        $("#uploadNiftyStockBtn").click(() => uploadCsv("niftyStockCsv", "/api/admin/nifty_50_stock/upload", "niftyStockCsvError"));
+        $("#uploadNiftyFNOStockBtn").click(() => uploadCsv("niftyFNOStockCsv", "/api/admin/nifty_FNO_stock/upload", "niftyFNOStockCsvError"));
+        $("#uploadEtfBtn").click(() => uploadCsv("etfCsv", "/api/admin/etf/upload", "etfCsvError"));
+
+        fetchMarketHolidays();
+
+        // Allow users to clear a selected file manually by clicking on the input
+        $('input[type="file"]').on('click', function() {
+            $(this).val('');
+        });
+    });
+</script>

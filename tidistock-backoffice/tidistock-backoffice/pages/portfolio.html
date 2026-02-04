@@ -1,0 +1,437 @@
+<style>
+
+    #stockSuggestions {
+        max-height: 200px;
+        overflow-y: auto;
+        cursor: pointer;
+        z-index: 10;
+    }
+
+    .typeahead-suggestion {
+        padding: 8px 12px;
+        border-bottom: 1px solid #eee;
+    }
+
+    .typeahead-suggestion:hover {
+        background: #e8f4ff;
+    }
+
+    .is-invalid {
+        border-color: #dc3545 !important;
+    }
+
+    .invalid-feedback {
+        display: block;
+    }
+
+    @keyframes fadeIn {
+        from {
+            opacity: 0;
+            transform: translateY(10px);
+        }
+        to {
+            opacity: 1;
+            transform: translateY(0);
+        }
+    }
+
+    /* Style DataTables search box */
+    .dataTables_filter input {
+        border-radius: 20px;
+        padding: 6px 12px;
+        border: 1px solid #ced4da;
+        transition: border-color 0.3s ease;
+        width: 250px;
+    }
+
+    .dataTables_filter input:focus {
+        outline: none;
+        border-color: #0d6efd;
+        box-shadow: 0 0 5px rgba(13, 110, 253, 0.5);
+    }
+
+    /* Style pagination buttons */
+    .dataTables_wrapper .dataTables_paginate .paginate_button {
+        border-radius: 8px;
+        border: 1px solid transparent;
+        padding: 5px 12px;
+        margin: 0 2px;
+        transition: background-color 0.3s, border-color 0.3s;
+    }
+
+    .dataTables_wrapper .dataTables_paginate .paginate_button.current,
+    .dataTables_wrapper .dataTables_paginate .paginate_button:hover {
+        background-color: #0d6efd !important;
+        border-color: #0a58ca !important;
+        color: white !important;
+        box-shadow: 0 0 8px rgba(13, 110, 253, 0.5);
+    }
+
+    .dataTables_wrapper .dataTables_filter {
+        float: right !important;
+        text-align: left !important;
+    }
+
+    .dataTables_wrapper .dataTables_paginate {
+        float: right !important;
+        text-align: right !important;
+    }
+
+    .dataTables_wrapper .dataTables_length {
+        float: left !important;
+        margin-right: 1rem;
+    }
+
+    .dataTables_wrapper .dataTables_info {
+        float: left !important;
+        margin-top: 0.5rem;
+    }
+
+    .dataTables_wrapper .row {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: space-between;
+        align-items: center;
+    }
+
+
+    /* Responsive fix for smaller screens */
+    @media (max-width: 576px) {
+        #portfolioTable {
+            font-size: 0.85rem;
+        }
+    }
+
+    /* Center align header and table cells */
+    #portfolioTable th, #portfolioTable td {
+        text-align: center;
+    }
+
+    /* Optional: Adjust specific styles for the headers if needed */
+    #portfolioTable th {
+        font-weight: bold;
+        text-align: center;
+    }
+
+</style>
+
+<h3 class="mb-3 fw-bold text-center">Wealth Portfolio</h3>
+
+<div class="container-fluid shadow-sm p-3 rounded bg-white">
+    <div class="text-end mb-3">
+        <button class="btn btn-success shadow-sm" data-bs-toggle="modal" data-bs-target="#addStockModal">➕ Add Stock
+        </button>
+    </div>
+    <div class="table-container">
+        <table class="table table-hover table-striped align-middle" id="portfolioTable">
+            <thead>
+            <tr>
+                <th>Stock Name</th>
+                <th>Symbol</th>
+                <th>Actions</th>
+            </tr>
+            </thead>
+            <tbody></tbody>
+        </table>
+    </div>
+
+    <h3 class="mb-3 fw-bold text-center">History</h3>
+    <div class="table-container">
+        <table class="table table-hover table-striped align-middle" id="historyTable">
+            <thead>
+            <tr>
+                <th>Stock Name</th>
+                <th>Symbol</th>
+                <th>Date</th>
+                <th>Action</th>
+            </tr>
+            </thead>
+            <tbody></tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Add Modal -->
+<div class="modal fade" id="addStockModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Add Stock</h5>
+                <button class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body position-relative">
+                <label class="fw-semibold mb-1">Search Stock</label>
+                <input type="text" id="filterStock" class="form-control" placeholder="Search stock...">
+                <div id="stockSuggestions"
+                     class="d-none border bg-white position-absolute w-100 mt-1 rounded shadow-sm"></div>
+                <div class="invalid-feedback" id="stockError">Please select a valid stock from the suggestions.</div>
+                <input type="hidden" id="stockSymbol">
+                <input type="hidden" id="stockName">
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button class="btn btn-primary" id="saveStock">Save</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Confirm Modal -->
+<div class="modal fade" id="confirmDeleteModal" tabindex="-1">
+    <div class="modal-dialog modal-sm">
+        <div class="modal-content">
+            <div class="modal-header border-0 pb-0">
+                <h6 class="modal-title">Confirm Delete</h6>
+            </div>
+            <div class="modal-body">
+                Are you sure you want to delete this stock?
+            </div>
+            <div class="modal-footer border-0 pt-0">
+                <button class="btn btn-light btn-sm" data-bs-dismiss="modal">Cancel</button>
+                <button class="btn btn-danger btn-sm" id="confirmDeleteBtn">Delete</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+
+    $(document).ready(function () {
+        var typingTimer;
+        var typingDelay = 400;
+        var deleteId = null;
+
+        // Initialize DataTable
+        var table = $('#portfolioTable').DataTable({
+            paging: true,
+            searching: true,
+            ordering: true,
+            info: true,
+            autoWidth: false,
+            language: {
+                search: "Search stocks:",
+                lengthMenu: "Show _MENU_ entries",
+                zeroRecords: "No matching records found",
+                info: "Showing _START_ to _END_ of _TOTAL_ entries",
+                infoEmpty: "No entries to show",
+                infoFiltered: "(filtered from _MAX_ total entries)"
+            }
+        });
+
+        $('#historyTable').DataTable({
+            processing: true,
+            serverSide: true,
+            searching: false,
+            rowId: 'id',
+            ajax: function (data, callback) {
+                let limit = data.length;
+                let offset = data.start;
+
+                showLoading();
+
+                $.ajax({
+                    url: localStorage.getItem("url").replace(/\/$/, "") + "/api/history/portfolio",
+                    method: "POST",
+                    contentType: "application/json",
+                    headers: getAuthHeaders(),
+                    data: JSON.stringify({
+                        limit: limit,
+                        offset: offset,
+                        search: data.search.value || null
+                    }),
+                    success: function (res) {
+                        callback({
+                            draw: data.draw,
+                            recordsTotal: res.totalCount,
+                            recordsFiltered: res.totalCount,
+                            data: res.data
+                        });
+                    },
+                    error: function (xhr) {
+                        if (xhr.status === 401) {
+                            localStorage.clear();
+                            window.location.href = "login.html";
+                        } else {
+                            alert("Error loading data.");
+                        }
+                    },
+                    complete: function () {
+                        setTimeout(hideLoading, 200)
+                    }
+                });
+            },
+            columns: [
+                {data: 'stockName', className: "text-center"},
+                {data: 'stockSymbol', className: "text-center"},
+                {
+                    data: 'dateCreated', className: "text-center",
+                    render: d => new Date(d).toLocaleString()
+                },
+                {
+                    data: 'action',
+                    className: "text-center",
+                    render: function (data) {
+                        if (data === "ADDED") {
+                            return `<span class="text-success">${data}</span>`;
+                        } else if (data === "REMOVED") {
+                            return `<span class="text-danger">${data}</span>`;
+                        } else {
+                            return `<span>${data}</span>`;
+                        }
+                    }
+                }
+
+            ],
+            pageLength: 10,
+            lengthMenu: [10, 20, 50],
+            //order: [[0, 'asc']],
+            scrollY: '60vh',
+            scrollCollapse: true
+        });
+
+        fetchPortfolio();
+
+        // Fetch portfolio data
+        function fetchPortfolio() {
+            showLoading();
+            $.ajax({
+                url: `${localStorage.getItem('url')}/api/portfolio`,
+                method: "GET",
+                headers: getAuthHeaders(),
+                success: renderPortfolio
+            });
+        }
+
+        function reloadHistoryTable() {
+            // Simply trigger the reload of the table using the DataTable instance
+            $('#historyTable').DataTable().ajax.reload(null, false);
+        }
+
+
+        // Render portfolio in DataTable
+        function renderPortfolio(res) {
+            var data = res.data || res;
+            const tbody = $("#portfolioTable tbody");
+            table.clear(); // Clear the table before adding new data
+
+            // If no data exists, display a "No portfolio entries found" message
+            if (!data?.length) {
+                table.row.add([
+                    '<td colspan="3" class="text-center text-muted">No portfolio entries found.</td>'
+                ]).draw();
+                return;
+            }
+
+            // Loop through the data and add each stock row
+            data.forEach(item => {
+                table.row.add([
+                    `<td class="text-center">${item.stockName}</td>`,  // Stock Name (Centered)
+                    `<td class="text-center">${item.stockSymbol}</td>`,  // Stock Symbol (Centered)
+                    `<td class="text-center">
+                <div class="d-flex justify-content-center gap-2">
+                    <a href="https://www.tradingview.com/chart/?symbol=NSE%3A${item.stockSymbol}" target="_blank" class="btn btn-sm btn-outline-primary">Chart</a>
+                    <button class="btn btn-sm btn-danger delete-stock" data-id="${item.id}">Delete</button>
+                </div>
+            </td>`  // Actions (Centered)
+                ]).draw();
+            });
+
+            // Remove the loading spinner or any loading indicator
+            setTimeout(hideLoading, 200);
+        }
+
+        // Search functionality
+        $("#filterStock").on("input", function () {
+            clearTimeout(typingTimer);
+            const q = $(this).val().trim();
+            $(this).removeClass("is-invalid");
+            $("#stockError").hide();
+            if (!q) {
+                $("#stockSuggestions").addClass("d-none");
+                return;
+            }
+            typingTimer = setTimeout(() => {
+                $.ajax({
+                    url: `${localStorage.getItem('url')}/api/stock/${q}`,
+                    method: "GET",
+                    headers: getAuthHeaders(),
+                    success: showSuggestions
+                });
+            }, typingDelay);
+        });
+
+        // Show stock suggestions for the search input
+        function showSuggestions(res) {
+            var stocks = res.data || res;
+            const box = $("#stockSuggestions");
+            box.empty();
+            if (stocks?.length) {
+                stocks.forEach(s => box.append(`<div class="typeahead-suggestion" data-symbol="${s.symbol}" data-name="${s.name}">${s.name} (${s.symbol})</div>`));
+                box.removeClass("d-none");
+            } else box.addClass("d-none");
+        }
+
+        // Handle stock suggestion selection
+        $(document).on("click", ".typeahead-suggestion", function () {
+            const symbol = $(this).data("symbol"), name = $(this).data("name");
+            $("#filterStock").val(`${name} (${symbol})`);
+            $("#stockSymbol").val(symbol);
+            $("#stockName").val(name);
+            $("#stockSuggestions").addClass("d-none");
+        });
+
+        // Handle save stock action
+        $("#saveStock").click(function () {
+            const symbol = $("#stockSymbol").val();
+            if (!symbol) {
+                $("#filterStock").addClass("is-invalid");
+                $("#stockError").show();
+                return;
+            }
+            $.ajax({
+                url: `${localStorage.getItem('url')}/api/admin/portfolio/${symbol}`,
+                method: "POST",
+                headers: getAuthHeaders(),
+                contentType: "application/json",
+                complete: function (xhr) {
+                    if (xhr.status === 201) {
+                        toastr.success("Stock added successfully!");
+                        $("#addStockModal").modal("hide");
+                        $("#filterStock,#stockSymbol,#stockName").val("").removeClass("is-invalid");
+                        $("#stockError").hide();
+                        fetchPortfolio();
+                        reloadHistoryTable();
+                    } else if (xhr.status === 400) {
+                        toastr.warning("Stock already exists!");
+                    } else toastr.error("Failed to add stock!");
+                }
+            });
+        });
+
+        // Handle delete stock action
+        $(document).on("click", ".delete-stock", function () {
+            deleteId = $(this).data('id');
+            $("#confirmDeleteModal").modal('show');
+        });
+
+        // Confirm delete
+        $("#confirmDeleteBtn").click(function () {
+            $.ajax({
+                url: `${localStorage.getItem('url')}/api/admin/portfolio/${deleteId}`,
+                method: "DELETE",
+                headers: getAuthHeaders(),
+                success: () => {
+                    $("#confirmDeleteModal").modal('hide');
+                    toastr.success("Deleted successfully");
+                    fetchPortfolio();
+                }
+            });
+        });
+
+        function getAuthHeaders() {
+            return {Authorization: `Bearer ${localStorage.getItem('token') || ''}`};
+        }
+    });
+
+</script>
+

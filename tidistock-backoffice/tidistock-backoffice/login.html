@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>TIDI Wealth Admin - Login</title>
+    <link rel="stylesheet" href="libs/bootstrap.min.css">
+    <style>
+        body {
+            background: linear-gradient(135deg, #1f1c2c, #9dcef1);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            animation: fadeIn 1s ease-in-out;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(-20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .card {
+            border-radius: 15px;
+            overflow: hidden;
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+        }
+        .card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 15px 30px rgba(0,0,0,0.2);
+        }
+        .card-body { padding: 2rem; }
+        h4 { font-weight: bold; color: #444; }
+        input.form-control {
+            border-radius: 10px;
+            border: 1px solid #ccc;
+            transition: box-shadow 0.3s ease;
+        }
+        input.form-control:focus {
+            box-shadow: 0 0 10px rgba(0, 123, 255, 0.4);
+            border-color: #007bff;
+        }
+        .btn-primary {
+            border-radius: 10px;
+            font-weight: bold;
+            background: linear-gradient(45deg, #007bff, #00b4db);
+            border: none;
+            transition: background 0.3s ease, transform 0.2s ease;
+        }
+        .btn-primary:hover {
+            background: linear-gradient(45deg, #0056b3, #007bff);
+            transform: scale(1.05);
+        }
+        .error-text {
+            font-size: 0.85rem;
+            color: #dc3545;
+            margin-top: 4px;
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <div class="row justify-content-center">
+        <div class="col-md-4">
+            <div class="card shadow">
+                <div class="card-body">
+                    <h4 class="text-center mb-4">Admin Login</h4>
+                    <form id="loginForm" novalidate>
+                        <div class="mb-3">
+                            <label class="fw-bold text-muted">Phone Number</label>
+                            <input type="text" id="phone_number" class="form-control" placeholder="Enter phone number">
+                            <div id="phoneError" class="error-text"></div>
+                        </div>
+                        <div class="mb-3">
+                            <label class="fw-bold text-muted">Password</label>
+                            <input type="password" id="password" class="form-control" placeholder="Enter password">
+                            <div id="passwordError" class="error-text"></div>
+                        </div>
+                        <button type="submit" class="btn btn-primary w-100">Login</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+<!-- Loading Modal -->
+<!-- Fullscreen Loading Modal -->
+<div class="modal fade" id="loadingModal" tabindex="-1" aria-hidden="true"
+     data-bs-backdrop="static" data-bs-keyboard="false">
+    <div class="modal-dialog modal-fullscreen">
+        <div class="modal-content border-0 bg-transparent d-flex justify-content-center align-items-center">
+            <div class="spinner-border text-primary" role="status" style="width: 3rem; height: 3rem;">
+                <span class="visually-hidden">Loading...</span>
+            </div>
+        </div>
+    </div>
+</div>
+<script src="libs/jquery.min.js"></script>
+<link rel="stylesheet" href="libs/bootstrap.min.css">
+<script src="libs/jquery.min.js"></script>
+<script src="libs/bootstrap.bundle.min.js"></script>
+<script src="js/auth.js">
+</script>
+</body>
+</html>

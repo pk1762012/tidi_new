@@ -1,0 +1,397 @@
+<h3 class="mb-3 fw-bold text-center">User Management</h3>
+<div class="container-fluid shadow-sm p-3 rounded bg-white">
+    <div class="mb-3 text-end">
+        <button id="notifyAllBtn" class="btn btn-info">
+            <i class="bi bi-bell-fill"></i> Notify All
+        </button>
+    </div>
+
+    <table id="userTable" class="table table-hover table-striped table-bordered align-middle" style="width:100%">
+        <thead class="table-light">
+        <tr>
+            <th>Phone Number</th>
+            <th>First Name</th>
+            <th>Last Name</th>
+            <th>Subscribed</th>
+            <th>Enabled</th>
+            <th>Registered Date</th>
+            <th>Actions</th>
+        </tr>
+        </thead>
+    </table>
+</div>
+
+<!--
+notify modal
+-->
+<div class="modal fade" id="notifyModal" tabindex="-1" aria-labelledby="notifyModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <form id="notifyForm" class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="notifyModalLabel">Send Notification</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="mb-3">
+                    <label for="notifyTitle" class="form-label">Title <span class="text-danger">*</span></label>
+                    <input type="text" id="notifyTitle" name="title" class="form-control" maxlength="65" required>
+                </div>
+                <div class="mb-3">
+                    <label for="notifyBody" class="form-label">Body</label>
+                    <textarea id="notifyBody" name="body" class="form-control" maxlength="180" rows="3"></textarea>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="submit" class="btn btn-info">Send</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+
+<style>
+    /* Highlight row on hover with smooth transition */
+    #userTable tbody tr:hover {
+        background-color: #e9f5ff;
+        transition: background-color 0.25s ease;
+        cursor: pointer;
+    }
+
+    /* Style for badges with icons */
+    .badge-subscribed {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        font-size: 0.9rem;
+    }
+
+    .badge-subscribed .bi-check-circle-fill {
+        color: #198754; /* Bootstrap success green */
+    }
+
+    .badge-subscribed .bi-x-circle-fill {
+        color: #dc3545; /* Bootstrap danger red */
+    }
+
+    /* Style DataTables search box */
+    .dataTables_filter input {
+        border-radius: 20px;
+        padding: 6px 12px;
+        border: 1px solid #ced4da;
+        transition: border-color 0.3s ease;
+        width: 250px;
+    }
+
+    .dataTables_filter input:focus {
+        outline: none;
+        border-color: #0d6efd;
+        box-shadow: 0 0 5px rgba(13, 110, 253, 0.5);
+    }
+
+    /* Style pagination buttons */
+    .dataTables_wrapper .dataTables_paginate .paginate_button {
+        border-radius: 8px;
+        border: 1px solid transparent;
+        padding: 5px 12px;
+        margin: 0 2px;
+        transition: background-color 0.3s, border-color 0.3s;
+    }
+
+    .dataTables_wrapper .dataTables_paginate .paginate_button.current,
+    .dataTables_wrapper .dataTables_paginate .paginate_button:hover {
+        background-color: #0d6efd !important;
+        border-color: #0a58ca !important;
+        color: white !important;
+        box-shadow: 0 0 8px rgba(13, 110, 253, 0.5);
+    }
+
+    .dataTables_wrapper .dataTables_filter {
+        float: right !important;
+        text-align: left !important;
+    }
+
+    .dataTables_wrapper .dataTables_paginate {
+        float: right !important;
+        text-align: right !important;
+    }
+
+    .dataTables_wrapper .dataTables_length {
+        float: left !important;
+        margin-right: 1rem;
+    }
+
+    .dataTables_wrapper .dataTables_info {
+        float: left !important;
+        margin-top: 0.5rem;
+    }
+
+    .dataTables_wrapper .row {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: space-between;
+        align-items: center;
+    }
+
+
+    /* Responsive fix for smaller screens */
+    @media (max-width: 576px) {
+        #userTable {
+            font-size: 0.85rem;
+        }
+    }
+</style>
+
+<script>
+    $(document).ready(function () {
+        let typingTimer;
+        const typingDelay = 500; // milliseconds
+
+        const table = $('#userTable').DataTable({
+            processing: true,
+            serverSide: true,
+            rowId: 'id',
+            ajax: function (data, callback) {
+                let limit = data.length;
+                let offset = data.start;
+                let sortField = data.columns[data.order[0].column].data;
+                let sortOrder = data.order[0].dir;
+
+                showLoading();
+
+                $.ajax({
+                    url: localStorage.getItem("url").replace(/\/$/, "") + "/api/admin/get_users",
+                    method: "POST",
+                    contentType: "application/json",
+                    headers: getAuthHeaders(),
+                    data: JSON.stringify({
+                        limit: limit,
+                        offset: offset,
+                        sortField: sortField,
+                        sortOrder: sortOrder,
+                        search: data.search.value || null
+                    }),
+                    success: function (res) {
+                        callback({
+                            draw: data.draw,
+                            recordsTotal: res.totalCount,
+                            recordsFiltered: res.totalCount,
+                            data: res.data
+                        });
+                    },
+                    error: function (xhr) {
+                        if (xhr.status === 401) {
+                            localStorage.clear();
+                            window.location.href = "login.html";
+                        } else {
+                            alert("Error loading data.");
+                        }
+                    },
+                    complete: function () {
+                        setTimeout(hideLoading, 200)
+                    }
+                });
+            },
+            columns: [
+                {data: 'username', className: "text-center"},
+                {data: 'firstName', className: "text-center"},
+                {data: 'lastName', className: "text-center"},
+                {
+                    data: 'isSubscribed', className: "text-center",
+                    render: d => yesNoBadge(d)
+                },
+                {
+                    data: 'enabled', className: "text-center",
+                    render: d => yesNoBadge(d)
+                },
+                {
+                    data: 'dateCreated', className: "text-center",
+                    render: d => new Date(d).toLocaleString()
+                },
+                {
+                    data: null, className: "text-center", orderable: false, searchable: false,
+                    render: row => {
+                        let toggleBtn = row.enabled
+                            ? `<button class="btn btn-warning btn-sm btn-magic toggle-user" data-id="${row.id}" data-action="disable_user"><i class="bi bi-person-x"></i> Deactivate</button>`
+                            : `<button class="btn btn-success btn-sm btn-magic toggle-user" data-id="${row.id}" data-action="enable_user"><i class="bi bi-person-check"></i> Activate</button>`;
+
+                        return `
+        <button class="btn btn-info btn-sm btn-magic notify-user" data-id="${row.id}"><i class="bi bi-bell-fill"></i> Notify</button>
+        ${toggleBtn}
+    `;
+                    }
+
+                }
+            ],
+            pageLength: 10,
+            lengthMenu: [10, 20, 50],
+            //order: [[0, 'asc']],
+            scrollY: '60vh',
+            scrollCollapse: true,
+            language: {
+                searchPlaceholder: "Search users..."
+            }
+        });
+
+        function yesNoBadge(value) {
+            return value
+                ? `<span class="badge-yes"><i class="bi bi-check-circle-fill"></i> Yes</span>`
+                : `<span class="badge-no"><i class="bi bi-x-circle-fill"></i> No</span>`;
+        }
+
+        // Debounce search input
+        $('#userTable_filter input').unbind().on('input', function () {
+            const searchTerm = this.value;
+            clearTimeout(typingTimer);
+            typingTimer = setTimeout(() => {
+                table.search(searchTerm).draw();
+            }, typingDelay);
+        });
+
+
+        let selectedUserId = null;
+        let selectedAction = null;
+
+        $('#userTable').on('click', '.toggle-user', function () {
+            selectedUserId = $(this).data('id');
+            selectedAction = $(this).data('action');
+
+            // Change modal text based on action
+            if (selectedAction === "enable_user") {
+                $('#confirmModalLabel').text("Activate User");
+                $('#confirmModalBody').html(`Are you sure you want to <strong class="text-success">activate</strong> this user?`);
+                $('#confirmActionBtn').removeClass('btn-danger').addClass('btn-success').text('Yes, Activate');
+            } else {
+                $('#confirmModalLabel').text("Deactivate User");
+                $('#confirmModalBody').html(`Are you sure you want to <strong class="text-danger">deactivate</strong> this user?`);
+                $('#confirmActionBtn').removeClass('btn-success').addClass('btn-danger').text('Yes, Deactivate');
+            }
+
+            // Show modal
+            $('#confirmModal').modal('show');
+        });
+
+        $('#confirmActionBtn').on('click', function () {
+            if (!selectedUserId || !selectedAction) return;
+
+            showLoading();
+
+            $.ajax({
+                url: localStorage.getItem("url").replace(/\/$/, "") + `/api/admin/${selectedAction}/${selectedUserId}`,
+                method: "POST",
+                headers: getAuthHeaders(),
+                success: function () {
+                    $('#confirmModal').modal('hide');
+                    $('#userTable').DataTable().ajax.reload(null, false);
+                    if (selectedAction === "enable_user") {
+                        toastr.success("User activated successfully!");
+                    } else {
+                        toastr.success("User deactivated successfully!");
+                    }
+                },
+                error: function (xhr) {
+                    if (xhr.status === 401) {
+                        localStorage.clear();
+                        window.location.href = "login.html";
+                    } else {
+                        toastr.error("Error performing action.");
+                    }
+                },
+                complete: function () {
+                    setTimeout(hideLoading, 200)
+                }
+            });
+        });
+
+
+        let selectedNotifyUserId = null;
+        let notifyAll = false;
+
+// Notify Single User
+        $('#userTable').on('click', '.notify-user', function () {
+            notifyAll = false;
+            selectedNotifyUserId = $(this).data('id');
+            $('#notifyTitle').val("");
+            $('#notifyBody').val("");
+            $('#notifyModal').modal('show');
+        });
+
+// Notify All Users
+        $('#notifyAllBtn').on('click', function () {
+            notifyAll = true;
+            selectedNotifyUserId = null; // Not needed for all
+            $('#notifyTitle').val("");
+            $('#notifyBody').val("");
+            $('#notifyModal').modal('show');
+        });
+
+// Submit Notification
+        $("#notifyForm").validate({
+            rules: {
+                title: {
+                    required: true,
+                    maxlength: 65
+                },
+                body: {
+                    maxlength: 180
+                }
+            },
+            messages: {
+                title: {
+                    required: "Title is required.",
+                    maxlength: "Title must be at most 65 characters."
+                },
+                body: {
+                    maxlength: "Body must be at most 180 characters."
+                }
+            },
+            errorClass: "is-invalid",
+            validClass: "is-valid",
+            errorPlacement: function (error, element) {
+                error.addClass("invalid-feedback");
+                error.insertAfter(element);
+            },
+            submitHandler: function () {
+                const payload = {
+                    title: $('#notifyTitle').val().trim(),
+                    body: $('#notifyBody').val().trim()
+                };
+
+                let apiUrl;
+                if (notifyAll) {
+                    apiUrl = `/api/admin/notify_topic`;
+                    payload.topic = 'all';
+                } else {
+                    apiUrl = `/api/admin/notify_user`;
+                    payload.userId = selectedNotifyUserId;
+                }
+
+                showLoading();
+
+                $.ajax({
+                    url: localStorage.getItem("url").replace(/\/$/, "") + apiUrl,
+                    method: "POST",
+                    headers: getAuthHeaders(),
+                    contentType: "application/json",
+                    data: JSON.stringify(payload),
+                    success: function () {
+                        $('#notifyModal').modal('hide');
+                        toastr.success(notifyAll ? "Notification sent to all users!" : "Notification sent successfully!");
+                    },
+                    error: function (xhr) {
+                        if (xhr.status === 401) {
+                            localStorage.clear();
+                            window.location.href = "login.html";
+                        } else {
+                            toastr.error("Error sending notification.");
+                        }
+                    },
+                    complete: function () {
+                        setTimeout(hideLoading, 200)
+                    }
+                });
+            }
+        });
+
+    });
+</script>

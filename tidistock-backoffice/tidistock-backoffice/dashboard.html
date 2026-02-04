@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>TIDI Wealth Admin - Dashboard</title>
+    <link rel="stylesheet" href="libs/bootstrap.min.css">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.5/font/bootstrap-icons.css" rel="stylesheet" />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css">
+
+    <link rel="stylesheet" href="css/styles.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
+
+    <script src="libs/jquery.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery-validate/1.19.5/jquery.validate.min.js"></script>
+    <script src="libs/bootstrap.bundle.min.js"></script>
+    <script src="https://cdn.datatables.net/1.13.7/js/jquery.dataTables.min.js"></script>
+    <script src="https://cdn.datatables.net/1.13.7/js/dataTables.bootstrap5.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/toastr.js/latest/toastr.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/toastr.js/latest/toastr.min.js"></script>
+    <script src="js/api.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
+
+    <style>
+        body {
+            background: linear-gradient(135deg, #f0f2f5, #ffffff);
+            min-height: 100vh;
+            animation: fadeIn 1s ease-in-out;
+            color: #222;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(15px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        /* NAVBAR MAGIC */
+        .navbar {
+            background: rgba(255, 255, 255, 0.85) !important;
+            backdrop-filter: blur(10px);
+            border-radius: 0 0 18px 18px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.08);
+            padding: 0.75rem 1.5rem;
+            transition: all 0.3s ease;
+        }
+
+        /* Brand */
+        .navbar-brand {
+            font-weight: 700;
+            font-size: 1.3rem;
+            letter-spacing: 0.3px;
+            color: #0d6efd !important;
+        }
+
+        /* Nav links */
+        .navbar-nav .nav-link {
+            position: relative;
+            font-weight: 500;
+            padding: 0.6rem 1rem;
+            margin: 0 0.25rem;
+            border-radius: 10px;
+            transition: all 0.25s ease;
+        }
+
+        /* Hover effect */
+        .navbar-nav .nav-link:hover {
+            background-color: rgba(13, 110, 253, 0.08);
+            color: #0d6efd !important;
+            transform: translateY(-1px);
+        }
+
+        /* Active link underline */
+        .navbar-nav .nav-link.active {
+            color: #0d6efd !important;
+            font-weight: 600;
+            background-color: rgba(13, 110, 253, 0.12);
+        }
+
+        /* Active indicator bar */
+        .navbar-nav .nav-link.active::after {
+            content: "";
+            position: absolute;
+            bottom: 6px;
+            left: 20%;
+            width: 60%;
+            height: 3px;
+            background: #0d6efd;
+            border-radius: 50px;
+        }
+
+        /* Logout button */
+        #logoutBtn {
+            border-radius: 20px;
+            padding: 0.35rem 1.1rem;
+            font-weight: 500;
+            transition: all 0.25s ease;
+        }
+
+        #logoutBtn:hover {
+            background-color: #dc3545;
+            border-color: #dc3545;
+            color: #fff;
+            box-shadow: 0 4px 12px rgba(220, 53, 69, 0.4);
+            transform: translateY(-1px);
+        }
+
+
+        .btn-outline-light {
+            border-radius: 8px;
+            transition: all 0.3s ease;
+            color: #343a40;
+            border-color: #ced4da;
+            background-color: #f8f9fa;
+        }
+        .btn-outline-light:hover {
+            background-color: #e2e6ea;
+            color: #212529;
+            transform: scale(1.05);
+            border-color: #adb5bd;
+        }
+        .dashboard-card {
+            background: rgba(255, 255, 255, 0.9);
+            border-radius: 15px;
+            padding: 2rem;
+            color: #212529;
+            box-shadow: 0 8px 20px rgba(0,0,0,0.1);
+            animation: fadeIn 1.2s ease-in-out;
+            backdrop-filter: none;
+        }
+        .dashboard-card h3 {
+            font-weight: bold;
+            margin-bottom: 1rem;
+        }
+
+        .error-text {
+            font-size: 0.85rem;
+            color: #dc3545;
+            margin-top: 4px;
+        }
+    </style>
+    <script>
+        toastr.options = {
+            "closeButton": true,
+            "progressBar": true,
+            "positionClass": "toast-top-right",
+            "timeOut": "3000",
+            "showDuration": "300",
+            "hideDuration": "1000",
+            "extendedTimeOut": "1000",
+            "preventDuplicates": true
+        };
+
+        $(document).ready(function(){
+            checkAuth();
+            loadPage('home');
+
+            $("#logoutBtn").click(function(){
+                localStorage.removeItem("token");
+                localStorage.removeItem("roles");
+                window.location.href = "login.html";
+            });
+        });
+
+        function loadPage(page) {
+            // Remove active class from all nav links
+            $('.navbar-nav .nav-link').removeClass('active');
+
+            // Add active class to the clicked nav link based on page param
+            $('.navbar-nav .nav-link').each(function () {
+                if ($(this).attr('onclick') === `loadPage('${page}')`) {
+                    $(this).addClass('active');
+                }
+            });
+
+            // Load the page content
+            $("#mainContent").fadeOut(150, function(){
+                $("#mainContent").load(`pages/${page}.html`, function(){
+                    $("#mainContent").fadeIn(150);
+                });
+            });
+        }
+
+    </script>
+</head>
+<body>
+<nav class="navbar navbar-expand-lg navbar-light bg-light">
+    <div class="container-fluid">
+        <a class="navbar-brand" href="#" onclick="loadPage('home')">TIDI Wealth Back Office</a>
+        <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#adminNavbar" aria-controls="adminNavbar" aria-expanded="false" aria-label="Toggle navigation">
+            <span class="navbar-toggler-icon"></span>
+        </button>
+        <div class="collapse navbar-collapse" id="adminNavbar">
+            <ul class="navbar-nav me-auto mb-2 mb-lg-0">
+                <li class="nav-item">
+                    <a class="nav-link active" href="#" onclick="loadPage('home')">Dashboard</a>
+                </li>
+                <li class="nav-item">
+                    <a class="nav-link" href="#" onclick="loadPage('users')">Users</a>
+                </li>
+                <li class="nav-item">
+                    <a class="nav-link" href="#" onclick="loadPage('recommend')">Stock Recommendation</a>
+                </li>
+                <li class="nav-item">
+                    <a class="nav-link" href="#" onclick="loadPage('portfolio')">Portfolio</a>
+                </li>
+                <li class="nav-item">
+                    <a class="nav-link" href="#" onclick="loadPage('course')">Course</a>
+                </li>
+                <li class="nav-item">
+                    <a class="nav-link" href="#" onclick="loadPage('workshop')">Workshop</a>
+                </li>
+                <li class="nav-item">
+                    <a class="nav-link" href="#" onclick="loadPage('market')">Market</a>
+                </li>
+                <li class="nav-item">
+                    <a class="nav-link" href="#" onclick="loadPage('demat')">Demat Bazaar</a>
+                </li>
+            </ul>
+            <button id="logoutBtn" class="btn btn-outline-light btn-sm">Logout</button>
+        </div>
+    </div>
+</nav>
+
+<div class="container mt-5" id="mainContent">
+
+</div>
+
+<!-- Loading Modal -->
+<!-- Fullscreen Loading Modal -->
+<div class="modal fade" id="loadingModal" tabindex="-1" aria-hidden="true"
+     data-bs-backdrop="static" data-bs-keyboard="false">
+    <div class="modal-dialog modal-fullscreen">
+        <div class="modal-content border-0 bg-transparent d-flex justify-content-center align-items-center">
+            <div class="spinner-border text-primary" role="status" style="width: 3rem; height: 3rem;">
+                <span class="visually-hidden">Loading...</span>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Confirmation Modal -->
+<div class="modal fade" id="confirmModal" tabindex="-1" aria-labelledby="confirmModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header bg-warning text-dark">
+                <h5 class="modal-title" id="confirmModalLabel">Confirm Action</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body" id="confirmModalBody">
+                Are you sure you want to proceed?
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" id="confirmActionBtn" class="btn btn-primary">Yes, Proceed</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+</body>
+</html>

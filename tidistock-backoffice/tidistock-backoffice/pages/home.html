@@ -1,0 +1,351 @@
+<div class="dashboard-card container mt-4">
+    <div class="row mt-4 gx-4 gy-4">
+        <!-- Active Users -->
+        <div class="col-md-4">
+            <div class="card stat-card bg-primary text-white h-100 shadow-sm animate-card">
+                <div class="card-body text-center">
+                    <i class="bi bi-people-fill display-3 mb-2 animate-icon"></i>
+                    <h5 class="card-title">Active Users</h5>
+                    <p id="activeUsersCount" class="display-4 mb-0 counter">0</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Subscribed Users -->
+        <div class="col-md-8">
+            <div class="card stat-card bg-success text-white h-100 shadow-sm animate-card">
+                <div class="card-body">
+                    <h5 class="card-title text-center mb-4 fw-semibold">
+                        <p id="totalSubs" class="display-5 mb-0 counter">0</p> Subscribed Users
+                    </h5>
+                    <div class="row text-center">
+                        <div class="col">
+                            <i class="bi bi-calendar-month-fill display-5 mb-1 animate-icon"></i>
+                            <h6>Monthly</h6>
+                            <p id="monthlySubs" class="display-5 mb-0 counter">0</p>
+                        </div>
+                        <div class="col">
+                            <i class="bi bi-calendar2-week-fill display-5 mb-1 animate-icon"></i>
+                            <h6>6 Months</h6>
+                            <p id="sixMonthSubs" class="display-5 mb-0 counter">0</p>
+                        </div>
+                        <div class="col">
+                            <i class="bi bi-calendar2-check-fill display-5 mb-1 animate-icon"></i>
+                            <h6>Annual</h6>
+                            <p id="annualSubs" class="display-5 mb-0 counter">0</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="container mt-5">
+
+    <div class="d-flex flex-wrap justify-content-between align-items-center mb-3 gap-2">
+        <h4 class="fw-bold mb-0">Revenue Overview</h4>
+
+        <div class="d-flex align-items-center gap-2">
+            <select id="revenueFilter" class="form-select form-select-sm">
+                <option value="lifetime">Lifetime</option>
+                <option value="this_month">This Month</option>
+                <option value="last_month">Last Month</option>
+                <option value="ytd">Year to Date</option>
+                <option value="custom">Custom Range</option>
+            </select>
+
+            <input type="date" id="startDate"
+                   class="form-control form-control-sm d-none">
+
+            <input type="date" id="endDate"
+                   class="form-control form-control-sm d-none">
+
+            <button id="applyRevenueFilter"
+                    class="btn btn-sm btn-primary d-none">
+                Apply
+            </button>
+        </div>
+    </div>
+</div>
+
+<div class="container mt-5">
+
+    <div class="row g-4">
+
+        <div class="col-md-3">
+            <div class="card stat-card bg-dark text-white h-100">
+                <div class="card-body text-center">
+                    <i class="bi bi-cash-stack display-6"></i>
+                    <h6 class="mt-2">Subscription Revenue</h6>
+                    <p id="subscriptionRevenue" class="display-6 counter">0</p>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-md-3">
+            <div class="card stat-card bg-primary text-white h-100">
+                <div class="card-body text-center">
+                    <i class="bi bi-journal-bookmark-fill display-6"></i>
+                    <h6 class="mt-2">Course Revenue</h6>
+                    <p id="courseRevenue" class="display-6 counter">0</p>
+                    <span class="badge bg-light text-dark mt-2">
+                        <span id="courseCount">0</span> Orders
+                    </span>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-md-3">
+            <div class="card stat-card bg-success text-white h-100">
+                <div class="card-body text-center">
+                    <i class="bi bi-easel-fill display-6"></i>
+                    <h6 class="mt-2">Workshop Revenue</h6>
+                    <p id="workshopRevenue" class="display-6 counter">0</p>
+                    <span class="badge bg-light text-dark mt-2">
+                        <span id="workshopCount">0</span> Orders
+                    </span>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-md-3">
+            <div class="card stat-card bg-warning text-dark h-100">
+                <div class="card-body text-center">
+                    <i class="bi bi-bar-chart-fill display-6"></i>
+                    <h6 class="mt-2">Overall Revenue</h6>
+                    <p id="overallRevenue" class="display-6 counter">0</p>
+                </div>
+            </div>
+        </div>
+
+    </div>
+</div>
+
+<div class="container mt-5">
+    <h4 class="fw-bold mb-3">Branch-wise Performance</h4>
+
+    <div class="table-responsive">
+        <table class="table table-hover align-middle shadow-sm">
+            <thead class="table-dark">
+            <tr>
+                <th>Branch</th>
+                <th class="text-center">Course Revenue</th>
+                <th class="text-center">Course Count</th>
+                <th class="text-center">Workshop Revenue</th>
+                <th class="text-center">Workshop Count</th>
+                <th class="text-center">Total Revenue</th>
+            </tr>
+            </thead>
+            <tbody id="branchRevenueTable">
+            <tr>
+                <td colspan="6" class="text-center text-muted">
+                    Loading data...
+                </td>
+            </tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+
+
+<style>
+    /* Card Hover Effect */
+    .stat-card {
+        border-radius: 15px;
+        background: linear-gradient(135deg, rgba(255,255,255,0.15), rgba(0,0,0,0.15));
+        transition: transform 0.4s ease, box-shadow 0.4s ease;
+    }
+    .stat-card:hover {
+        transform: translateY(-8px) scale(1.03);
+        box-shadow: 0 20px 40px rgba(0,0,0,0.35);
+    }
+
+    /* Counter Styling */
+    .counter {
+        font-weight: 700;
+        letter-spacing: 0.05em;
+    }
+
+    /* Entry Animation */
+    .animate-card {
+        opacity: 0;
+        transform: translateY(20px);
+        animation: fadeUp 0.8s ease forwards;
+    }
+    .animate-card:nth-child(1) { animation-delay: 0.1s; }
+    .animate-card:nth-child(2) { animation-delay: 0.3s; }
+
+    /* Icon Animation */
+    .animate-icon {
+        display: inline-block;
+        transition: transform 0.3s ease;
+    }
+    .stat-card:hover .animate-icon {
+        transform: rotate(5deg) scale(1.15);
+    }
+
+    /* Keyframes */
+    @keyframes fadeUp {
+        to {
+            opacity: 1;
+            transform: translateY(0);
+        }
+    }
+</style>
+
+<script>
+    function animateCount(id, endValue, duration = 1500) {
+        const element = document.getElementById(id);
+        let startTime = null;
+
+        function step(timestamp) {
+            if (!startTime) startTime = timestamp;
+            const progress = Math.min((timestamp - startTime) / duration, 1);
+            element.textContent = Math.floor(progress * endValue);
+            if (progress < 1) requestAnimationFrame(step);
+        }
+
+        requestAnimationFrame(step);
+    }
+
+    $(document).ready(function () {
+        getStatus();
+        loadRevenueStats(); // default = lifetime
+
+        $("#revenueFilter").on("change", function () {
+            const val = $(this).val();
+            const isCustom = val === "custom";
+
+            $("#startDate, #endDate, #applyRevenueFilter")
+                .toggleClass("d-none", !isCustom);
+
+            if (!isCustom) {
+                loadRevenueStats(val);
+            }
+        });
+
+        $("#applyRevenueFilter").on("click", function () {
+            loadRevenueStats("custom");
+        });
+    });
+
+    function getRevenueDatePayload(filter) {
+        const today = new Date();
+        let startDate = null;
+        let endDate = null;
+
+        switch (filter) {
+            case "this_month":
+                startDate = new Date(today.getFullYear(), today.getMonth(), 1);
+                endDate = today;
+                break;
+
+            case "last_month":
+                startDate = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+                endDate = new Date(today.getFullYear(), today.getMonth(), 0);
+                break;
+
+            case "ytd":
+                startDate = new Date(today.getFullYear(), 0, 1);
+                endDate = today;
+                break;
+
+            case "custom":
+                startDate = $("#startDate").val();
+                endDate = $("#endDate").val();
+                break;
+        }
+
+        return startDate && endDate ? {
+            startDate: formatDate(startDate),
+            endDate: formatDate(endDate)
+        } : {};
+    }
+
+    function formatDate(date) {
+        if (typeof date === "string") return date;
+        return date.toISOString().split("T")[0];
+    }
+
+    function loadRevenueStats(filter = "lifetime") {
+        showLoading();
+
+        const payload = getRevenueDatePayload(filter);
+
+        $.ajax({
+            url: localStorage.getItem("url").replace(/\/$/, "") + "/api/admin/revenue_stats",
+            method: "POST",
+            headers: getAuthHeaders(),
+            contentType: "application/json",
+            data: JSON.stringify(payload),
+
+            success: function (res) {
+                var d = res.data || res;
+                animateCount("subscriptionRevenue", d.subscriptionRevenue || 0);
+                animateCount("courseRevenue", d.totalCourseRevenue || 0);
+                animateCount("workshopRevenue", d.totalWorkshopRevenue || 0);
+                animateCount("overallRevenue", d.overallRevenue || 0);
+                renderRevenueStats(d);
+            },
+
+            error: function (xhr) {
+                if (xhr.status === 401) {
+                    localStorage.clear();
+                    window.location.href = "login.html";
+                } else {
+                    console.error("Revenue API error", xhr.responseText);
+                }
+            },
+
+            complete: function () {
+                setTimeout(hideLoading, 200);
+            }
+        });
+    }
+
+    function renderRevenueStats(res) {
+
+        animateCount("subscriptionRevenue", res.subscriptionRevenue || 0);
+        animateCount("courseRevenue", res.totalCourseRevenue || 0);
+        animateCount("workshopRevenue", res.totalWorkshopRevenue || 0);
+        animateCount("overallRevenue", res.overallRevenue || 0);
+
+        $("#courseCount").text(res.totalCourseCount || 0);
+        $("#workshopCount").text(res.totalWorkshopCount || 0);
+
+        let rows = "";
+
+        if (!res.branchWiseRevenue || res.branchWiseRevenue.length === 0) {
+            rows = `
+            <tr>
+                <td colspan="6" class="text-center text-muted">
+                    No branch data available
+                </td>
+            </tr>`;
+        } else {
+            res.branchWiseRevenue.forEach(b => {
+                rows += `
+                <tr>
+                    <td>
+                        <strong>${b.branchName}</strong>
+                    </td>
+                    <td class="text-center">₹${b.courseRevenue}</td>
+                    <td class="text-center">
+                        <span class="badge bg-primary">${b.courseCount}</span>
+                    </td>
+                    <td class="text-center">₹${b.workshopRevenue}</td>
+                    <td class="text-center">
+                        <span class="badge bg-success">${b.workshopCount}</span>
+                    </td>
+                    <td class="text-center fw-bold">₹${b.totalRevenue}</td>
+                </tr>`;
+            });
+        }
+
+        $("#branchRevenueTable").html(rows);
+    }
+
+
+
+</script>

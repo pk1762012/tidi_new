@@ -1,0 +1,223 @@
+import 'dart:io';
+import 'dart:ui';
+import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
+import 'package:intl/intl.dart';
+import 'package:xml/xml.dart' as xml;
+import 'package:url_launcher/url_launcher.dart';
+import 'package:tidistockmobileapp/widgets/customScaffold.dart';
+import 'package:tidistockmobileapp/theme/theme.dart';
+
+class NewsScreen extends StatefulWidget {
+  const NewsScreen({super.key});
+
+  @override
+  State<NewsScreen> createState() => _NewsScreenState();
+}
+
+class _NewsScreenState extends State<NewsScreen> {
+  List<_NewsItem> _newsItems = [];
+  bool _isLoading = true;
+
+  final String rssUrl =
+      'https://www.ai.growscan.in/news';
+
+  @override
+  void initState() {
+    super.initState();
+    _fetchNews();
+  }
+
+  Future<void> _fetchNews() async {
+    try {
+      final response = await http.get(Uri.parse(rssUrl));
+      final document = xml.XmlDocument.parse(response.body);
+      final items = document.findAllElements('item');
+
+      final news = items.map((item) {
+        final pubDateStr = item.findElements('pubDate').first.text;
+        final dateTime = HttpDate.parse(pubDateStr);
+        final formattedDate =
+            DateFormat('d MMM, h:mm a').format(dateTime.toLocal()) + ' IST';
+
+        final media = item.findElements('media:content');
+        final imageUrl =
+        media.isNotEmpty ? media.first.getAttribute('url') : null;
+
+        return _NewsItem(
+          title: item.findElements('title').first.text,
+          link: item.findElements('link').first.text,
+          pubDate: formattedDate,
+          dateTime: dateTime,
+          imageUrl: imageUrl,
+        );
+      }).toList();
+
+      news.sort((a, b) => b.dateTime.compareTo(a.dateTime));
+
+      setState(() {
+        _newsItems = news;
+        _isLoading = false;
+      });
+    } catch (e) {
+      setState(() => _isLoading = false);
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text("Failed to load news")));
+    }
+  }
+
+  void _launchURL(String url) async {
+    final uri = Uri.parse(url);
+    if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('Could not open article')));
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return CustomScaffold(
+      allowBackNavigation: true,
+      displayActions: false,
+      imageUrl: null,
+      menu: 'Latest Financial News',
+      child: Scaffold(
+        backgroundColor: Colors.transparent, // use theme background
+        body: _isLoading
+            ? Center(
+          child: CircularProgressIndicator(
+            color: lightColorScheme.primary,
+          ),
+        )
+            : RefreshIndicator(
+          onRefresh: _fetchNews,
+          color: lightColorScheme.primary,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+
+              Expanded(
+                child: ListView.builder(
+                  padding: const EdgeInsets.all(12),
+                  itemCount: _newsItems.length,
+                  itemBuilder: (context, index) {
+                    final news = _newsItems[index];
+                    return AnimatedContainer(
+                      duration: const Duration(milliseconds: 400),
+                      curve: Curves.easeOut,
+                      margin: const EdgeInsets.symmetric(vertical: 8),
+                      child: InkWell(
+                        borderRadius: BorderRadius.circular(20),
+                        onTap: () => _launchURL(news.link),
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(20),
+                          child: BackdropFilter(
+                            filter:
+                            ImageFilter.blur(sigmaX: 15, sigmaY: 15),
+                            child: Container(
+                              decoration: BoxDecoration(
+                                borderRadius: BorderRadius.circular(20),
+                                color: Colors.white,
+                                border: Border.all(
+                                  color: Colors.black, // 👈 border color
+                                  width: 1,           // optional, default is 1
+                                ),
+                              ),                              child: Column(
+                                crossAxisAlignment:
+                                CrossAxisAlignment.start,
+                                children: [
+                                  if (news.imageUrl != null)
+                                    ClipRRect(
+                                      borderRadius:
+                                      const BorderRadius.vertical(
+                                          top: Radius.circular(20)),
+                                      child: Image.network(
+                                        news.imageUrl!,
+                                        height: 160,
+                                        width: double.infinity,
+                                        fit: BoxFit.cover,
+                                      ),
+                                    ),
+                                  Padding(
+                                    padding: const EdgeInsets.all(14.0),
+                                    child: Column(
+                                      crossAxisAlignment:
+                                      CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          news.title,
+                                          style: TextStyle(
+                                            fontSize: 16,
+                                            fontWeight: FontWeight.w700,
+                                            color: Theme.of(context)
+                                                .colorScheme
+                                                .onSurface,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 8),
+                                        Row(
+                                          children: [
+                                            Icon(Icons.schedule,
+                                                size: 14,
+                                                color: Theme.of(context)
+                                                    .colorScheme
+                                                    .onSurface
+                                                    .withOpacity(0.7)),
+                                            const SizedBox(width: 4),
+                                            Text(
+                                              news.pubDate,
+                                              style: TextStyle(
+                                                fontSize: 12,
+                                                color: Theme.of(context)
+                                                    .colorScheme
+                                                    .onSurface
+                                                    .withOpacity(0.7),
+                                              ),
+                                            ),
+                                            const Spacer(),
+                                            Icon(
+                                              Icons.open_in_new,
+                                              size: 18,
+                                              color: Theme.of(context)
+                                                  .colorScheme
+                                                  .onSurface
+                                                  .withOpacity(0.7),
+                                            ),
+                                          ],
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _NewsItem {
+  final String title;
+  final String link;
+  final String pubDate;
+  final DateTime dateTime;
+  final String? imageUrl;
+
+  _NewsItem({
+    required this.title,
+    required this.link,
+    required this.pubDate,
+    required this.dateTime,
+    this.imageUrl,
+  });
+}
