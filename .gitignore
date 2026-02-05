@@ -1,9 +1,12 @@
 # Secrets & credentials
 **/firebase-key.json
+**/firebase-service-account.json
 **/*-key.json
 **/*.pem
 **/*.p12
 **/*.keystore
+**/google-services.json
+**/GoogleService-Info.plist
 .env
 .env.*
 .env.test
