@@ -1,3 +1,4 @@
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_feather_icons/flutter_feather_icons.dart';
 import 'package:tidistockmobileapp/theme/theme.dart';
@@ -71,7 +72,7 @@ class CustomScaffold extends StatelessWidget {
                     radius: 20,
                     backgroundColor: lightColorScheme.secondary,
                     backgroundImage:
-                    imageUrl != null ? NetworkImage(imageUrl!) : null,
+                    imageUrl != null ? CachedNetworkImageProvider(imageUrl!) : null,
                     child: imageUrl == null
                         ? Icon(
                       FeatherIcons.user,

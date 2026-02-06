@@ -62,6 +62,9 @@ class StockService {
 
         Stock.executeUpdate("DELETE FROM Nifty50Stock")
 
+        // Pre-cache all stock symbols -> names to avoid N+1 queries
+        Map<String, String> stockNameMap = Stock.list().collectEntries { [(it.symbol): it.name] }
+
         multipartFile.inputStream.withReader { reader ->
             boolean headerSkipped = false
             reader.eachLine { line ->
@@ -71,9 +74,10 @@ class StockService {
                 }
                 def columns = line.split(",")*.trim() // simple CSV split
                 if (columns.size() >= 4) {
+                    String symbol = columns[0]?.replaceAll('"', '')
                     def stock = new Nifty50Stock(
-                            symbol: columns[0]?.replaceAll('"', ''),
-                            name: Stock?.findAllBySymbol(columns[0]?.replaceAll('"', '') as String)?.name
+                            symbol: symbol,
+                            name: stockNameMap[symbol]
                     )
                     stock.save(failOnError: true)
                 }
@@ -89,6 +93,9 @@ class StockService {
 
         Stock.executeUpdate("DELETE FROM NiftyFNOStock")
 
+        // Pre-cache all stock symbols -> names to avoid N+1 queries
+        Map<String, String> stockNameMap = Stock.list().collectEntries { [(it.symbol): it.name] }
+
         multipartFile.inputStream.withReader { reader ->
             boolean headerSkipped = false
             reader.eachLine { line ->
@@ -98,9 +105,10 @@ class StockService {
                 }
                 def columns = line.split(",")*.trim() // simple CSV split
                 if (columns.size() >= 4) {
+                    String symbol = columns[0]?.replaceAll('"', '')
                     def stock = new NiftyFNOStock(
-                            symbol: columns[0]?.replaceAll('"', ''),
-                            name: Stock?.findAllBySymbol(columns[0]?.replaceAll('"', '') as String)?.name
+                            symbol: symbol,
+                            name: stockNameMap[symbol]
                     )
                     stock.save(failOnError: true)
                 }
@@ -384,6 +392,9 @@ class StockService {
 
         } as PagedResultList
 
+        // Hoist subscription check before the loop to avoid N+1 lazy loading
+        boolean isUserSubscribed = user.wallet?.subscription?.isSubscribed ?: false
+
         def data = result.collect { StockRecommend stockRecommend ->
             [
              "id"                       : stockRecommend.id,
@@ -392,8 +403,8 @@ class StockService {
              "dateCreated"              : stockRecommend.dateCreated,
              "stockRecommendationStatus": stockRecommend.stockRecommendationStatus,
              "lastUpdated"              : stockRecommend.lastUpdated,
-             "stockName"                : (isAdmin || (user.wallet.subscription.isSubscribed || !stockRecommend.stockRecommendationStatus.equals(StockRecommendationStatus.LIVE))) ? stockRecommend.stockName : '',
-             "stockSymbol"              : (isAdmin || (user.wallet.subscription.isSubscribed || !stockRecommend.stockRecommendationStatus.equals(StockRecommendationStatus.LIVE))) ? stockRecommend.stockSymbol : '',
+             "stockName"                : (isAdmin || (isUserSubscribed || !stockRecommend.stockRecommendationStatus.equals(StockRecommendationStatus.LIVE))) ? stockRecommend.stockName : '',
+             "stockSymbol"              : (isAdmin || (isUserSubscribed || !stockRecommend.stockRecommendationStatus.equals(StockRecommendationStatus.LIVE))) ? stockRecommend.stockSymbol : '',
              "stopLoss"                 : stockRecommend.stopLoss,
              "targetPrice"              : stockRecommend.targetPrice,
              "bookedPrice"              : stockRecommend.bookedPrice,

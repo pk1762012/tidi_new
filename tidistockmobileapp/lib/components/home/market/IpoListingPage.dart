@@ -6,6 +6,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_svg/svg.dart';
 import 'package:intl/intl.dart';
 
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:tidistockmobileapp/theme/theme.dart';
 import 'package:tidistockmobileapp/widgets/customScaffold.dart';
 import 'package:tidistockmobileapp/service/ApiService.dart';
@@ -96,17 +97,32 @@ class _IpoListingPageState extends State<IpoListingPage> {
       menu: "IPO",
       child: loading
           ? const Center(child: CircularProgressIndicator())
-          : ListView(
+          : ListView.builder(
         padding: const EdgeInsets.all(16),
-        children: [
-          _sectionTitle("Open IPOs"),
-          const SizedBox(height: 12),
-          ...openIpos.map(_ipoCard),
-          const SizedBox(height: 32),
-          _sectionTitle("Upcoming IPOs"),
-          const SizedBox(height: 12),
-          ...upcomingIpos.map(_ipoCard),
-        ],
+        // Layout: openHeader + openIpos + spacer + upcomingHeader + upcomingIpos
+        itemCount: 1 + openIpos.length + 1 + 1 + upcomingIpos.length,
+        itemBuilder: (context, index) {
+          if (index == 0) {
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: _sectionTitle("Open IPOs"),
+            );
+          }
+          if (index <= openIpos.length) {
+            return _ipoCard(openIpos[index - 1]);
+          }
+          if (index == openIpos.length + 1) {
+            return const SizedBox(height: 32);
+          }
+          if (index == openIpos.length + 2) {
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: _sectionTitle("Upcoming IPOs"),
+            );
+          }
+          final upcomingIndex = index - openIpos.length - 3;
+          return _ipoCard(upcomingIpos[upcomingIndex]);
+        },
       ),
     );
   }
@@ -158,11 +174,21 @@ class _IpoListingPageState extends State<IpoListingPage> {
                       if (ipo['logo'] != null)
                         ClipRRect(
                           borderRadius: BorderRadius.circular(10),
-                          child: Image.network(
-                            ipo['logo'],
+                          child: CachedNetworkImage(
+                            imageUrl: ipo['logo'],
                             width: 44,
                             height: 44,
                             fit: BoxFit.cover,
+                            placeholder: (context, url) => Container(
+                              width: 44, height: 44,
+                              color: Colors.grey.shade200,
+                              child: const Icon(Icons.image, size: 20, color: Colors.grey),
+                            ),
+                            errorWidget: (context, url, error) => Container(
+                              width: 44, height: 44,
+                              color: Colors.grey.shade200,
+                              child: const Icon(Icons.broken_image, size: 20, color: Colors.grey),
+                            ),
                           ),
                         ),
                       const SizedBox(width: 12),

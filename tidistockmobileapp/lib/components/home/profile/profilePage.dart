@@ -1,4 +1,5 @@
 import 'dart:ui';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:tidistockmobileapp/screens/welcomeScreen.dart';
 import 'package:tidistockmobileapp/service/ApiService.dart';
 import 'package:flutter/gestures.dart';
@@ -392,6 +393,7 @@ class ProfilePageState extends State<ProfilePage>
   }
 
   Future<void> logout() async {
+    ApiService.invalidateTokenCache();
     await secureStorage.deleteAll();
     if (!mounted) return;
     Navigator.of(context).pushAndRemoveUntil(
@@ -539,7 +541,7 @@ class ProfilePageState extends State<ProfilePage>
                                         radius: 48,
                                         backgroundColor: Colors.grey.shade200,
                                         backgroundImage:
-                                        imageUrl != null ? NetworkImage(imageUrl!) : null,
+                                        imageUrl != null ? CachedNetworkImageProvider(imageUrl!) : null,
                                         child: imageUrl == null
                                             ? Icon(Icons.person, size: 65, color: scheme.primary)
                                             : null,

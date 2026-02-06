@@ -26,7 +26,7 @@ class MarketPage extends StatefulWidget {
   MarketPageState createState() => MarketPageState();
 }
 
-class MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
+class MarketPageState extends State<MarketPage> with TickerProviderStateMixin, WidgetsBindingObserver {
   late AnimationController _pageSlideController;
   late Animation<Offset> _pageSlideAnimation;
   late Animation<double> _pageFadeAnimation;
@@ -62,6 +62,7 @@ class MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       verifyDeviceFcmIfNeeded(context);
     });
@@ -197,6 +198,7 @@ class MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
   }
 
   Future<void> logout() async {
+    ApiService.invalidateTokenCache();
     await secureStorage.deleteAll();
     if (!mounted) return;
     Navigator.of(context).pushAndRemoveUntil(
@@ -208,7 +210,49 @@ class MarketPageState extends State<MarketPage> with TickerProviderStateMixin {
 
 
   @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused || state == AppLifecycleState.inactive) {
+      // Cancel chart timers and banner timer when app goes to background
+      for (var timer in _chartTimers.values) {
+        timer.cancel();
+      }
+      _chartTimers.clear();
+      _bannerTimer?.cancel();
+      _bannerTimer = null;
+    } else if (state == AppLifecycleState.resumed) {
+      // Restart chart timers and banner timer when app returns
+      _restartChartTimers();
+      _bannerTimer ??= Timer.periodic(const Duration(seconds: 4), (timer) {
+        if (!_bannerController.hasClients) return;
+        _currentBanner = (_currentBanner + 1) % _banners.length;
+        _bannerController.animateToPage(
+          _currentBanner,
+          duration: const Duration(milliseconds: 600),
+          curve: Curves.easeInOut,
+        );
+      });
+    }
+  }
+
+  void _restartChartTimers() {
+    for (int i = 0; i < 4; i++) {
+      if (!_chartTimers.containsKey(i) || !_chartTimers[i]!.isActive) {
+        _chartTimers[i] =
+            Timer.periodic(Duration(milliseconds: _updateIntervalMs), (_) {
+              final currentData = List<FlSpot>.from(_chartDataNotifiers[i]!.value);
+              final lastX = currentData.isNotEmpty ? currentData.last.x : 0;
+              final newY = 10 + _random.nextDouble() * 5;
+              currentData.add(FlSpot(lastX + 1, newY));
+              if (currentData.length > _maxPoints) currentData.removeAt(0);
+              _chartDataNotifiers[i]!.value = currentData;
+            });
+      }
+    }
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _pageSlideController.dispose();
     _iconsController.dispose();
     for (var timer in _chartTimers.values) {

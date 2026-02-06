@@ -14,6 +14,19 @@ class ApiService {
   final String marketDataUrl = dotenv.env['MARKET_DATA_URL'] ?? '';
   final String marketDataPassword = dotenv.env['MARKET_DATA_PASSWORD'] ?? '';
 
+  // In-memory token cache to avoid repeated platform channel reads
+  static String? _cachedToken;
+
+  Future<String?> _getToken() async {
+    if (_cachedToken != null) return _cachedToken;
+    _cachedToken = await secureStorage.read(key: 'access_token');
+    return _cachedToken;
+  }
+
+  static void invalidateTokenCache() {
+    _cachedToken = null;
+  }
+
   Future<http.Response> createUser(String fName, String lName, String phoneNumber) async {
     return http.post(
       Uri.parse(apiUrl + 'api/user/create'),
@@ -58,7 +71,7 @@ class ApiService {
   Future<bool> isAuthenticated() async {
     try {
 
-      String? token = await secureStorage.read(key: 'access_token');
+      String? token = await _getToken();
       final response = await http.get(
         Uri.parse(apiUrl + 'api/validate'),
         headers: {
@@ -69,7 +82,9 @@ class ApiService {
 
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
-        await secureStorage.write(key: 'access_token', value: data['access_token']);
+        final newToken = data['access_token'];
+        await secureStorage.write(key: 'access_token', value: newToken);
+        _cachedToken = newToken;
         return null != data['username'];
       }
       return false;
@@ -79,7 +94,7 @@ class ApiService {
   }
 
   Future<http.Response> getUserDetails() async {
-    String? token = await secureStorage.read(key: 'access_token');
+    String? token = await _getToken();
     return http.get(
       Uri.parse(apiUrl + 'api/user'),
       headers: {
@@ -90,7 +105,7 @@ class ApiService {
   }
 
   Future<http.Response> getSavedDeviceFcm() async {
-    String? token = await secureStorage.read(key: 'access_token');
+    String? token = await _getToken();
     return http.get(
       Uri.parse(apiUrl + 'api/user/fcm'),
       headers: {
@@ -102,7 +117,7 @@ class ApiService {
 
 
   Future<http.Response> deleteUserAccount() async {
-    String? token = await secureStorage.read(key: 'access_token');
+    String? token = await _getToken();
     return http.delete(
       Uri.parse(apiUrl + 'api/user'),
       headers: {
@@ -113,7 +128,7 @@ class ApiService {
   }
 
   Future<http.Response> getStockRecommendations(int? limit, int? offset, String status, String? type) async {
-    String? token = await secureStorage.read(key: 'access_token');
+    String? token = await _getToken();
     return http.post(
       Uri.parse(apiUrl + '/api/admin/stock/recommend/get'),
       headers: {
@@ -148,7 +163,7 @@ class ApiService {
   }
 
   Future<http.Response> createCourseOrder(String courseId, String branchId) async {
-    String? token = await secureStorage.read(key: 'access_token');
+    String? token = await _getToken();
     return http.post(
         Uri.parse(apiUrl + 'api/user/create_course_order/$courseId/$branchId'),
         headers: {
@@ -159,7 +174,7 @@ class ApiService {
   }
 
   Future<http.Response> getCourseTransactions(int? limit, int? offset) async {
-    String? token = await secureStorage.read(key: 'access_token');
+    String? token = await _getToken();
     return http.post(
       Uri.parse(apiUrl + 'api/user/get_course_transactions'),
       headers: {
@@ -174,7 +189,7 @@ class ApiService {
   }
 
   Future<http.Response> getPortfolio() async {
-    String? token = await secureStorage.read(key: 'access_token');
+    String? token = await _getToken();
     return http.get(
       Uri.parse(apiUrl + 'api/portfolio'),
       headers: {
@@ -185,7 +200,7 @@ class ApiService {
   }
 
   Future<http.Response> getIPO() async {
-    String? token = await secureStorage.read(key: 'access_token');
+    String? token = await _getToken();
     return http.get(
       Uri.parse(apiUrl + 'api/ipo'),
       headers: {
@@ -196,7 +211,7 @@ class ApiService {
   }
 
   Future<http.Response> getPortfolioHistory(int? limit, int? offset) async {
-    String? token = await secureStorage.read(key: 'access_token');
+    String? token = await _getToken();
     return http.post(
       Uri.parse(apiUrl + 'api/history/portfolio'),
       headers: {
@@ -211,7 +226,7 @@ class ApiService {
   }
 
   Future<http.Response> getFiiData(int? limit, int? offset) async {
-    String? token = await secureStorage.read(key: 'access_token');
+    String? token = await _getToken();
     return http.post(
       Uri.parse(apiUrl + 'api/fii'),
       headers: {
@@ -226,7 +241,7 @@ class ApiService {
   }
 
   Future<http.Response> registerToWorkshop(String date, String branchId) async {
-    String? token = await secureStorage.read(key: 'access_token');
+    String? token = await _getToken();
     return http.post(
       Uri.parse(apiUrl + 'api/workshop/register'),
       headers: {
@@ -241,7 +256,7 @@ class ApiService {
   }
 
   Future<http.Response> getRegisteredWorkshops() async {
-    String? token = await secureStorage.read(key: 'access_token');
+    String? token = await _getToken();
     return http.get(
       Uri.parse(apiUrl + 'api/workshop/register'),
       headers: {
@@ -253,7 +268,7 @@ class ApiService {
 
 
   Future<http.Response> updateUserDetails(String? firstName, String? lastName) async {
-    String? token = await secureStorage.read(key: 'access_token');
+    String? token = await _getToken();
     return http.patch(
       Uri.parse(apiUrl + 'api/user/update'),
       headers: {
@@ -268,7 +283,7 @@ class ApiService {
   }
 
   Future<http.Response> savePanDetails(String? pan, String? email) async {
-    String? token = await secureStorage.read(key: 'access_token');
+    String? token = await _getToken();
     return http.patch(
         Uri.parse(apiUrl + 'api/user/update_pan'),
         headers: {
@@ -283,7 +298,7 @@ class ApiService {
   }
 
   void updateDeviceDetails() async {
-    String? token = await secureStorage.read(key: 'access_token');
+    String? token = await _getToken();
     String? fcmToken = await FirebaseMessaging.instance.getToken();
     final String topic = dotenv.env['FIREBASE_TOPIC'] ?? 'test_all';
     FirebaseMessaging.instance.subscribeToTopic(topic);
@@ -303,7 +318,7 @@ class ApiService {
 
   Future<http.StreamedResponse> uploadProfilePicture(imageFile) async {
     File? compressedImage = await compressImage(File(imageFile.path));
-    String? token = await secureStorage.read(key: 'access_token');
+    String? token = await _getToken();
     var request = http.MultipartRequest('PATCH', Uri.parse(apiUrl + "api/user/update_profile_picture"));
     request.headers['Authorization'] = 'Bearer $token';
     request.files.add(await http.MultipartFile.fromPath('file', compressedImage.path));
@@ -331,7 +346,7 @@ class ApiService {
 
 
   Future<http.Response> createSubscriptionOrder(String duration) async {
-    String? token = await secureStorage.read(key: 'access_token');
+    String? token = await _getToken();
     return http.post(
       Uri.parse(apiUrl + 'api/user/create_subscription_order/$duration'),
       headers: {
@@ -342,7 +357,7 @@ class ApiService {
   }
 
   Future<http.Response> getSubscriptionTransactions(int? limit, int? offset) async {
-    String? token = await secureStorage.read(key: 'access_token');
+    String? token = await _getToken();
     return http.post(
       Uri.parse(apiUrl + 'api/user/get_subscription_transactions'),
       headers: {
@@ -357,7 +372,7 @@ class ApiService {
   }
 
   Future<http.Response> searchStock(String query) async {
-    String? token = await secureStorage.read(key: 'access_token');
+    String? token = await _getToken();
     return http.get(
       Uri.parse(apiUrl + 'api/stock/$query'),
       headers: {
@@ -370,7 +385,7 @@ class ApiService {
 
 
   Future<http.Response> getMarketHolidayList() async {
-    String? token = await secureStorage.read(key: 'access_token');
+    String? token = await _getToken();
     return http.get(
         Uri.parse(apiUrl + 'api/market/holiday'),
         headers: {

@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'dart:ui';
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
@@ -154,11 +155,21 @@ class _NewsScreenState extends State<NewsScreen> {
                                       borderRadius:
                                       const BorderRadius.vertical(
                                           top: Radius.circular(20)),
-                                      child: Image.network(
-                                        news.imageUrl!,
+                                      child: CachedNetworkImage(
+                                        imageUrl: news.imageUrl!,
                                         height: 160,
                                         width: double.infinity,
                                         fit: BoxFit.cover,
+                                        placeholder: (context, url) => Container(
+                                          height: 160,
+                                          color: Colors.grey.shade200,
+                                          child: const Center(child: CircularProgressIndicator(strokeWidth: 2)),
+                                        ),
+                                        errorWidget: (context, url, error) => Container(
+                                          height: 160,
+                                          color: Colors.grey.shade200,
+                                          child: const Icon(Icons.broken_image, color: Colors.grey),
+                                        ),
                                       ),
                                     ),
                                   Padding(

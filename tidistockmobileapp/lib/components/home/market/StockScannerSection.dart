@@ -39,16 +39,48 @@ class _StockScannerSectionState extends State<StockScannerSection>
   late final AnimationController _controller;
   int visibleIndex = 0;
 
+  // Cached computed data — computed once in initState, recomputed in didUpdateWidget
+  List<UnifiedScan> _cachedScans = [];
+  List<Map<String, dynamic>> _cachedGainers = [];
+  List<Map<String, dynamic>> _cachedLosers = [];
+  String _cachedLatestDate = "-";
+  double _cachedMarketStrength = 0;
+  List<Map<String, dynamic>> _cached52WeekHigh = [];
+  List<Map<String, dynamic>> _cached52WeekLow = [];
+  Map<String, int> _cachedBullishPatterns = {};
+  Map<String, int> _cachedBearishPatterns = {};
 
   @override
   void initState() {
     super.initState();
     stockData = widget.preloadedStocks;
+    _recomputeAll();
 
     _controller = AnimationController(
       vsync: this,
       duration: const Duration(seconds: 2),
     )..repeat();
+  }
+
+  @override
+  void didUpdateWidget(covariant StockScannerSection oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.preloadedStocks, widget.preloadedStocks)) {
+      stockData = widget.preloadedStocks;
+      _recomputeAll();
+    }
+  }
+
+  void _recomputeAll() {
+    _cachedScans = getUnifiedTechnicalScans();
+    _cachedGainers = getTopGainers();
+    _cachedLosers = getTopLosers();
+    _cachedLatestDate = getLatestStockDate();
+    _cachedMarketStrength = calculateMarketStrength();
+    _cached52WeekHigh = getStocksNear52WeekHigh();
+    _cached52WeekLow = getStocksNear52WeekLow();
+    _cachedBullishPatterns = getPatternCounts('Bullish');
+    _cachedBearishPatterns = getPatternCounts('Bearish');
   }
 
   @override
@@ -95,7 +127,7 @@ class _StockScannerSectionState extends State<StockScannerSection>
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 1),
             child: Text(
-              "Data Date: ${getLatestStockDate()}",
+              "Data Date: $_cachedLatestDate",
               style: const TextStyle(
                   fontSize: 12,
                   fontWeight: FontWeight.w500,
@@ -150,7 +182,7 @@ class _StockScannerSectionState extends State<StockScannerSection>
 
   // ------------------- Trend Dashboard -------------------
   Widget _buildTrendDashboard() {
-    double marketStrength = calculateMarketStrength(); // 0-100
+    double marketStrength = _cachedMarketStrength; // 0-100
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -267,7 +299,7 @@ class _StockScannerSectionState extends State<StockScannerSection>
   }
 
   Widget _buildUnifiedTechnicalSections() {
-    final scans = getUnifiedTechnicalScans();
+    final scans = _cachedScans;
 
     final shortTerm = scans.where((s) => !s.isLongTerm).toList();
     final longTerm = scans.where((s) => s.isLongTerm).toList();
@@ -384,7 +416,7 @@ class _StockScannerSectionState extends State<StockScannerSection>
   }
 
   Widget _buildTopGainersSection() {
-    final gainers = getTopGainers();
+    final gainers = _cachedGainers;
     if (gainers.isEmpty) return const SizedBox();
 
     return Column(
@@ -401,7 +433,7 @@ class _StockScannerSectionState extends State<StockScannerSection>
   }
 
   Widget _buildTopLosersSection() {
-    final losers = getTopLosers();
+    final losers = _cachedLosers;
     if (losers.isEmpty) return const SizedBox();
 
     return Column(
@@ -839,8 +871,8 @@ class _StockScannerSectionState extends State<StockScannerSection>
 
 
   Widget _buildPatternSection() {
-    final Map<String, int> bullishCounts = getPatternCounts('Bullish');
-    final Map<String, int> bearishCounts = getPatternCounts('Bearish');
+    final Map<String, int> bullishCounts = _cachedBullishPatterns;
+    final Map<String, int> bearishCounts = _cachedBearishPatterns;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1107,7 +1139,7 @@ class _StockScannerSectionState extends State<StockScannerSection>
   }
 
   Widget _build52WeekHighStocks() {
-    final highStocks = getStocksNear52WeekHigh();
+    final highStocks = _cached52WeekHigh;
     if (highStocks.isEmpty) return const SizedBox();
 
     return Column(
@@ -1134,7 +1166,7 @@ class _StockScannerSectionState extends State<StockScannerSection>
   }
 
   Widget _build52WeekLowStocks() {
-    final lowStocks = getStocksNear52WeekLow();
+    final lowStocks = _cached52WeekLow;
     if (lowStocks.isEmpty) return const SizedBox();
 
     return Column(
@@ -1280,5 +1312,7 @@ class _MiniSpeedometerPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
+  bool shouldRepaint(covariant _MiniSpeedometerPainter oldDelegate) {
+    return oldDelegate.percentage != percentage;
+  }
 }

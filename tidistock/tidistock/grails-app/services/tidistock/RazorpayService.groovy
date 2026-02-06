@@ -110,7 +110,7 @@ class RazorpayService {
             subscriptionOrder.setOrderType(OrderType.FAILED)
             subscriptionOrder.save(flush: true)
 
-            User user = User.findByWallet(Wallet.findBySubscription(subscriptionOrder.subscription))
+            User user = User.find("FROM User u WHERE u.wallet.subscription = :sub", [sub: subscriptionOrder.subscription])
 
             fireBaseService.sendToToken(
                     user.fcmToken,
@@ -199,10 +199,9 @@ class RazorpayService {
             subscription.expirationDate = calendar.time
             subscription.save(flush: true)
 
-            User user = User.findByWallet(Wallet.findBySubscription(subscription))
+            User user = User.find("FROM User u WHERE u.wallet.subscription = :sub", [sub: subscription])
 
-
-            if (user.fcmToken) {
+            if (user?.fcmToken) {
                 def formatter = new SimpleDateFormat("dd MMM yyyy") // Example: 06 Sep 2025
                 def formattedDate = formatter.format(subscription.expirationDate)
 

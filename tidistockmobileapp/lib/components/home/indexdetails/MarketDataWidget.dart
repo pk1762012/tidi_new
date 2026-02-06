@@ -34,17 +34,34 @@ class MarketDataWidgetState extends State<MarketDataWidget>
   bool _isLoading = true;
   bool _hasError = false;
 
+  // Throttle: buffer WS updates & flush to UI at ~3fps
+  Timer? _uiUpdateTimer;
+  bool _hasPendingUpdate = false;
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _startUiUpdateTimer();
     _fetchInitialData();
     connectWebSocket();
+  }
+
+  void _startUiUpdateTimer() {
+    _uiUpdateTimer?.cancel();
+    _uiUpdateTimer = Timer.periodic(const Duration(milliseconds: 300), (_) {
+      if (_hasPendingUpdate && mounted) {
+        _hasPendingUpdate = false;
+        setState(() {});
+      }
+    });
   }
 
   void _closeWs() {
     _isConnected = false;
     _isConnecting = false;
+    _uiUpdateTimer?.cancel();
+    _uiUpdateTimer = null;
     _channelSubscription?.cancel();
     _channelSubscription = null;
 
@@ -61,7 +78,11 @@ class MarketDataWidgetState extends State<MarketDataWidget>
     }
 
     if (state == AppLifecycleState.resumed) {
-      _fetchInitialData();
+      _startUiUpdateTimer();
+      // Skip HTTP fetch on resume if we already have valid data (4.3)
+      if (nifty == 0.0) {
+        _fetchInitialData();
+      }
       connectWebSocket();
     }
   }
@@ -280,15 +301,15 @@ class MarketDataWidgetState extends State<MarketDataWidget>
               }
 
               if (!mounted) return;
-              setState(() {
-                nifty = tempNifty;
-                niftyChange = tempNiftyChange;
-                bankNifty = tempBankNifty;
-                bankNiftyChange = tempBankNiftyChange;
-                otherIndices = tempOther;
-                _isLoading = false;
-                _hasError = false;
-              });
+              // Update fields without setState; the periodic timer will flush to UI
+              nifty = tempNifty;
+              niftyChange = tempNiftyChange;
+              bankNifty = tempBankNifty;
+              bankNiftyChange = tempBankNiftyChange;
+              otherIndices = tempOther;
+              _isLoading = false;
+              _hasError = false;
+              _hasPendingUpdate = true;
             }
           } catch (e) {
             print("JSON decode error: $e");
@@ -336,6 +357,7 @@ class MarketDataWidgetState extends State<MarketDataWidget>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _uiUpdateTimer?.cancel();
     _closeWs();
     super.dispose();
   }

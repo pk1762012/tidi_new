@@ -261,30 +261,30 @@ class AdminService {
     }
 
     private BigDecimal getSubscriptionRevenue(Date startDate, Date endDate) {
-        SubscriptionOrder.createCriteria().list {
+        SubscriptionOrder.createCriteria().get {
             eq("orderType", OrderType.PAID)
             if (startDate) ge("dateCreated", startDate)
             if (endDate)   lt("dateCreated", endDate)
             projections { sum("amount") }
-        }[0] ?: BigDecimal.ZERO
+        } ?: BigDecimal.ZERO
     }
 
     private BigDecimal getTotalCourseRevenue(Date startDate, Date endDate) {
-        CourseOrder.createCriteria().list {
+        CourseOrder.createCriteria().get {
             eq("orderType", OrderType.PAID)
             if (startDate) ge("dateCreated", startDate)
             if (endDate)   lt("dateCreated", endDate)
             projections { sum("amount") }
-        }[0] ?: BigDecimal.ZERO
+        } ?: BigDecimal.ZERO
     }
 
     private BigDecimal getTotalWorkshopRevenue(Date startDate, Date endDate) {
-        WorkshopRegistration.createCriteria().list {
+        WorkshopRegistration.createCriteria().get {
             eq("orderType", OrderType.PAID)
             if (startDate) ge("dateCreated", startDate)
             if (endDate)   lt("dateCreated", endDate)
             projections { sum("amount") }
-        }[0] ?: BigDecimal.ZERO
+        } ?: BigDecimal.ZERO
     }
 
     private List<Map> getCourseRevenueByBranch(Date startDate, Date endDate) {
@@ -419,21 +419,21 @@ class AdminService {
     }
 
     private Long getTotalCourseCount(Date startDate, Date endDate) {
-        CourseOrder.createCriteria().list {
+        CourseOrder.createCriteria().get {
             eq("orderType", OrderType.PAID)
             if (startDate) ge("dateCreated", startDate)
             if (endDate)   lt("dateCreated", endDate)
             projections { count("id") }
-        }[0] ?: 0L
+        } ?: 0L
     }
 
     private Long getTotalWorkshopCount(Date startDate, Date endDate) {
-        WorkshopRegistration.createCriteria().list {
+        WorkshopRegistration.createCriteria().get {
             eq("orderType", OrderType.PAID)
             if (startDate) ge("dateCreated", startDate)
             if (endDate)   lt("dateCreated", endDate)
             projections { count("id") }
-        }[0] ?: 0L
+        } ?: 0L
     }
 
     @Transactional(readOnly = true)

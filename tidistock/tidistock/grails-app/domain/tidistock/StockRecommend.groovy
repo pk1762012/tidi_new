@@ -37,5 +37,7 @@ class StockRecommend {
 
     static mapping = {
         id generator: 'uuid'
+        stockSymbol index: 'idx_stock_recommend_symbol'
+        stockRecommendationStatus index: 'idx_stock_recommend_status'
     }
 }

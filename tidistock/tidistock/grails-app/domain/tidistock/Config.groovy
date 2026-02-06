@@ -9,4 +9,8 @@ class Config {
         name nullable: false, unique: true
         value nullable: false
     }
+
+    static mapping = {
+        cache true
+    }
 }

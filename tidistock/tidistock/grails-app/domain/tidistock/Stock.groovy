@@ -8,6 +8,10 @@ class Stock {
     static constraints = {
         name nullable: false, blank: false
         symbol nullable: false, blank: false
+    }
 
+    static mapping = {
+        cache true
+        symbol index: 'idx_stock_symbol'
     }
 }

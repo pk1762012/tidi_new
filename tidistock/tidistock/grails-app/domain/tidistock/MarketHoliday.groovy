@@ -14,4 +14,8 @@ class MarketHoliday {
         day nullable: false, blank: false
         occasion nullable: false
     }
+
+    static mapping = {
+        cache true
+    }
 }

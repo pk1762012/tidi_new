@@ -13,9 +13,16 @@ import java.time.LocalDate
 import java.time.ZoneId
 import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
+import java.util.concurrent.TimeUnit
 
 @Transactional
 class CallJobService {
+
+    private static final OkHttpClient HTTP_CLIENT = new OkHttpClient.Builder()
+            .connectTimeout(10, TimeUnit.SECONDS)
+            .readTimeout(30, TimeUnit.SECONDS)
+            .writeTimeout(30, TimeUnit.SECONDS)
+            .build()
 
     @Autowired
     GrailsApplication grailsApplication
@@ -40,13 +47,26 @@ class CallJobService {
         )
 
         if (!subscriptions.isEmpty()) {
+            // Pre-fetch Subscription->User->fcmToken mapping in a single query
+            Map<Long, String> tokenMap = [:]
+            try {
+                def tokenRows = User.executeQuery("""
+                    SELECT s.id, u.fcmToken FROM User u
+                    JOIN u.wallet w JOIN w.subscription s
+                    WHERE s IN :subscriptions AND u.fcmToken IS NOT NULL
+                """, [subscriptions: subscriptions])
+                tokenMap = tokenRows.collectEntries { [(it[0]): it[1]] }
+            } catch (Exception e) {
+                log.error("Failed to pre-fetch FCM tokens for expiring subscriptions", e)
+            }
+
             subscriptions.forEach {
                 it.isSubscribed = false
                 it.subscriptionType = null
                 it.expirationDate = null
-                it.save(flush: true)
+                it.save()
 
-                String fcmToken = User?.findByWallet(Wallet?.findBySubscription(it))?.fcmToken
+                String fcmToken = tokenMap[it.id]
 
                 if (fcmToken) {
                     fireBaseService.sendToToken(
@@ -57,6 +77,7 @@ class CallJobService {
                 }
 
             }
+            Subscription.withSession { it.flush() }
         }
 
     }
@@ -65,7 +86,7 @@ class CallJobService {
     void notifyExpiringSubscriptions() {
         LocalDate today = LocalDate.now(ZoneId.of("Asia/Kolkata"))
 
-        // 🔹 Notify users whose subscription is expiring in 5 → 0 days
+        // Notify users whose subscription is expiring in 5 -> 0 days
         (0..5).each { daysLeft ->
             LocalDate targetDate = today.plusDays(daysLeft)
             Date startOfDay = Date.from(targetDate.atStartOfDay(ZoneId.systemDefault()).toInstant())
@@ -75,34 +96,58 @@ class CallJobService {
                     startOfDay, endOfDay, true
             )
 
-            expiring.each { sub ->
-                String fcmToken = User?.findByWallet(Wallet?.findBySubscription(sub))?.fcmToken
-
-                if (fcmToken) {
-                    fireBaseService.sendToToken(
-                            fcmToken,
-                            "TIDI Membership Expiring Soon – ₹249",
-                            "Only ${daysLeft} day(s) left! Renew now and keep uninterrupted access to all premium TIDI features."
-                    )
+            if (!expiring.isEmpty()) {
+                Map<Long, String> tokenMap = [:]
+                try {
+                    def tokenRows = User.executeQuery("""
+                        SELECT s.id, u.fcmToken FROM User u
+                        JOIN u.wallet w JOIN w.subscription s
+                        WHERE s IN :subscriptions AND u.fcmToken IS NOT NULL
+                    """, [subscriptions: expiring])
+                    tokenMap = tokenRows.collectEntries { [(it[0]): it[1]] }
+                } catch (Exception e) {
+                    log.error("Failed to pre-fetch FCM tokens for expiring subscriptions", e)
                 }
 
+                expiring.each { sub ->
+                    String fcmToken = tokenMap[sub.id]
 
+                    if (fcmToken) {
+                        fireBaseService.sendToToken(
+                                fcmToken,
+                                "TIDI Membership Expiring Soon – ₹249",
+                                "Only ${daysLeft} day(s) left! Renew now and keep uninterrupted access to all premium TIDI features."
+                        )
+                    }
+                }
             }
         }
 
         List<Subscription> expired = Subscription.findAllByIsSubscribed(false)
-        expired.each { sub ->
-            String fcmToken = User?.findByWallet(Wallet?.findBySubscription(sub))?.fcmToken
-
-            if (fcmToken) {
-                fireBaseService.sendToToken(
-                        fcmToken,
-                        "Get TIDI Membership – Just ₹249",
-                        "Unlock all premium TIDI features instantly. Subscribe now for only ₹249."
-                );
-
+        if (!expired.isEmpty()) {
+            Map<Long, String> expiredTokenMap = [:]
+            try {
+                def tokenRows = User.executeQuery("""
+                    SELECT s.id, u.fcmToken FROM User u
+                    JOIN u.wallet w JOIN w.subscription s
+                    WHERE s IN :subscriptions AND u.fcmToken IS NOT NULL
+                """, [subscriptions: expired])
+                expiredTokenMap = tokenRows.collectEntries { [(it[0]): it[1]] }
+            } catch (Exception e) {
+                log.error("Failed to pre-fetch FCM tokens for expired subscriptions", e)
             }
 
+            expired.each { sub ->
+                String fcmToken = expiredTokenMap[sub.id]
+
+                if (fcmToken) {
+                    fireBaseService.sendToToken(
+                            fcmToken,
+                            "Get TIDI Membership – Just ₹249",
+                            "Unlock all premium TIDI features instantly. Subscribe now for only ₹249."
+                    );
+                }
+            }
         }
     }
 
@@ -135,16 +180,13 @@ class CallJobService {
         String apiUrl = grailsApplication.config.market.api.url
         String apiPassword = grailsApplication.config.market.api.password
 
-        OkHttpClient client = new OkHttpClient().newBuilder()
-                .build()
-
         Request request = new Request.Builder()
                 .url(apiUrl+"admin/nifty_option/refresh")
                 .method("GET", null)
                 .header("authorization", "Bearer ${apiPassword}")
                 .build()
 
-        try (Response response = client.newCall(request).execute()) {
+        try (Response response = HTTP_CLIENT.newCall(request).execute()) {
             if (response.successful) {
                 log.info("Market WS creds refreshed")
 
@@ -181,8 +223,6 @@ class CallJobService {
         String apiUrl = grailsApplication.config.market.api.url
         String apiPassword = grailsApplication.config.market.api.password
 
-        OkHttpClient client = new OkHttpClient().newBuilder()
-                .build()
 
         Request request = new Request.Builder()
                 .url(apiUrl+"admin/nse/stock/scan")
@@ -190,7 +230,7 @@ class CallJobService {
                 .header("authorization", "Bearer ${apiPassword}")
                 .build()
 
-        try (Response response = client.newCall(request).execute()) {
+        try (Response response = HTTP_CLIENT.newCall(request).execute()) {
             if (!response.successful) {
                 log.error("Error while caching nse stock market data. Response code: ${response.code()}")
             }
@@ -204,8 +244,6 @@ class CallJobService {
         String apiUrl = grailsApplication.config.market.api.url
         String apiPassword = grailsApplication.config.market.api.password
 
-        OkHttpClient client = new OkHttpClient().newBuilder()
-                .build()
 
         Request request = new Request.Builder()
                 .url(apiUrl+"admin/nse/option/scan")
@@ -213,7 +251,7 @@ class CallJobService {
                 .header("authorization", "Bearer ${apiPassword}")
                 .build()
 
-        try (Response response = client.newCall(request).execute()) {
+        try (Response response = HTTP_CLIENT.newCall(request).execute()) {
             if (!response.successful) {
                 log.error("Error while caching nse option market data. Response code: ${response.code()}")
             }
@@ -227,8 +265,6 @@ class CallJobService {
         String apiUrl = grailsApplication.config.market.api.url
         String apiPassword = grailsApplication.config.market.api.password
 
-        OkHttpClient client = new OkHttpClient().newBuilder()
-                .build()
 
         Request request = new Request.Builder()
                 .url(apiUrl+"admin/nse/index/scan")
@@ -236,7 +272,7 @@ class CallJobService {
                 .header("authorization", "Bearer ${apiPassword}")
                 .build()
 
-        try (Response response = client.newCall(request).execute()) {
+        try (Response response = HTTP_CLIENT.newCall(request).execute()) {
             if (!response.successful) {
                 log.error("Error while caching nse index market data. Response code: ${response.code()}")
             }
@@ -250,8 +286,6 @@ class CallJobService {
         String apiUrl = grailsApplication.config.market.api.url
         String apiPassword = grailsApplication.config.market.api.password
 
-        OkHttpClient client = new OkHttpClient().newBuilder()
-                .build()
 
         Request request = new Request.Builder()
                 .url(apiUrl+"nifty_50_stock_analysis")
@@ -259,7 +293,7 @@ class CallJobService {
                 .header("authorization", "Bearer ${apiPassword}")
                 .build()
 
-        try (Response response = client.newCall(request).execute()) {
+        try (Response response = HTTP_CLIENT.newCall(request).execute()) {
             if (!response.successful) {
                 log.error("Error while caching nifty 50 stock data. Response code: ${response.code()}")
             }
@@ -272,8 +306,6 @@ class CallJobService {
         String apiUrl = grailsApplication.config.market.api.url
         String apiPassword = grailsApplication.config.market.api.password
 
-        OkHttpClient client = new OkHttpClient().newBuilder()
-                .build()
 
         Request request = new Request.Builder()
                 .url(apiUrl+"nse_data")
@@ -281,7 +313,7 @@ class CallJobService {
                 .header("authorization", "Bearer ${apiPassword}")
                 .build()
 
-        try (Response response = client.newCall(request).execute()) {
+        try (Response response = HTTP_CLIENT.newCall(request).execute()) {
             if (!response.successful) {
                 log.error("Error while fetching NSE data. Response code: ${response.code()}")
 
@@ -295,8 +327,6 @@ class CallJobService {
         String apiUrl = grailsApplication.config.market.api.url
         String apiPassword = grailsApplication.config.market.api.password
 
-        OkHttpClient client = new OkHttpClient().newBuilder()
-                .build()
 
         Request request = new Request.Builder()
                 .url(apiUrl+"pre_market_summary/refresh")
@@ -304,7 +334,7 @@ class CallJobService {
                 .header("authorization", "Bearer ${apiPassword}")
                 .build()
 
-        try (Response response = client.newCall(request).execute()) {
+        try (Response response = HTTP_CLIENT.newCall(request).execute()) {
             if (response.successful) {
                 fireBaseService.sendToTopic(
                         "Markets Open Soon 📈",
@@ -343,15 +373,13 @@ class CallJobService {
         String apiUrl = grailsApplication.config.ipo.api.url
         String apiKey = grailsApplication.config.ipo.api.key
 
-        OkHttpClient client = new OkHttpClient().newBuilder().build()
-
         Request request = new Request.Builder()
                 .url(apiUrl)
                 .method("GET", null)
                 .header("x-api-key", apiKey)
                 .build()
 
-        try (Response response = client.newCall(request).execute()) {
+        try (Response response = HTTP_CLIENT.newCall(request).execute()) {
             if (response.successful) {
                 String body = response.body().string()
                 def slurper = new JsonSlurper()
@@ -362,11 +390,12 @@ class CallJobService {
 
                     ipoList.each { ipo ->
                         try {
-                            new IPOData(rawJson: JsonOutput.toJson(ipo)).save(flush: true)
+                            new IPOData(rawJson: JsonOutput.toJson(ipo)).save()
                         } catch (Exception e) {
                             log.error("Failed to save IPO record: ${ipo}", e)
                         }
                     }
+                    IPOData.withSession { it.flush() }
                     log.info("Refreshed ${ipoList.size()} IPO records")
                 } else {
                     log.error("IPO API returned unexpected format: ${body?.take(200)}")
@@ -410,7 +439,7 @@ class CallJobService {
                     if (endDate != null && endDate.isBefore(today)) {
                         parsed.status = "closed"
                         ipoData.rawJson = JsonOutput.toJson(parsed)
-                        ipoData.save(flush: true)
+                        ipoData.save()
                         expiredCount++
                     }
                 }
@@ -419,6 +448,9 @@ class CallJobService {
             }
         }
 
+        if (expiredCount > 0) {
+            IPOData.withSession { it.flush() }
+        }
         log.info("Expired ${expiredCount} IPO records")
     }
 
