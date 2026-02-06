@@ -11,6 +11,9 @@ class MarketIndexBar extends StatefulWidget {
   final double bankNifty;
   final double bankNiftyChange;
   final Map<String, Map<String, double>> otherIndices;
+  final bool isLoading;
+  final bool hasError;
+  final VoidCallback? onRetry;
 
   const MarketIndexBar({
     super.key,
@@ -19,6 +22,9 @@ class MarketIndexBar extends StatefulWidget {
     required this.bankNifty,
     required this.bankNiftyChange,
     required this.otherIndices,
+    this.isLoading = false,
+    this.hasError = false,
+    this.onRetry,
   });
 
   @override
@@ -57,7 +63,7 @@ class _MarketIndexBarState extends State<MarketIndexBar>
   }
 
   void _openTradingView(String symbol) {
-    HapticFeedback.selectionClick(); // 🔥 HAPTIC FEEDBACK
+    HapticFeedback.selectionClick();
     Navigator.push(
       context,
       MaterialPageRoute(
@@ -68,7 +74,7 @@ class _MarketIndexBarState extends State<MarketIndexBar>
 
   // ================= Bottom Sheet for Other Indices =================
   void _openOtherIndicesSheet() {
-    HapticFeedback.selectionClick(); // 🔥 HAPTIC FEEDBACK
+    HapticFeedback.selectionClick();
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -181,12 +187,127 @@ class _MarketIndexBarState extends State<MarketIndexBar>
     );
   }
 
+  Widget _buildLoadingState() {
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(22),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black12,
+            blurRadius: 14,
+            offset: const Offset(0, 6),
+          ),
+        ],
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          _buildSkeletonCard(),
+          const SizedBox(
+            width: 16,
+            height: 16,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
+          _buildSkeletonCard(),
+        ],
+      ),
+    );
+  }
 
+  Widget _buildSkeletonCard() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          width: 70,
+          height: 12,
+          decoration: BoxDecoration(
+            color: Colors.grey.shade200,
+            borderRadius: BorderRadius.circular(4),
+          ),
+        ),
+        const SizedBox(height: 8),
+        Container(
+          width: 100,
+          height: 20,
+          decoration: BoxDecoration(
+            color: Colors.grey.shade200,
+            borderRadius: BorderRadius.circular(4),
+          ),
+        ),
+        const SizedBox(height: 7),
+        Container(
+          width: 90,
+          height: 16,
+          decoration: BoxDecoration(
+            color: Colors.grey.shade100,
+            borderRadius: BorderRadius.circular(8),
+          ),
+        ),
+      ],
+    );
+  }
 
-
+  Widget _buildErrorState() {
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(22),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black12,
+            blurRadius: 14,
+            offset: const Offset(0, 6),
+          ),
+        ],
+      ),
+      child: Column(
+        children: [
+          Icon(Icons.cloud_off_rounded, color: Colors.grey.shade400, size: 28),
+          const SizedBox(height: 8),
+          Text(
+            "Unable to load market data",
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w500,
+              color: Colors.grey.shade600,
+            ),
+          ),
+          const SizedBox(height: 10),
+          SizedBox(
+            height: 32,
+            child: TextButton.icon(
+              onPressed: widget.onRetry,
+              icon: const Icon(Icons.refresh, size: 16),
+              label: const Text("Retry", style: TextStyle(fontSize: 13)),
+              style: TextButton.styleFrom(
+                foregroundColor: Colors.black87,
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                  side: BorderSide(color: Colors.grey.shade300),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
+    if (widget.isLoading) {
+      return _buildLoadingState();
+    }
+
+    if (widget.hasError) {
+      return _buildErrorState();
+    }
+
     return Column(
       children: [
         // ================= Top Nifty / BankNifty Bar =================
@@ -354,7 +475,7 @@ class _MarketIndexBarState extends State<MarketIndexBar>
       color: Colors.transparent,
       child: InkWell(
         borderRadius: BorderRadius.circular(14),
-        onTap: () => _openTradingView(symbol), // ✅ whole card clickable
+        onTap: () => _openTradingView(symbol),
         child: Container(
           margin: const EdgeInsets.symmetric(vertical: 6),
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),

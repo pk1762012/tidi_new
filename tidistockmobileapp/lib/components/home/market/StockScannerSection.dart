@@ -208,17 +208,17 @@ class _StockScannerSectionState extends State<StockScannerSection>
 
     for (var s in stockData) {
       // -------- DAILY / SHORT TERM --------
-      double rsi = s['RSI_14'] ?? 50;
+      double rsi = (s['RSI_14'] ?? 50).toDouble();
       if (rsi > 70) rsiOver++;
       if (rsi < 30) rsiUnder++;
 
-      double macd = s['MACD'] ?? 0;
-      double signal = s['MACD_signal'] ?? 0;
+      double macd = (s['MACD'] ?? 0).toDouble();
+      double signal = (s['MACD_signal'] ?? 0).toDouble();
       if (macd > signal) macdBullish++;
       if (macd < signal) macdBearish++;
 
-      double sma20 = s['SMA_20'] ?? 0;
-      double sma50 = s['SMA_50'] ?? sma20;
+      double sma20 = (s['SMA_20'] ?? 0).toDouble();
+      double sma50 = (s['SMA_50'] ?? sma20).toDouble();
       if (sma20 > sma50) smaAbove++;
       if (sma20 < sma50) smaBelow++;
 
@@ -233,7 +233,7 @@ class _StockScannerSectionState extends State<StockScannerSection>
       if (s['Open_High'] != null && s['Open_High'] != 'None') openHigh++;
 
       // -------- WEEKLY / LONG TERM --------
-      double rsiW = s['Weekly_RSI_14'] ?? 50;
+      double rsiW = (s['Weekly_RSI_14'] ?? 50).toDouble();
       if (rsiW > 70) rsiOverWeekly++;
       if (rsiW < 30) rsiUnderWeekly++;
 
@@ -366,8 +366,8 @@ class _StockScannerSectionState extends State<StockScannerSection>
   List<Map<String, dynamic>> getTopGainers({int limit = 10}) {
     List<Map<String, dynamic>> sorted = List<Map<String, dynamic>>.from(stockData);
     sorted.sort((a, b) {
-      double percA = a['percentage_change'] ?? 0;
-      double percB = b['percentage_change'] ?? 0;
+      double percA = (a['percentage_change'] ?? 0).toDouble();
+      double percB = (b['percentage_change'] ?? 0).toDouble();
       return percB.compareTo(percA); // descending
     });
     return sorted.take(limit).toList();
@@ -376,8 +376,8 @@ class _StockScannerSectionState extends State<StockScannerSection>
   List<Map<String, dynamic>> getTopLosers({int limit = 10}) {
     List<Map<String, dynamic>> sorted = List<Map<String, dynamic>>.from(stockData);
     sorted.sort((a, b) {
-      double percA = a['percentage_change'] ?? 0;
-      double percB = b['percentage_change'] ?? 0;
+      double percA = (a['percentage_change'] ?? 0).toDouble();
+      double percB = (b['percentage_change'] ?? 0).toDouble();
       return percA.compareTo(percB); // ascending
     });
     return sorted.take(limit).toList();
@@ -1091,8 +1091,8 @@ class _StockScannerSectionState extends State<StockScannerSection>
   List<Map<String, dynamic>> getStocksNear52WeekHigh() {
     return stockData.where((stock) {
       final s = stock as Map<String, dynamic>;
-      double lastClose = s['Last_Close'] ?? 0;
-      double high52 = s['52_Week_High'] ?? 0;
+      double lastClose = (s['Last_Close'] ?? 0).toDouble();
+      double high52 = (s['52_Week_High'] ?? 0).toDouble();
       return high52 != 0 && lastClose / high52 >= 0.95;
     }).map((stock) => stock as Map<String, dynamic>).toList();
   }
@@ -1100,8 +1100,8 @@ class _StockScannerSectionState extends State<StockScannerSection>
   List<Map<String, dynamic>> getStocksNear52WeekLow() {
     return stockData.where((stock) {
       final s = stock as Map<String, dynamic>;
-      double lastClose = s['Last_Close'] ?? 0;
-      double low52 = s['52_Week_Low'] ?? 0;
+      double lastClose = (s['Last_Close'] ?? 0).toDouble();
+      double low52 = (s['52_Week_Low'] ?? 0).toDouble();
       return low52 != 0 && lastClose / low52 <= 1.05 && lastClose / low52 >= 0.95;
     }).map((stock) => stock as Map<String, dynamic>).toList();
   }
@@ -1122,8 +1122,8 @@ class _StockScannerSectionState extends State<StockScannerSection>
             itemCount: highStocks.length,
             itemBuilder: (context, index) {
               final stock = highStocks[index];
-              double lastClose = stock['Last_Close'] ?? 0;
-              double high52 = stock['52_Week_High'] ?? 0;
+              double lastClose = (stock['Last_Close'] ?? 0).toDouble();
+              double high52 = (stock['52_Week_High'] ?? 0).toDouble();
 
               return _build52WeekStockCard(stock['Symbol'], lastClose, high52, isHigh: true);
             },
@@ -1149,8 +1149,8 @@ class _StockScannerSectionState extends State<StockScannerSection>
             itemCount: lowStocks.length,
             itemBuilder: (context, index) {
               final stock = lowStocks[index];
-              double lastClose = stock['Last_Close'] ?? 0;
-              double low52 = stock['52_Week_Low'] ?? 0;
+              double lastClose = (stock['Last_Close'] ?? 0).toDouble();
+              double low52 = (stock['52_Week_Low'] ?? 0).toDouble();
 
               return _build52WeekStockCard(stock['Symbol'], lastClose, low52, isHigh: false);
             },

@@ -49,8 +49,19 @@ class _IpoListingPageState extends State<IpoListingPage> {
     final response = await ApiService().getIPO();
     if (response.statusCode == 200) {
       final List data = jsonDecode(response.body);
+      final now = DateTime.now();
+      final today = DateTime(now.year, now.month, now.day);
+
       setState(() {
-        openIpos = data.where((e) => e['status'] == 'open').toList();
+        openIpos = data.where((e) {
+          if (e['status'] != 'open') return false;
+          final endDateStr = e['endDate'];
+          if (endDateStr != null) {
+            final endDate = DateTime.tryParse(endDateStr);
+            if (endDate != null && endDate.isBefore(today)) return false;
+          }
+          return true;
+        }).toList();
         upcomingIpos = data.where((e) => e['status'] == 'upcoming').toList();
         loading = false;
       });
@@ -198,7 +209,6 @@ class _IpoListingPageState extends State<IpoListingPage> {
                   Row(
                     children: [
                       Expanded(child: _infoBox("Price", ipo['priceRange'] ?? "-")),
-                      Expanded(child: _infoBox("Min Amt", "₹${ipo['minAmount'] ?? '-'}")),
                       Expanded(child: _gmpBox(ipo)),
                     ],
                   ),
@@ -313,10 +323,6 @@ class _IpoListingPageState extends State<IpoListingPage> {
                       children: [
                         _infoRow("Price Range",
                             ipo['priceRange'] ?? "-"),
-                        _infoRow(
-                            "Minimum Amount",
-                            "₹${ipo['minAmount'] ?? '-'}"),
-
                         /// GMP (LOCKED)
                         if (ipo['gmp']?['aggregations']?['mean'] != null)
                           _infoRow(

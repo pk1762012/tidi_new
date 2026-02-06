@@ -526,7 +526,13 @@ class StockService {
                 DateTimeFormatter.ofPattern("d MMM yyyy"),
                 DateTimeFormatter.ofPattern("dd MMM yyyy"),
                 DateTimeFormatter.ofPattern("MMM d, yyyy"),
-                DateTimeFormatter.ofPattern("dd-MM-yyyy")
+                DateTimeFormatter.ofPattern("dd-MM-yyyy"),
+                DateTimeFormatter.ofPattern("dd/MM/yyyy"),
+                DateTimeFormatter.ofPattern("MM/dd/yyyy"),
+                DateTimeFormatter.ofPattern("MMMM d, yyyy"),
+                DateTimeFormatter.ofPattern("d MMMM yyyy"),
+                DateTimeFormatter.ofPattern("dd-MMM-yyyy"),
+                DateTimeFormatter.ISO_LOCAL_DATE,
         ]
 
         IPOData.list().collect { IPOData ipo ->
