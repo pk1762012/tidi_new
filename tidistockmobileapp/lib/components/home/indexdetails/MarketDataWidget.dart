@@ -69,38 +69,118 @@ class MarketDataWidgetState extends State<MarketDataWidget>
   Future<void> _fetchInitialData() async {
     try {
       final apiService = ApiService();
-      final results = await Future.wait([
-        apiService.getMarketQuote('NIFTY 50'),
-        apiService.getMarketQuote('NIFTY BANK'),
-      ]).timeout(const Duration(seconds: 10));
-
-      final niftyResponse = results[0];
-      final bankNiftyResponse = results[1];
 
       double tempNifty = nifty;
       double tempNiftyChange = niftyChange;
       double tempBankNifty = bankNifty;
       double tempBankNiftyChange = bankNiftyChange;
 
-      if (niftyResponse.statusCode == 200) {
-        final body = json.decode(niftyResponse.body);
-        final data = body['data'] ?? body;
-        final cmp = (data['cmp'] ?? data['last'] ?? data['ltp'] ?? 0).toDouble();
-        final prevClose = (data['prev_close'] ?? data['previousClose'] ?? cmp).toDouble();
-        if (cmp > 0) {
-          tempNifty = double.parse(cmp.toStringAsFixed(2));
-          tempNiftyChange = double.parse((cmp - prevClose).toStringAsFixed(2));
+      bool gotData = false;
+
+      // Try primary index/quote endpoint first
+      try {
+        final results = await Future.wait([
+          apiService.getMarketQuote('NIFTY 50'),
+          apiService.getMarketQuote('NIFTY BANK'),
+        ]).timeout(const Duration(seconds: 8));
+
+        final niftyResponse = results[0];
+        final bankNiftyResponse = results[1];
+
+        if (niftyResponse.statusCode == 200) {
+          final body = json.decode(niftyResponse.body);
+          final data = body['data'] ?? body;
+          final cmp = (data['cmp'] ?? data['last'] ?? data['ltp'] ?? 0).toDouble();
+          final prevClose = (data['prev_close'] ?? data['previousClose'] ?? cmp).toDouble();
+          if (cmp > 0) {
+            tempNifty = double.parse(cmp.toStringAsFixed(2));
+            tempNiftyChange = double.parse((cmp - prevClose).toStringAsFixed(2));
+            gotData = true;
+          }
         }
+
+        if (bankNiftyResponse.statusCode == 200) {
+          final body = json.decode(bankNiftyResponse.body);
+          final data = body['data'] ?? body;
+          final cmp = (data['cmp'] ?? data['last'] ?? data['ltp'] ?? 0).toDouble();
+          final prevClose = (data['prev_close'] ?? data['previousClose'] ?? cmp).toDouble();
+          if (cmp > 0) {
+            tempBankNifty = double.parse(cmp.toStringAsFixed(2));
+            tempBankNiftyChange = double.parse((cmp - prevClose).toStringAsFixed(2));
+            gotData = true;
+          }
+        }
+      } catch (e) {
+        print("Primary index/quote failed: $e");
       }
 
-      if (bankNiftyResponse.statusCode == 200) {
-        final body = json.decode(bankNiftyResponse.body);
-        final data = body['data'] ?? body;
-        final cmp = (data['cmp'] ?? data['last'] ?? data['ltp'] ?? 0).toDouble();
-        final prevClose = (data['prev_close'] ?? data['previousClose'] ?? cmp).toDouble();
-        if (cmp > 0) {
-          tempBankNifty = double.parse(cmp.toStringAsFixed(2));
-          tempBankNiftyChange = double.parse((cmp - prevClose).toStringAsFixed(2));
+      // Fallback: use pre_market_summary + option-chain PCR individually
+      if (!gotData) {
+        // Try pre_market_summary for Nifty
+        try {
+          final summaryResponse = await apiService
+              .getPreMarketSummary()
+              .timeout(const Duration(seconds: 15));
+          if (summaryResponse.statusCode == 200) {
+            final body = json.decode(summaryResponse.body);
+            final data = body['data'];
+            if (data != null) {
+              final niftySpot = data['nifty_spot'] ?? data['gift_nifty']?['data'];
+              if (niftySpot != null) {
+                final last = (niftySpot['last'] ?? 0).toDouble();
+                if (last > 0) {
+                  final pctStr = (niftySpot['pct_change'] ?? '+0%').toString().replaceAll('%', '');
+                  final pct = double.tryParse(pctStr) ?? 0;
+                  final prevClose = pct != 0 ? last / (1 + pct / 100) : last;
+                  tempNifty = double.parse(last.toStringAsFixed(2));
+                  tempNiftyChange = double.parse((last - prevClose).toStringAsFixed(2));
+                  gotData = true;
+                }
+              }
+            }
+          }
+        } catch (e) {
+          print("Pre-market summary fallback failed: $e");
+        }
+
+        // Try option-chain PCR for more accurate Nifty underlying value
+        try {
+          final niftyPcrResponse = await apiService
+              .getOptionPulsePCR('NIFTY')
+              .timeout(const Duration(seconds: 15));
+          if (niftyPcrResponse.statusCode == 200) {
+            final body = json.decode(niftyPcrResponse.body);
+            final pcrData = body['data'];
+            if (pcrData != null) {
+              final uv = (pcrData['underlyingValue'] ?? 0).toDouble();
+              if (uv > 0) {
+                tempNifty = double.parse(uv.toStringAsFixed(2));
+                gotData = true;
+              }
+            }
+          }
+        } catch (e) {
+          print("Nifty PCR fallback failed: $e");
+        }
+
+        // Try option-chain PCR for Bank Nifty
+        try {
+          final bankNiftyPcrResponse = await apiService
+              .getOptionPulsePCR('BANKNIFTY')
+              .timeout(const Duration(seconds: 15));
+          if (bankNiftyPcrResponse.statusCode == 200) {
+            final body = json.decode(bankNiftyPcrResponse.body);
+            final pcrData = body['data'];
+            if (pcrData != null) {
+              final uv = (pcrData['underlyingValue'] ?? 0).toDouble();
+              if (uv > 0) {
+                tempBankNifty = double.parse(uv.toStringAsFixed(2));
+                gotData = true;
+              }
+            }
+          }
+        } catch (e) {
+          print("BankNifty PCR fallback failed: $e");
         }
       }
 
@@ -111,7 +191,7 @@ class MarketDataWidgetState extends State<MarketDataWidget>
         bankNifty = tempBankNifty;
         bankNiftyChange = tempBankNiftyChange;
         _isLoading = false;
-        _hasError = false;
+        _hasError = !gotData && tempNifty == 0.0 && tempBankNifty == 0.0;
       });
     } catch (e) {
       print("HTTP fetch error: $e");

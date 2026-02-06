@@ -20,7 +20,7 @@ class _NewsScreenState extends State<NewsScreen> {
   bool _isLoading = true;
 
   final String rssUrl =
-      'https://www.ai.growscan.in/news';
+      'https://economictimes.indiatimes.com/markets/rssfeeds/1977021501.cms';
 
   @override
   void initState() {
@@ -35,18 +35,38 @@ class _NewsScreenState extends State<NewsScreen> {
       final items = document.findAllElements('item');
 
       final news = items.map((item) {
-        final pubDateStr = item.findElements('pubDate').first.text;
-        final dateTime = HttpDate.parse(pubDateStr);
+        final pubDateStr = item.findElements('pubDate').firstOrNull?.text;
+        DateTime dateTime;
+        try {
+          dateTime = HttpDate.parse(pubDateStr ?? '');
+        } catch (_) {
+          try {
+            dateTime = DateFormat('EEE, dd MMM yyyy HH:mm:ss Z')
+                .parse(pubDateStr ?? '', true);
+          } catch (_) {
+            dateTime = DateTime.now();
+          }
+        }
         final formattedDate =
-            DateFormat('d MMM, h:mm a').format(dateTime.toLocal()) + ' IST';
+            '${DateFormat('d MMM, h:mm a').format(dateTime.toLocal())} IST';
 
+        // Support both <media:content> and <enclosure> for images
         final media = item.findElements('media:content');
-        final imageUrl =
-        media.isNotEmpty ? media.first.getAttribute('url') : null;
+        String? imageUrl =
+            media.isNotEmpty ? media.first.getAttribute('url') : null;
+        if (imageUrl == null) {
+          final enclosure = item.findElements('enclosure');
+          if (enclosure.isNotEmpty) {
+            final type = enclosure.first.getAttribute('type') ?? '';
+            if (type.startsWith('image')) {
+              imageUrl = enclosure.first.getAttribute('url');
+            }
+          }
+        }
 
         return _NewsItem(
-          title: item.findElements('title').first.text,
-          link: item.findElements('link').first.text,
+          title: item.findElements('title').first.text.trim(),
+          link: item.findElements('link').first.text.trim(),
           pubDate: formattedDate,
           dateTime: dateTime,
           imageUrl: imageUrl,
@@ -60,9 +80,12 @@ class _NewsScreenState extends State<NewsScreen> {
         _isLoading = false;
       });
     } catch (e) {
+      print("News fetch error: $e");
       setState(() => _isLoading = false);
-      ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text("Failed to load news")));
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text("Failed to load news")));
+      }
     }
   }
 
