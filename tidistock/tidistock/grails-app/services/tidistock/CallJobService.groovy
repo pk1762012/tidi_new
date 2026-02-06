@@ -2,6 +2,8 @@ package tidistock
 
 import grails.core.GrailsApplication
 import grails.gorm.transactions.Transactional
+import groovy.json.JsonSlurper
+import groovy.json.JsonOutput
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.scheduling.annotation.Scheduled
 import okhttp3.*
@@ -10,6 +12,7 @@ import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.ZoneId
 import java.time.ZonedDateTime
+import java.time.format.DateTimeFormatter
 
 @Transactional
 class CallJobService {
@@ -320,5 +323,106 @@ class CallJobService {
         MarketHoliday.findByDate(today) != null
     }
 
+    @Scheduled(cron = "0 30 6 * * ?", zone = "Asia/Kolkata")
+    void refreshAndExpireIPOs() {
+        log.info("Starting IPO refresh and expiration job")
+        try {
+            getIPOData()
+        } catch (Exception e) {
+            log.error("Error during IPO data fetch", e)
+        }
+        try {
+            expireIPOs()
+        } catch (Exception e) {
+            log.error("Error during IPO expiration", e)
+        }
+        log.info("IPO refresh and expiration job completed")
+    }
+
+    void getIPOData() {
+        String apiUrl = grailsApplication.config.ipo.api.url
+        String apiKey = grailsApplication.config.ipo.api.key
+
+        OkHttpClient client = new OkHttpClient().newBuilder().build()
+
+        Request request = new Request.Builder()
+                .url(apiUrl)
+                .method("GET", null)
+                .header("x-api-key", apiKey)
+                .build()
+
+        try (Response response = client.newCall(request).execute()) {
+            if (response.successful) {
+                String body = response.body().string()
+                def slurper = new JsonSlurper()
+                def ipoList = slurper.parseText(body)
+
+                if (ipoList instanceof List) {
+                    IPOData.executeUpdate("DELETE FROM IPOData")
+
+                    ipoList.each { ipo ->
+                        try {
+                            new IPOData(rawJson: JsonOutput.toJson(ipo)).save(flush: true)
+                        } catch (Exception e) {
+                            log.error("Failed to save IPO record: ${ipo}", e)
+                        }
+                    }
+                    log.info("Refreshed ${ipoList.size()} IPO records")
+                } else {
+                    log.error("IPO API returned unexpected format: ${body?.take(200)}")
+                }
+            } else {
+                log.error("Error fetching IPO data. Response code: ${response.code()}")
+            }
+        } catch (Exception e) {
+            log.error("Exception while fetching IPO data", e)
+        }
+    }
+
+    void expireIPOs() {
+        def slurper = new JsonSlurper()
+        LocalDate today = LocalDate.now(ZoneId.of("Asia/Kolkata"))
+        def dateFormats = [
+                DateTimeFormatter.ofPattern("yyyy-MM-dd"),
+                DateTimeFormatter.ofPattern("d MMM yyyy"),
+                DateTimeFormatter.ofPattern("dd MMM yyyy"),
+                DateTimeFormatter.ofPattern("MMM d, yyyy"),
+                DateTimeFormatter.ofPattern("dd-MM-yyyy")
+        ]
+
+        List<IPOData> allIpos = IPOData.list()
+        int expiredCount = 0
+
+        allIpos.each { IPOData ipoData ->
+            try {
+                def parsed = slurper.parseText(ipoData.rawJson)
+                String status = parsed.status?.toString()?.toLowerCase()
+                String endDateStr = parsed.endDate ?: parsed.end_date ?: parsed.close_date
+
+                if (status == "open" && endDateStr) {
+                    LocalDate endDate = parseDate(endDateStr, dateFormats)
+                    if (endDate != null && endDate.isBefore(today)) {
+                        parsed.status = "closed"
+                        ipoData.rawJson = JsonOutput.toJson(parsed)
+                        ipoData.save(flush: true)
+                        expiredCount++
+                    }
+                }
+            } catch (Exception e) {
+                log.error("Failed to process IPO record id=${ipoData.id}", e)
+            }
+        }
+
+        log.info("Expired ${expiredCount} IPO records")
+    }
+
+    private static LocalDate parseDate(String dateStr, List<DateTimeFormatter> formats) {
+        for (DateTimeFormatter fmt : formats) {
+            try {
+                return LocalDate.parse(dateStr.trim(), fmt)
+            } catch (Exception ignored) {}
+        }
+        return null
+    }
 
 }

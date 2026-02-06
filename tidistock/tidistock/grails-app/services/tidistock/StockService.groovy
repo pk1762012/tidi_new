@@ -17,6 +17,7 @@ import tidistock.requestbody.StockRecommendationPayload
 import tidistock.requestbody.StockRecommendationUpdatePayload
 
 import java.time.LocalDate
+import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
 @Transactional
@@ -519,10 +520,41 @@ class StockService {
     List getIPODataList() {
 
         def slurper = new JsonSlurper()
+        LocalDate today = LocalDate.now(ZoneId.of("Asia/Kolkata"))
+        def dateFormats = [
+                DateTimeFormatter.ofPattern("yyyy-MM-dd"),
+                DateTimeFormatter.ofPattern("d MMM yyyy"),
+                DateTimeFormatter.ofPattern("dd MMM yyyy"),
+                DateTimeFormatter.ofPattern("MMM d, yyyy"),
+                DateTimeFormatter.ofPattern("dd-MM-yyyy")
+        ]
 
         IPOData.list().collect { IPOData ipo ->
-            slurper.parseText(ipo.rawJson)
+            def parsed = slurper.parseText(ipo.rawJson)
+            String status = parsed.status?.toString()?.toLowerCase()
+            String endDateStr = parsed.endDate ?: parsed.end_date ?: parsed.close_date
+
+            if (status == "open" && endDateStr) {
+                LocalDate endDate = tryParseDate(endDateStr, dateFormats)
+                if (endDate != null && endDate.isBefore(today)) {
+                    parsed.status = "closed"
+                }
+            }
+
+            parsed
+        }.findAll { it ->
+            String s = it.status?.toString()?.toLowerCase()
+            s == "open" || s == "upcoming"
         }
+    }
+
+    private static LocalDate tryParseDate(String dateStr, List<DateTimeFormatter> formats) {
+        for (DateTimeFormatter fmt : formats) {
+            try {
+                return LocalDate.parse(dateStr.trim(), fmt)
+            } catch (Exception ignored) {}
+        }
+        return null
     }
 
     @Transactional(readOnly = true)
