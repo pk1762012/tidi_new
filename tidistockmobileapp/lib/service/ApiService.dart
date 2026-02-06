@@ -433,50 +433,6 @@ class ApiService {
   }
 
 
-  Future<http.Response> aiChat(List<String> history, String question) async {
-    return http.post(
-      Uri.parse(marketDataUrl + 'fini_chat'),
-      headers: {
-        'Authorization': 'Bearer $marketDataPassword',
-        'Content-Type': 'application/json',
-      },
-      body: jsonEncode({
-        'history': history,
-        'question': question,
-      }),
-    );
-  }
-
-  Future<http.Response> stockChat(String symbol, List<String> history, String question) async {
-    return http.post(
-      Uri.parse(marketDataUrl + 'stock_chat'),
-      headers: {
-        'Authorization': 'Bearer $marketDataPassword',
-        'Content-Type': 'application/json',
-      },
-      body: jsonEncode({
-        'symbol': symbol,
-        'history': history,
-        'question': question,
-      }),
-    );
-  }
-
-  Future<http.Response> multiStockChat(List<String> symbols, List<String> history, String question) async {
-    return http.post(
-      Uri.parse(marketDataUrl + 'multi_stock_chat'),
-      headers: {
-        'Authorization': 'Bearer $marketDataPassword',
-        'Content-Type': 'application/json',
-      },
-      body: jsonEncode({
-        'symbols': symbols,
-        'history': history,
-        'question': question,
-      }),
-    );
-  }
-
   Future<http.Response> getOptionPulsePCR(String symbol) async {
     return http.get(
       Uri.parse(marketDataUrl + 'option-chain/$symbol/pcr'),

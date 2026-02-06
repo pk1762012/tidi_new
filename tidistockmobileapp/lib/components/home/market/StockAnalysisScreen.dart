@@ -7,8 +7,6 @@ import '../../../theme/theme.dart';
 import '../../../widgets/SubscriptionPromptDialog.dart';
 import '../../../widgets/customScaffold.dart';
 
-import '../ai/AIBotButton.dart';
-import '../ai/MultiStockChatScreen.dart';
 import 'StockDetailsScreen.dart';
 import 'StockScannerSection.dart';
 
@@ -184,25 +182,6 @@ class _StockAnalysisScreenState extends State<StockAnalysisScreen> {
                     ),
                     const SizedBox(height: 15),
                   ],
-                ),
-
-              if (compareStocks.length >= 2)
-                AIBotButton(
-                  title: "Compare ${compareStocks.length} Stocks",
-                  onTap: () async {
-                    await loadSubscriptionStatus();
-                    if (!isSubscribed) {
-                      SubscriptionPromptDialog.show(context);
-                      return;
-                    }
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) =>
-                            MultiStockChatScreen(symbols: compareStocks),
-                      ),
-                    );
-                  },
                 ),
 
               const SizedBox(height: 16),

@@ -7,7 +7,6 @@ import '../../../service/ApiService.dart';
 import '../../../widgets/SubscriptionPromptDialog.dart';
 import '../../../widgets/customScaffold.dart';
 import 'StockChartPage.dart';
-import 'package:tidistockmobileapp/components/home/ai/StockChatScreen.dart';
 import 'dart:ui';
 
 
@@ -1044,49 +1043,7 @@ class _StockDetailScreenState extends State<StockDetailScreen> with SingleTicker
                     Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        /// Ask AI (TOP)
-                        GestureDetector(
-                          onTap: () async {
-                            await loadSubscriptionStatus();
-                            if (!isSubscribed) {
-                              SubscriptionPromptDialog.show(context);
-                              return;
-                            }
-                            Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                builder: (_) =>
-                                    StockChatScreen(symbol: widget.symbol),
-                              ),
-                            );
-                          },
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              ClipOval(
-                                child: Image.asset(
-                                  'assets/images/tidi_ai.gif',
-                                  width: 26,
-                                  height: 26,
-                                  fit: BoxFit.cover,
-                                ),
-                              ),
-                              const SizedBox(width: 6),
-                              Text(
-                                'Ask AI',
-                                style: TextStyle(
-                                  fontSize: 13,
-                                  fontWeight: FontWeight.bold,
-                                  color: lightColorScheme.primary,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-
-                        const SizedBox(height: 12),
-
-                        /// Chart (BOTTOM)
+                        /// Chart
                         GestureDetector(
                           onTap: () {
                             Navigator.push(
