@@ -7,8 +7,6 @@ import '../../../service/ApiService.dart';
 import '../../../widgets/SubscriptionPromptDialog.dart';
 import '../../../widgets/customScaffold.dart';
 import 'StockChartPage.dart';
-import 'dart:ui';
-
 
 enum TrendSignal { Bullish, Bearish, Neutral }
 enum Verdict { Bullish, Bearish, Neutral, SlightlyBullish, SlightlyBearish, HighPE }
@@ -35,10 +33,10 @@ class _StockDetailScreenState extends State<StockDetailScreen> with SingleTicker
   @override
   void initState() {
     super.initState();
-    _fetchStockAnalysis();
-    loadSubscriptionStatus();
     _controller = AnimationController(vsync: this, duration: const Duration(milliseconds: 800));
     _fade = CurvedAnimation(parent: _controller, curve: Curves.easeInOut);
+    _fetchStockAnalysis();
+    loadSubscriptionStatus();
   }
 
   @override
@@ -356,46 +354,48 @@ class _StockDetailScreenState extends State<StockDetailScreen> with SingleTicker
 
     return GestureDetector(
       onTap: onTap,
-      child: Stack(
-        children: [
-          // 🚫 Original content (blocked from interaction)
-          AbsorbPointer(
-            child: Opacity(
-              opacity: 0.15, // faint structure only
-              child: child,
-            ),
-          ),
-
-          // 🔒 FULL LOCK OVERLAY
-          Positioned.fill(
-            child: Container(
-              decoration: BoxDecoration(
-                color: Colors.white, // 🔥 complete block
-                borderRadius: BorderRadius.circular(18),
-              ),
-              alignment: Alignment.center,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: const [
-                  Icon(Icons.lock_rounded, size: 42, color: Colors.black),
-                  SizedBox(height: 12),
-                  Text(
-                    'Access to Analyst Recommendations is limited to TIDI Wealth members. Please join to continue.',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      color: Colors.black,
-                      fontSize: 15,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ],
+      child: Container(
+        width: double.infinity,
+        margin: const EdgeInsets.symmetric(vertical: 12),
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: Colors.grey.shade300),
+          boxShadow: const [
+            BoxShadow(color: Colors.black12, blurRadius: 6, offset: Offset(0, 3)),
+          ],
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.lock_rounded, size: 28, color: Colors.black54),
+            const SizedBox(height: 10),
+            const Text(
+              'Subscribe to unlock full analysis',
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+                color: Colors.black87,
               ),
             ),
-          ),
-        ],
+            const SizedBox(height: 12),
+            ElevatedButton(
+              onPressed: onTap,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: lightColorScheme.primary,
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 10),
+              ),
+              child: const Text('Join Now'),
+            ),
+          ],
+        ),
       ),
     );
-
   }
 
 
@@ -1099,140 +1099,111 @@ class _StockDetailScreenState extends State<StockDetailScreen> with SingleTicker
                     children: [
                       _analystSection(),
                       _analystBreakdownSection(),
+
+                      _glassCard('Valuation & Dividends', {
+                        'PE Ratio': _fundamentalData?['PE_ratio'],
+                        'Forward PE': _fundamentalData?['forward_PE'],
+                        'EPS': _fundamentalData?['EPS'],
+                        'Market Cap': _fundamentalData?['market_cap'] != null ? _formatMarketCap(_fundamentalData!['market_cap']) : 'N/A',
+                        'Dividend Yield': _fundamentalData?['dividend_yield'],
+                        'Beta': _fundamentalData?['beta'],
+                      }),
+                      _glassCard('Technical Indicators', {
+                        'RSI(14)': _technicalData?['RSI_14'],
+                        'MACD': _technicalData?['MACD'],
+                        'MACD Signal': _technicalData?['MACD_signal'],
+                        'SMA 20': _technicalData?['SMA_20'],
+                        'SMA 50': _technicalData?['SMA_50'],
+                        'EMA 20': _technicalData?['EMA_20'],
+                        'EMA 50': _technicalData?['EMA_50'],
+                        'Volume': _technicalData?['volume'],
+                      }),
+                      _glassCard('Advanced Fundamentals', {
+                        'Return on Equity (%)': _fundamentalData?['return_on_equity'],
+                        'Return on Assets (%)': _fundamentalData?['return_on_assets'],
+                        'Book Value': _fundamentalData?['book_value'],
+                        'Price to Book': _fundamentalData?['price_to_book'],
+                        'PEG Ratio': _fundamentalData?['peg_ratio'],
+                      }),
+                      _glassCard('Margins & Growth', {
+                        'Profit Margin (%)': _fundamentalData?['profit_margins'],
+                        'Gross Margin (%)': _fundamentalData?['gross_margins'],
+                        'Operating Margin (%)': _fundamentalData?['operating_margins'],
+                        'Revenue Growth (%)': _fundamentalData?['revenue_growth'],
+                        'Earnings Growth (%)': _fundamentalData?['earnings_growth'],
+                        'Quarterly Earnings Growth (%)':
+                        _fundamentalData?['earnings_quarterly_growth'],
+                      }),
+                      _glassCard('Financial Health', {
+                        'Total Cash': _fundamentalData?['total_cash'] != null ? _formatMarketCap(_fundamentalData!['total_cash']) : 'N/A',
+                        'Total Debt': _fundamentalData?['total_debt'] != null ? _formatMarketCap(_fundamentalData!['total_debt']) : 'N/A',
+                        'Debt / Equity': _fundamentalData?['debt_to_equity'],
+                        'Free Cash Flow': _fundamentalData?['free_cashflow'] != null ? _formatMarketCap(_fundamentalData!['free_cashflow']) : 'N/A',
+                        'Operating Cash Flow': _fundamentalData?['operating_cashflow'] != null ? _formatMarketCap(_fundamentalData!['operating_cashflow']) : 'N/A',
+                        'Current Ratio': _fundamentalData?['current_ratio'],
+                        'Quick Ratio': _fundamentalData?['quick_ratio'],
+                      }),
+                      _glassCard('Ownership & Risk', {
+                        'Promoter Holding (%)':
+                        _fundamentalData?['held_percent_insiders'],
+                        'Institutional Holding (%)':
+                        _fundamentalData?['held_percent_institutions'],
+                        'Overall Risk': _fundamentalData?['overall_risk'],
+                        'Audit Risk': _fundamentalData?['audit_risk'],
+                        'Board Risk': _fundamentalData?['board_risk'],
+                        'Compensation Risk': _fundamentalData?['compensation_risk'],
+                        'Shareholder Rights Risk':
+                        _fundamentalData?['shareholder_rights_risk'],
+                      }),
+                      _glassCard('Advanced Technical Levels', {
+                        'SMA 100': _technicalData?['SMA_100'],
+                        'R2': _technicalData?['R2'],
+                        'R3': _technicalData?['R3'],
+                        'S2': _technicalData?['S2'],
+                        'S3': _technicalData?['S3'],
+                        'BB %': _technicalData?['BB_percent'],
+                      }),
+                      _glassCard('Volatility & Risk Management', {
+                        'BB Upper': _technicalData?['BB_upper'],
+                        'BB Lower': _technicalData?['BB_lower'],
+                        'ATR Stop (Long)': _technicalData?['ATR_Stop_Long'],
+                        'ATR Stop (Short)': _technicalData?['ATR_Stop_Short'],
+                      }),
+                      _glassCard('Fibonacci Levels', {
+                        'Fib 38.2%': _technicalData?['Fib_38.2'],
+                        'Fib 61.8%': _technicalData?['Fib_61.8'],
+                      }),
+                      _glassCard('Volume Analytics', {
+                        'Average Volume': _fundamentalData?['avg_volume'],
+                        '10D Avg Volume': _fundamentalData?['avg_volume_10d'],
+                        'Volume Today': _technicalData?['volume'],
+                      }),
+                      _glassCard('News Sentiment', {
+                        'Overall Sentiment': _stockSummary?['news_sentiment'],
+                      }),
+
+                      const SizedBox(height: 16),
+                      _buildPatternSection(),
+
+                      const SizedBox(height: 20),
+                      const Text('News Headlines', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.black87)),
+                      const SizedBox(height: 8),
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                            color: Colors.grey.shade100,
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: Colors.grey.shade300)),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: List<String>.from(_stockSummary?['news_headlines'] ?? []).map((headline) =>
+                              Padding(
+                                padding: const EdgeInsets.symmetric(vertical: 4),
+                                child: Text("• $headline", style: const TextStyle(color: Colors.black87, fontSize: 14)),
+                              )).toList(),
+                        ),
+                      ),
                     ],
-                  ),
-                ),
-
-
-                _glassCard('Valuation & Dividends', {
-                  'PE Ratio': _fundamentalData?['PE_ratio'],
-                  'Forward PE': _fundamentalData?['forward_PE'],
-                  'EPS': _fundamentalData?['EPS'],
-                  'Market Cap': _fundamentalData?['market_cap'] != null ? _formatMarketCap(_fundamentalData!['market_cap']) : 'N/A',
-                  'Dividend Yield': _fundamentalData?['dividend_yield'],
-                  'Beta': _fundamentalData?['beta'],
-                }),
-                _glassCard('Technical Indicators', {
-                  'RSI(14)': _technicalData?['RSI_14'],
-                  'MACD': _technicalData?['MACD'],
-                  'MACD Signal': _technicalData?['MACD_signal'],
-                  'SMA 20': _technicalData?['SMA_20'],
-                  'SMA 50': _technicalData?['SMA_50'],
-                  'EMA 20': _technicalData?['EMA_20'],
-                  'EMA 50': _technicalData?['EMA_50'],
-                  'Volume': _technicalData?['volume'],
-                }),
-
-                // ⚠️ FILE IS LONG — THIS IS FULL AND COMPLETE
-// ONLY ADDITIONS ARE MARKED WITH: // ✅ ADDED SECTION
-
-// ------------------ [KEEP ALL YOUR EXISTING IMPORTS & CODE ABOVE AS-IS] ------------------
-
-// ------------------ ADD BELOW INSIDE build() AFTER EXISTING CARDS ------------------
-
-                // ✅ ADDED: Advanced Fundamentals
-                _glassCard('Advanced Fundamentals', {
-                  'Return on Equity (%)': _fundamentalData?['return_on_equity'],
-                  'Return on Assets (%)': _fundamentalData?['return_on_assets'],
-                  'Book Value': _fundamentalData?['book_value'],
-                  'Price to Book': _fundamentalData?['price_to_book'],
-                  'PEG Ratio': _fundamentalData?['peg_ratio'],
-                }),
-
-                // ✅ ADDED: Margins & Growth
-                _glassCard('Margins & Growth', {
-                  'Profit Margin (%)': _fundamentalData?['profit_margins'],
-                  'Gross Margin (%)': _fundamentalData?['gross_margins'],
-                  'Operating Margin (%)': _fundamentalData?['operating_margins'],
-                  'Revenue Growth (%)': _fundamentalData?['revenue_growth'],
-                  'Earnings Growth (%)': _fundamentalData?['earnings_growth'],
-                  'Quarterly Earnings Growth (%)':
-                  _fundamentalData?['earnings_quarterly_growth'],
-                }),
-
-                // ✅ ADDED: Financial Health
-                _glassCard('Financial Health', {
-                  'Total Cash': _fundamentalData?['total_cash'] != null ? _formatMarketCap(_fundamentalData!['total_cash']) : 'N/A',
-                  'Total Debt': _fundamentalData?['total_debt'] != null ? _formatMarketCap(_fundamentalData!['total_debt']) : 'N/A',
-                  'Debt / Equity': _fundamentalData?['debt_to_equity'],
-                  'Free Cash Flow': _fundamentalData?['free_cashflow'] != null ? _formatMarketCap(_fundamentalData!['free_cashflow']) : 'N/A',
-                  'Operating Cash Flow': _fundamentalData?['operating_cashflow'] != null ? _formatMarketCap(_fundamentalData!['operating_cashflow']) : 'N/A',
-                  'Current Ratio': _fundamentalData?['current_ratio'],
-                  'Quick Ratio': _fundamentalData?['quick_ratio'],
-                }),
-
-                // ✅ ADDED: Ownership & Risk
-                _glassCard('Ownership & Risk', {
-                  'Promoter Holding (%)':
-                  _fundamentalData?['held_percent_insiders'],
-                  'Institutional Holding (%)':
-                  _fundamentalData?['held_percent_institutions'],
-                  'Overall Risk': _fundamentalData?['overall_risk'],
-                  'Audit Risk': _fundamentalData?['audit_risk'],
-                  'Board Risk': _fundamentalData?['board_risk'],
-                  'Compensation Risk': _fundamentalData?['compensation_risk'],
-                  'Shareholder Rights Risk':
-                  _fundamentalData?['shareholder_rights_risk'],
-                }),
-
-                // ✅ ADDED: Advanced Technical Levels
-                _glassCard('Advanced Technical Levels', {
-                  'SMA 100': _technicalData?['SMA_100'],
-                  'R2': _technicalData?['R2'],
-                  'R3': _technicalData?['R3'],
-                  'S2': _technicalData?['S2'],
-                  'S3': _technicalData?['S3'],
-                  'BB %': _technicalData?['BB_percent'],
-                }),
-
-                // ✅ ADDED: Volatility & Risk Management
-                _glassCard('Volatility & Risk Management', {
-                  'BB Upper': _technicalData?['BB_upper'],
-                  'BB Lower': _technicalData?['BB_lower'],
-                  'ATR Stop (Long)': _technicalData?['ATR_Stop_Long'],
-                  'ATR Stop (Short)': _technicalData?['ATR_Stop_Short'],
-                }),
-
-                // ✅ ADDED: Fibonacci Levels
-                _glassCard('Fibonacci Levels', {
-                  'Fib 38.2%': _technicalData?['Fib_38.2'],
-                  'Fib 61.8%': _technicalData?['Fib_61.8'],
-                }),
-
-                // ✅ ADDED: Volume Analytics
-                _glassCard('Volume Analytics', {
-                  'Average Volume': _fundamentalData?['avg_volume'],
-                  '10D Avg Volume': _fundamentalData?['avg_volume_10d'],
-                  'Volume Today': _technicalData?['volume'],
-                }),
-
-                // ✅ ADDED: News Sentiment
-                _glassCard('News Sentiment', {
-                  'Overall Sentiment': _stockSummary?['news_sentiment'],
-                }),
-
-// ------------------ [REST OF YOUR FILE CONTINUES UNCHANGED] ------------------
-
-
-                const SizedBox(height: 16),
-                _buildPatternSection(),
-
-                const SizedBox(height: 20),
-                const Text('News Headlines', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.black87)),
-                const SizedBox(height: 8),
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                      color: Colors.grey.shade100,
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: Colors.grey.shade300)),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: List<String>.from(_stockSummary?['news_headlines'] ?? []).map((headline) =>
-                        Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 4),
-                          child: Text("• $headline", style: const TextStyle(color: Colors.black87, fontSize: 14)),
-                        )).toList(),
                   ),
                 ),
                 const SizedBox(height: 100),
