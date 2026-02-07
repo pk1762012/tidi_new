@@ -208,9 +208,6 @@ class CacheService {
     'api/user/create_subscription_order':  const _TierConfig(tier: CacheTier.critical, memoryTtl: Duration.zero),
     'api/user/create_course_order':        const _TierConfig(tier: CacheTier.critical, memoryTtl: Duration.zero),
     'api/workshop/register/create':        const _TierConfig(tier: CacheTier.critical, memoryTtl: Duration.zero),
-    'fini_chat':                           const _TierConfig(tier: CacheTier.critical, memoryTtl: Duration.zero),
-    'stock_chat':                          const _TierConfig(tier: CacheTier.critical, memoryTtl: Duration.zero),
-    'multi_stock_chat':                    const _TierConfig(tier: CacheTier.critical, memoryTtl: Duration.zero),
   };
 
   /// Default config for keys that don't match any prefix.

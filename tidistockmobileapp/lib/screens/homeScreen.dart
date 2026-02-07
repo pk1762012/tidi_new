@@ -2,8 +2,6 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_feather_icons/flutter_feather_icons.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
-
 import 'package:tidistockmobileapp/components/home/MarketPage.dart';
 import 'package:tidistockmobileapp/components/home/profile/profilePage.dart';
 import 'package:tidistockmobileapp/theme/theme.dart';
@@ -11,8 +9,6 @@ import 'package:tidistockmobileapp/widgets/customScaffold.dart';
 
 import '../components/home/AcademyPage.dart';
 import '../components/home/advisory/StockRecommendationScreen.dart';
-import '../components/home/ai/AIBotScreen.dart';
-import '../widgets/SubscriptionPromptDialog.dart';
 
 class HomeScreen extends StatefulWidget {
   final int currentIndex;
@@ -32,9 +28,6 @@ class HomeScreenState extends State<HomeScreen> {
   late int currentIndex;
   String? imageUrl;
   String? currentMenu;
-  final FlutterSecureStorage secureStorage = const FlutterSecureStorage();
-  bool isSubscribed = false;
-
   final List<Widget> pages = const [
     MarketPage(),
     StockRecommendationScreen(),
@@ -56,56 +49,6 @@ class HomeScreenState extends State<HomeScreen> {
     currentIndex = widget.currentIndex;
     imageUrl = widget.userData?['profilePicture'];
     currentMenu = _menuMap[currentIndex];
-  }
-
-  Future<void> _openAI() async {
-    HapticFeedback.selectionClick();
-
-    final value = await secureStorage.read(key: 'is_subscribed');
-    isSubscribed = value == 'true';
-
-    if (!isSubscribed) {
-      SubscriptionPromptDialog.show(context);
-      return;
-    }
-
-    setState(() => currentMenu = "Ask AI"); // Update menu text for AI
-
-    Navigator.push(
-      context,
-      PageRouteBuilder(
-        pageBuilder: (context, animation, secondaryAnimation) =>
-        const AIBotScreen(),
-        transitionDuration: const Duration(milliseconds: 500),
-        transitionsBuilder: (context, animation, secondaryAnimation, child) {
-          final fadeAnim = Tween<double>(begin: 0.0, end: 1.0)
-              .animate(CurvedAnimation(parent: animation, curve: Curves.easeIn));
-          final scaleAnim = Tween<double>(begin: 0.8, end: 1.0)
-              .animate(CurvedAnimation(parent: animation, curve: Curves.easeOutBack));
-          final slideAnim = Tween<Offset>(
-            begin: const Offset(0, 0.3),
-            end: Offset.zero,
-          ).animate(
-              CurvedAnimation(parent: animation, curve: Curves.easeOutCubic));
-
-          return FadeTransition(
-            opacity: fadeAnim,
-            child: SlideTransition(
-              position: slideAnim,
-              child: ScaleTransition(
-                scale: scaleAnim,
-                child: child,
-              ),
-            ),
-          );
-        },
-      ),
-    ).then((_) {
-      // Reset menu back to current page after returning from AI
-      setState(() {
-        currentMenu = _menuMap[currentIndex];
-      });
-    });
   }
 
   @override
@@ -141,62 +84,11 @@ class HomeScreenState extends State<HomeScreen> {
             ),
           ),
           child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
             children: [
-              // 70% Navigation buttons
-              Expanded(
-                flex: 7,
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                  children: [
-                    _navItem(FeatherIcons.activity, 'Market', 0),
-                    _navItem(FeatherIcons.target, 'Advisory', 1),
-                    _navItem(FeatherIcons.bookOpen, 'Academy', 2),
-                  ],
-                ),
-              ),
-
-              // 30% AI button
-              Expanded(
-                flex: 3,
-                child: GestureDetector(
-                  onTap: _openAI,
-                  child: Container(
-                    margin: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: lightColorScheme.surface,
-                      borderRadius: BorderRadius.circular(16),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.white,
-                          //blurRadius: 10,
-                          //offset: const Offset(0, 4),
-                        ),
-                      ],
-                    ),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        ClipOval(
-                          child: Image.asset(
-                            'assets/images/tidi_ai.gif',
-                            width: 32,
-                            height: 32,
-                            fit: BoxFit.cover,
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        Text(
-                          'Ask AI',
-                          style: TextStyle(
-                            fontWeight: FontWeight.bold,
-                            color: lightColorScheme.primary,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
+              _navItem(FeatherIcons.activity, 'Market', 0),
+              _navItem(FeatherIcons.target, 'Advisory', 1),
+              _navItem(FeatherIcons.bookOpen, 'Academy', 2),
             ],
           ),
         ),
