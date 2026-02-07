@@ -147,9 +147,7 @@ class _SubscriptionBottomCurtainState extends State<SubscriptionBottomCurtain> {
               String backendKey = mapPlanToBackend(key);
               final opened = await razorpayService.openCheckout(backendKey);
 
-              if (opened) {
-                if (mounted) Navigator.pop(context);
-              } else {
+              if (!opened) {
                 if (mounted) setState(() => _loading = false);
               }
             },

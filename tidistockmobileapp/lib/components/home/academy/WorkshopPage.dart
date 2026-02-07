@@ -651,9 +651,7 @@ class _WorkshopPageState extends State<WorkshopPage>
 
                           final opened = await _register(selectedBranchId!);
 
-                          if (opened) {
-                            if (ctx.mounted) Navigator.pop(ctx);
-                          } else {
+                          if (!opened) {
                             setDialog(() => isRegistering = false);
                           }
                         },

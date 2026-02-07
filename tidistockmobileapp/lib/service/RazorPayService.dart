@@ -42,12 +42,20 @@ class RazorpayService {
           String? phone = await secureStorage.read(key: 'phone_number');
           final jsonData = json.decode(response.body);
 
+          final razorpayKey = dotenv.env['RAZORPAY_KEY'] ?? '';
+          final orderId = jsonData['data']['orderId'];
+
+          debugPrint('[RazorpayService] openCheckout - key: ${razorpayKey.substring(0, razorpayKey.length.clamp(0, 12))}..., orderId: $orderId');
+          if (razorpayKey.startsWith('rzp_test_')) {
+            debugPrint('[RazorpayService] WARNING: Using TEST key with production backend. Payment will silently fail.');
+          }
+
           var options = {
-            'key': dotenv.env['RAZORPAY_KEY'],
+            'key': razorpayKey,
             'amount': jsonData['data']['amount'],
             'currency': 'INR',
             'name': 'TIDI Wealth',
-            'order_id': jsonData['data']['orderId'],
+            'order_id': orderId,
             'description':
                 '${duration.replaceAll('_', ' ').toUpperCase()} Membership',
             'timeout': 60,
@@ -58,6 +66,7 @@ class RazorpayService {
           return true;
         } catch (e) {
           _isProcessing = false;
+          debugPrint('[RazorpayService] openCheckout error: $e');
           _showError('Unable to open payment screen. Please try again.');
           return false;
         }
@@ -87,12 +96,20 @@ class RazorpayService {
           String? phone = await secureStorage.read(key: 'phone_number');
           final jsonData = json.decode(response.body);
 
+          final razorpayKey = dotenv.env['RAZORPAY_KEY'] ?? '';
+          final orderId = jsonData['data']['orderId'];
+
+          debugPrint('[RazorpayService] openCourseCheckout - key: ${razorpayKey.substring(0, razorpayKey.length.clamp(0, 12))}..., orderId: $orderId');
+          if (razorpayKey.startsWith('rzp_test_')) {
+            debugPrint('[RazorpayService] WARNING: Using TEST key with production backend. Payment will silently fail.');
+          }
+
           var options = {
-            'key': dotenv.env['RAZORPAY_KEY'],
+            'key': razorpayKey,
             'amount': jsonData['data']['amount'],
             'currency': 'INR',
             'name': 'TIDI Wealth',
-            'order_id': jsonData['data']['orderId'],
+            'order_id': orderId,
             'description': 'Course Booking',
             'timeout': 60,
             'prefill': {'contact': phone}
@@ -102,6 +119,7 @@ class RazorpayService {
           return true;
         } catch (e) {
           _isProcessing = false;
+          debugPrint('[RazorpayService] openCourseCheckout error: $e');
           _showError('Unable to open payment screen. Please try again.');
           return false;
         }
@@ -129,12 +147,20 @@ class RazorpayService {
         try {
           final jsonData = json.decode(response.body);
 
+          final razorpayKey = dotenv.env['RAZORPAY_KEY'] ?? '';
+          final orderId = jsonData['data']['orderId'];
+
+          debugPrint('[RazorpayService] openWorkshopCheckout - key: ${razorpayKey.substring(0, razorpayKey.length.clamp(0, 12))}..., orderId: $orderId');
+          if (razorpayKey.startsWith('rzp_test_')) {
+            debugPrint('[RazorpayService] WARNING: Using TEST key with production backend. Payment will silently fail.');
+          }
+
           var options = {
-            'key': dotenv.env['RAZORPAY_KEY'],
+            'key': razorpayKey,
             'amount': jsonData['data']['amount'],
             'currency': 'INR',
             'name': 'TIDI Wealth',
-            'order_id': jsonData['data']['orderId'],
+            'order_id': orderId,
             'description': 'Workshop Registration',
             'timeout': 60,
           };
@@ -143,6 +169,7 @@ class RazorpayService {
           return true;
         } catch (e) {
           _isProcessing = false;
+          debugPrint('[RazorpayService] openWorkshopCheckout error: $e');
           _showError('Unable to open payment screen. Please try again.');
           return false;
         }

@@ -826,9 +826,7 @@ class _BranchSelectionBottomSheetState
 
                           final opened = await widget.onSelected(b['id']);
 
-                          if (opened) {
-                            if (mounted) Navigator.pop(context);
-                          } else {
+                          if (!opened) {
                             if (mounted) {
                               setState(() {
                                 _loading = false;
