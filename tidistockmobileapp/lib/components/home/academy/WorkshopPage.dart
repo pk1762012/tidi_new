@@ -49,9 +49,10 @@ class _WorkshopPageState extends State<WorkshopPage>
 
     _initData();
 
-    razorpayService = RazorpayService(onFinish: () {
+    razorpayService = RazorpayService(onResult: (success) {
       if (!mounted) return;
       setState(() {});
+      if (success) _loadRegistrations();
     });
 
     WidgetsBinding.instance.addPostFrameCallback((_) => _controller.forward());
@@ -66,6 +67,7 @@ class _WorkshopPageState extends State<WorkshopPage>
   @override
   void dispose() {
     _controller.dispose();
+    if (!razorpayService.isProcessing) razorpayService.dispose();
     super.dispose();
   }
 
@@ -141,14 +143,14 @@ class _WorkshopPageState extends State<WorkshopPage>
 
   // ---------------- REGISTER ----------------
 
-  Future<void> _register(String branchId) async {
+  Future<bool> _register(String branchId) async {
     final date = selectedDate!.toIso8601String().substring(0, 10);
 
-    /// ❌ already registered for same day
+    /// already registered for same day
     if (_alreadyRegisteredForDate(date)) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          backgroundColor: Colors.black, // or your theme color
+          backgroundColor: Colors.black,
           content: Text(
             "You have already registered for the Workshop.",
             style: TextStyle(color: Colors.white),
@@ -156,10 +158,10 @@ class _WorkshopPageState extends State<WorkshopPage>
         ),
       );
 
-      return;
+      return false;
     }
 
-    razorpayService.openWorkshopCheckout(date, branchId);
+    return razorpayService.openWorkshopCheckout(date, branchId);
   }
 
   // ---------------- UI ----------------
@@ -514,6 +516,7 @@ class _WorkshopPageState extends State<WorkshopPage>
   void _openRegisterSheet() {
     DateTime tempDate = _getNextSunday();
     String? selectedBranchId;
+    bool isRegistering = false;
 
     showDialog(
       context: context,
@@ -558,34 +561,36 @@ class _WorkshopPageState extends State<WorkshopPage>
                       label: Text(
                         "Date: ${tempDate.toString().substring(0, 10)}",
                       ),
-                      onPressed: () async {
-                        final picked = await showDatePicker(
-                          context: ctx,
-                          initialDate: tempDate,
-                          firstDate: tempDate,
-                          lastDate: tempDate.add(const Duration(days: 90)),
-                          selectableDayPredicate: (d) =>
-                          d.weekday == DateTime.sunday,
-                          builder: (context, child) {
-                            return Theme(
-                              data: Theme.of(context).copyWith(
-                                colorScheme: const ColorScheme.light(
-                                  surface: Colors.white,
-                                  primary: Colors.black,
-                                  onPrimary: Colors.white,
-                                  onSurface: Colors.black,
-                                ),
-                                dialogBackgroundColor: Colors.white,
-                              ),
-                              child: child!,
-                            );
-                          },
-                        );
+                      onPressed: isRegistering
+                          ? null
+                          : () async {
+                              final picked = await showDatePicker(
+                                context: ctx,
+                                initialDate: tempDate,
+                                firstDate: tempDate,
+                                lastDate: tempDate.add(const Duration(days: 90)),
+                                selectableDayPredicate: (d) =>
+                                d.weekday == DateTime.sunday,
+                                builder: (context, child) {
+                                  return Theme(
+                                    data: Theme.of(context).copyWith(
+                                      colorScheme: const ColorScheme.light(
+                                        surface: Colors.white,
+                                        primary: Colors.black,
+                                        onPrimary: Colors.white,
+                                        onSurface: Colors.black,
+                                      ),
+                                      dialogBackgroundColor: Colors.white,
+                                    ),
+                                    child: child!,
+                                  );
+                                },
+                              );
 
-                        if (picked != null) {
-                          setDialog(() => tempDate = picked);
-                        }
-                      },
+                              if (picked != null) {
+                                setDialog(() => tempDate = picked);
+                              }
+                            },
                     ),
 
                     const SizedBox(height: 16),
@@ -604,9 +609,11 @@ class _WorkshopPageState extends State<WorkshopPage>
                           ),
                         );
                       }).toList(),
-                      onChanged: (String? v) {
-                        setDialog(() => selectedBranchId = v);
-                      },
+                      onChanged: isRegistering
+                          ? null
+                          : (String? v) {
+                              setDialog(() => selectedBranchId = v);
+                            },
                       decoration: InputDecoration(
                         filled: true,
                         fillColor: Colors.white,
@@ -636,12 +643,19 @@ class _WorkshopPageState extends State<WorkshopPage>
                     SizedBox(
                       width: double.infinity,
                       child: ElevatedButton(
-                        onPressed: selectedBranchId == null
+                        onPressed: (selectedBranchId == null || isRegistering)
                             ? null
-                            : () {
-                          Navigator.pop(ctx);
+                            : () async {
+                          setDialog(() => isRegistering = true);
                           selectedDate = tempDate;
-                          _register(selectedBranchId!);
+
+                          final opened = await _register(selectedBranchId!);
+
+                          if (opened) {
+                            if (ctx.mounted) Navigator.pop(ctx);
+                          } else {
+                            setDialog(() => isRegistering = false);
+                          }
                         },
                         style: ElevatedButton.styleFrom(
                           padding: const EdgeInsets.symmetric(vertical: 14),
@@ -649,7 +663,16 @@ class _WorkshopPageState extends State<WorkshopPage>
                             borderRadius: BorderRadius.circular(14),
                           ),
                         ),
-                        child: const Text("Confirm Registration"),
+                        child: isRegistering
+                            ? const SizedBox(
+                                width: 20,
+                                height: 20,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: Colors.white,
+                                ),
+                              )
+                            : const Text("Confirm Registration"),
                       ),
                     ),
                   ],

@@ -1,10 +1,12 @@
 import 'dart:convert';
-import 'dart:ui';
 
+import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:razorpay_flutter/razorpay_flutter.dart';
 
+import '../components/login/PaymentSuccess.dart';
+import '../main.dart';
 import 'ApiService.dart';
 import 'CacheService.dart';
 
@@ -12,128 +14,210 @@ class RazorpayService {
   late Razorpay _razorpay;
   final FlutterSecureStorage secureStorage = FlutterSecureStorage();
 
-  VoidCallback? _onFinishCallback; // 🔄 Callback to trigger UI reload
+  void Function(bool success)? _onResultCallback;
+  bool _isProcessing = false;
 
-  RazorpayService({VoidCallback? onFinish}) {
-    _onFinishCallback = onFinish;
+  bool get isProcessing => _isProcessing;
+
+  RazorpayService({void Function(bool success)? onResult}) {
+    _onResultCallback = onResult;
     _razorpay = Razorpay();
     _razorpay.on(Razorpay.EVENT_PAYMENT_SUCCESS, _handleSuccess);
     _razorpay.on(Razorpay.EVENT_PAYMENT_ERROR, _handleError);
     _razorpay.on(Razorpay.EVENT_EXTERNAL_WALLET, _handleExternalWallet);
   }
 
-  void openCheckout(String duration) async {
-    final apiService = ApiService();
-    final response = await apiService.createSubscriptionOrder(duration);
+  // --------------- CHECKOUT METHODS ---------------
 
-    if (response.statusCode == 201) {
-      try {
-        String? phone = await secureStorage.read(key: 'phone_number');
-        final jsonData = json.decode(response.body);
+  Future<bool> openCheckout(String duration) async {
+    if (_isProcessing) return false;
+    _isProcessing = true;
 
-        var options = {
-          'key': dotenv.env['RAZORPAY_KEY'],
-          'amount': jsonData['data']['amount'],
-          'currency': 'INR',
-          'name': 'TIDI Wealth',
-          'order_id': jsonData['data']['orderId'],
-          'description': '${duration.replaceAll('_', ' ').toUpperCase()} Membership',
-          'timeout': 60,
-          'prefill': {'contact': phone}
-        };
+    try {
+      final apiService = ApiService();
+      final response = await apiService.createSubscriptionOrder(duration);
 
-        _razorpay.open(options);
-      } catch (e) {
-        print('Error opening Razorpay checkout: $e');
-        _onFinishCallback?.call(); // 🔄 still trigger in case of failure to open
+      if (response.statusCode == 201) {
+        try {
+          String? phone = await secureStorage.read(key: 'phone_number');
+          final jsonData = json.decode(response.body);
+
+          var options = {
+            'key': dotenv.env['RAZORPAY_KEY'],
+            'amount': jsonData['data']['amount'],
+            'currency': 'INR',
+            'name': 'TIDI Wealth',
+            'order_id': jsonData['data']['orderId'],
+            'description':
+                '${duration.replaceAll('_', ' ').toUpperCase()} Membership',
+            'timeout': 60,
+            'prefill': {'contact': phone}
+          };
+
+          _razorpay.open(options);
+          return true;
+        } catch (e) {
+          _isProcessing = false;
+          _showError('Unable to open payment screen. Please try again.');
+          return false;
+        }
+      } else {
+        _isProcessing = false;
+        _showError(
+            'Unable to create order (${response.statusCode}). Please try again later.');
+        return false;
       }
-    } else {
-      print("Failed to create Razorpay order");
-      _onFinishCallback?.call();
+    } catch (e) {
+      _isProcessing = false;
+      _showError('Network error. Please check your connection and try again.');
+      return false;
     }
   }
 
-  void openCourseCheckout(String courseId, String branchId) async {
-    final apiService = ApiService();
-    final response = await apiService.createCourseOrder(courseId, branchId);
+  Future<bool> openCourseCheckout(String courseId, String branchId) async {
+    if (_isProcessing) return false;
+    _isProcessing = true;
 
-    if (response.statusCode == 201) {
-      try {
-        String? phone = await secureStorage.read(key: 'phone_number');
-        final jsonData = json.decode(response.body);
+    try {
+      final apiService = ApiService();
+      final response = await apiService.createCourseOrder(courseId, branchId);
 
-        var options = {
-          'key': dotenv.env['RAZORPAY_KEY'],
-          'amount': jsonData['data']['amount'],
-          'currency': 'INR',
-          'name': 'TIDI Wealth',
-          'order_id': jsonData['data']['orderId'],
-          'description': 'Course Booking',
-          'timeout': 60,
-          'prefill': {'contact': phone}
-        };
+      if (response.statusCode == 201) {
+        try {
+          String? phone = await secureStorage.read(key: 'phone_number');
+          final jsonData = json.decode(response.body);
 
-        _razorpay.open(options);
-      } catch (e) {
-        print('Error opening Razorpay checkout: $e');
-        _onFinishCallback?.call(); // 🔄 still trigger in case of failure to open
+          var options = {
+            'key': dotenv.env['RAZORPAY_KEY'],
+            'amount': jsonData['data']['amount'],
+            'currency': 'INR',
+            'name': 'TIDI Wealth',
+            'order_id': jsonData['data']['orderId'],
+            'description': 'Course Booking',
+            'timeout': 60,
+            'prefill': {'contact': phone}
+          };
+
+          _razorpay.open(options);
+          return true;
+        } catch (e) {
+          _isProcessing = false;
+          _showError('Unable to open payment screen. Please try again.');
+          return false;
+        }
+      } else {
+        _isProcessing = false;
+        _showError(
+            'Unable to create order (${response.statusCode}). Please try again later.');
+        return false;
       }
-    } else {
-      print("Failed to create Razorpay order");
-      _onFinishCallback?.call();
+    } catch (e) {
+      _isProcessing = false;
+      _showError('Network error. Please check your connection and try again.');
+      return false;
     }
   }
 
-  void openWorkshopCheckout(String date, String branchId) async {
-    final response = await ApiService().registerToWorkshop(date, branchId);
+  Future<bool> openWorkshopCheckout(String date, String branchId) async {
+    if (_isProcessing) return false;
+    _isProcessing = true;
 
-    if (response.statusCode == 201) {
-      try {
-        final jsonData = json.decode(response.body);
+    try {
+      final response = await ApiService().registerToWorkshop(date, branchId);
 
-        var options = {
-          'key': dotenv.env['RAZORPAY_KEY'],
-          'amount': jsonData['data']['amount'],
-          'currency': 'INR',
-          'name': 'TIDI Wealth',
-          'order_id': jsonData['data']['orderId'],
-          'description': 'Workshop Registration',
-          'timeout': 60,
-        };
+      if (response.statusCode == 201) {
+        try {
+          final jsonData = json.decode(response.body);
 
-        _razorpay.open(options);
-      } catch (e) {
-        print('Error opening Razorpay checkout: $e');
-        _onFinishCallback?.call(); // 🔄 still trigger in case of failure to open
+          var options = {
+            'key': dotenv.env['RAZORPAY_KEY'],
+            'amount': jsonData['data']['amount'],
+            'currency': 'INR',
+            'name': 'TIDI Wealth',
+            'order_id': jsonData['data']['orderId'],
+            'description': 'Workshop Registration',
+            'timeout': 60,
+          };
+
+          _razorpay.open(options);
+          return true;
+        } catch (e) {
+          _isProcessing = false;
+          _showError('Unable to open payment screen. Please try again.');
+          return false;
+        }
+      } else {
+        _isProcessing = false;
+        _showError(
+            'Unable to create order (${response.statusCode}). Please try again later.');
+        return false;
       }
-    } else {
-      print("Failed to create Razorpay order");
-      _onFinishCallback?.call();
+    } catch (e) {
+      _isProcessing = false;
+      _showError('Network error. Please check your connection and try again.');
+      return false;
     }
   }
 
+  // --------------- HANDLERS ---------------
 
   void _handleSuccess(PaymentSuccessResponse response) {
-    print("Payment successful: ${response.paymentId}");
+    _isProcessing = false;
     CacheService.instance.invalidate('api/user');
     CacheService.instance.invalidateByPrefix('api/admin/stock/recommend/get');
-    CacheService.instance.invalidateByPrefix('api/user/get_subscription_transactions');
-    CacheService.instance.invalidateByPrefix('api/user/get_course_transactions');
+    CacheService.instance
+        .invalidateByPrefix('api/user/get_subscription_transactions');
+    CacheService.instance
+        .invalidateByPrefix('api/user/get_course_transactions');
     CacheService.instance.invalidateByPrefix('api/workshop/register');
-    _onFinishCallback?.call(); // 🔄 refresh UI
+    _navigateToSuccess();
+    _onResultCallback?.call(true);
   }
 
   void _handleError(PaymentFailureResponse response) {
-    print("Payment failed: ${response.code} - ${response.message}");
-    _onFinishCallback?.call(); // 🔄 refresh UI
+    _isProcessing = false;
+    if (response.code == 2) {
+      _showError('Payment cancelled.');
+    } else {
+      _showError('Payment failed. Please try again.');
+    }
+    _onResultCallback?.call(false);
   }
 
   void _handleExternalWallet(ExternalWalletResponse response) {
-    print("External wallet selected: ${response.walletName}");
-    _onFinishCallback?.call(); // 🔄 refresh UI
+    _onResultCallback?.call(false);
+  }
+
+  // --------------- HELPERS ---------------
+
+  void _showError(String message) {
+    final context = navigatorKey.currentContext;
+    if (context == null) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: Colors.black87,
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
+  void _navigateToSuccess() {
+    final navState = navigatorKey.currentState;
+    if (navState == null) return;
+    navState.pushAndRemoveUntil(
+      PageRouteBuilder(
+        pageBuilder: (_, __, ___) => const SuccessSplashScreen(),
+        transitionDuration: Duration.zero,
+        reverseTransitionDuration: Duration.zero,
+      ),
+      (route) => false,
+    );
   }
 
   void dispose() {
-    _razorpay.clear();
+    if (!_isProcessing) {
+      _razorpay.clear();
+    }
   }
 }

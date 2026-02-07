@@ -56,8 +56,9 @@ class SubscriptionPromptDialog extends StatelessWidget {
             ElevatedButton(
               onPressed: () {
                 Navigator.pop(context); // Close dialog
-                showSubscriptionBottomCurtain(parentContext);
-
+                if (parentContext.mounted) {
+                  showSubscriptionBottomCurtain(parentContext);
+                }
               },
               style: ElevatedButton.styleFrom(
                 backgroundColor: Theme.of(context).colorScheme.primary,

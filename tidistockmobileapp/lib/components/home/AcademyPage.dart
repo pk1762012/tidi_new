@@ -82,7 +82,7 @@ class _AcademyPageState extends State<AcademyPage>
 
     _branchScrollController = ScrollController();
 
-    razorpayService = RazorpayService(onFinish: () {
+    razorpayService = RazorpayService(onResult: (success) {
       if (!mounted) return;
       setState(() {});
     });
@@ -130,7 +130,7 @@ class _AcademyPageState extends State<AcademyPage>
     routeObserver.unsubscribe(this);
     _controller.dispose();
     _branchScrollController.dispose();
-    razorpayService.dispose();
+    if (!razorpayService.isProcessing) razorpayService.dispose();
     _transactionScrollController.dispose();
     super.dispose();
   }
@@ -622,7 +622,7 @@ class _AcademyPageState extends State<AcademyPage>
           branches: _branches,
           course: course,
           onSelected: (branchId) {
-            razorpayService.openCourseCheckout(course['id'], branchId);
+            return razorpayService.openCourseCheckout(course['id'], branchId);
           },
         );
       },
@@ -762,10 +762,10 @@ class _AcademyPageState extends State<AcademyPage>
 
 // ------------------------- BOTTOM SHEET -------------------------
 
-class BranchSelectionBottomSheet extends StatelessWidget {
+class BranchSelectionBottomSheet extends StatefulWidget {
   final List<dynamic> branches;
   final dynamic course;
-  final void Function(String branchId) onSelected;
+  final Future<bool> Function(String branchId) onSelected;
 
   const BranchSelectionBottomSheet({
     super.key,
@@ -773,6 +773,16 @@ class BranchSelectionBottomSheet extends StatelessWidget {
     required this.course,
     required this.onSelected,
   });
+
+  @override
+  State<BranchSelectionBottomSheet> createState() =>
+      _BranchSelectionBottomSheetState();
+}
+
+class _BranchSelectionBottomSheetState
+    extends State<BranchSelectionBottomSheet> {
+  bool _loading = false;
+  String? _selectedBranchId;
 
   @override
   Widget build(BuildContext context) {
@@ -796,19 +806,37 @@ class BranchSelectionBottomSheet extends StatelessWidget {
                 ),
               ),
               Text(
-                "Select Branch for ${course['name']} Course",
+                "Select Branch for ${widget.course['name']} Course",
                 style: Theme.of(context).textTheme.titleLarge?.copyWith(
                   fontWeight: FontWeight.bold,
                   color: lightColorScheme.primary,
                 ),
               ),
               const SizedBox(height: 20),
-              ...branches.map((b) {
+              ...widget.branches.map((b) {
+                final isSelected = _selectedBranchId == b['id'];
                 return GestureDetector(
-                  onTap: () {
-                    Navigator.pop(context);
-                    onSelected(b['id']);
-                  },
+                  onTap: _loading
+                      ? null
+                      : () async {
+                          setState(() {
+                            _loading = true;
+                            _selectedBranchId = b['id'];
+                          });
+
+                          final opened = await widget.onSelected(b['id']);
+
+                          if (opened) {
+                            if (mounted) Navigator.pop(context);
+                          } else {
+                            if (mounted) {
+                              setState(() {
+                                _loading = false;
+                                _selectedBranchId = null;
+                              });
+                            }
+                          }
+                        },
                   child: Container(
                     margin: const EdgeInsets.only(bottom: 16),
                     padding: const EdgeInsets.symmetric(vertical: 18, horizontal: 20),
@@ -821,7 +849,14 @@ class BranchSelectionBottomSheet extends StatelessWidget {
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
                         Text(b['name'], style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w600)),
-                        const Icon(Icons.arrow_forward_ios, size: 16),
+                        if (_loading && isSelected)
+                          const SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        else
+                          const Icon(Icons.arrow_forward_ios, size: 16),
                       ],
                     ),
                   ),
@@ -833,5 +868,4 @@ class BranchSelectionBottomSheet extends StatelessWidget {
       ),
     );
   }
-
 }

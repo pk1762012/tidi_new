@@ -22,6 +22,7 @@ class SubscriptionBottomCurtain extends StatefulWidget {
 
 class _SubscriptionBottomCurtainState extends State<SubscriptionBottomCurtain> {
   String selectedPlan = "";
+  bool _loading = false;
 
   late RazorpayService razorpayService;
 
@@ -29,16 +30,16 @@ class _SubscriptionBottomCurtainState extends State<SubscriptionBottomCurtain> {
   void initState() {
     super.initState();
     razorpayService = RazorpayService(
-      onFinish: () {
-        // refresh UI or fetch updated subscription
-        if (mounted) setState(() {});
+      onResult: (success) {
+        // Service handles navigation on success and SnackBar on failure
       },
     );
   }
 
   @override
   void dispose() {
-    razorpayService.dispose();
+    // Do NOT dispose razorpayService here — listeners must survive
+    // after the bottom sheet closes so Razorpay callbacks still fire.
     super.dispose();
   }
 
@@ -131,21 +132,27 @@ class _SubscriptionBottomCurtainState extends State<SubscriptionBottomCurtain> {
   // ------------------------------- PLAN TILE -------------------------------
   Widget _planTile(String title, String price, String key, {String? tag}) {
     bool isSelected = selectedPlan == key;
+    bool isLoading = _loading && selectedPlan == key;
     final colorScheme = Theme.of(context).colorScheme;
 
     return GestureDetector(
-      onTap: () {
-        setState(() => selectedPlan = key);
+      onTap: _loading
+          ? null
+          : () async {
+              setState(() {
+                selectedPlan = key;
+                _loading = true;
+              });
 
-        // Small animation delay
-        Future.delayed(const Duration(milliseconds: 180), () {
-          Navigator.pop(context);
+              String backendKey = mapPlanToBackend(key);
+              final opened = await razorpayService.openCheckout(backendKey);
 
-          String backendKey = mapPlanToBackend(key);
-
-          razorpayService.openCheckout(backendKey); // 🎯 CALL RAZORPAY HERE
-        });
-      },
+              if (opened) {
+                if (mounted) Navigator.pop(context);
+              } else {
+                if (mounted) setState(() => _loading = false);
+              }
+            },
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 200),
         margin: const EdgeInsets.only(bottom: 16),
@@ -204,21 +211,28 @@ class _SubscriptionBottomCurtainState extends State<SubscriptionBottomCurtain> {
               ),
             ),
 
-            Text(
-              price,
-              style: TextStyle(
-                fontSize: 18,
-                color: isSelected ? colorScheme.primary : Colors.black87,
-                fontWeight: FontWeight.bold,
+            if (isLoading)
+              const SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            else ...[
+              Text(
+                price,
+                style: TextStyle(
+                  fontSize: 18,
+                  color: isSelected ? colorScheme.primary : Colors.black87,
+                  fontWeight: FontWeight.bold,
+                ),
               ),
-            ),
-
-            const SizedBox(width: 8),
-            Icon(
-              Icons.arrow_forward_ios,
-              size: 16,
-              color: isSelected ? colorScheme.primary : Colors.grey.shade600,
-            ),
+              const SizedBox(width: 8),
+              Icon(
+                Icons.arrow_forward_ios,
+                size: 16,
+                color: isSelected ? colorScheme.primary : Colors.grey.shade600,
+              ),
+            ],
           ],
         ),
       ),
