@@ -363,44 +363,6 @@ class ProfilePageState extends State<ProfilePage>
     );
   }
 
-
-  Widget _buildClearCacheButton() {
-    return InkWell(
-      onTap: () async {
-        await CacheService.instance.clearAll();
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Cache cleared")),
-        );
-        setState(() {}); // Refresh to update displayed size
-      },
-      child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 16),
-        decoration: BoxDecoration(
-          color: Colors.grey.shade100,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: Colors.grey.shade300),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const Icon(Icons.cached, color: Colors.black54, size: 20),
-            const SizedBox(width: 8),
-            Text(
-              "Clear Cache (${CacheService.instance.formattedDiskSize})",
-              style: const TextStyle(
-                color: Colors.black87,
-                fontSize: 14,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
   void showErrorSnackBar(String message) {
     ScaffoldMessenger.of(context)
         .showSnackBar(SnackBar(content: Text(message)));
@@ -728,8 +690,6 @@ class ProfilePageState extends State<ProfilePage>
                         ),
                       ),
 
-                  const SizedBox(height: 10),
-                  _buildClearCacheButton(),
                   const SizedBox(height: 10),
                   InkWell(
                     onTap: confirmLogout,
