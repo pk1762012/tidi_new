@@ -5,6 +5,13 @@ import 'package:intl/intl.dart';
 import 'package:tidistockmobileapp/service/ApiService.dart';
 import 'package:tidistockmobileapp/widgets/customScaffold.dart';
 
+double parseNum(dynamic value) {
+  if (value == null) return 0.0;
+  if (value is num) return value.toDouble();
+  if (value is String) return double.tryParse(value) ?? 0.0;
+  return 0.0;
+}
+
 class FiiDiiDataPage extends StatefulWidget {
   const FiiDiiDataPage({super.key});
 
@@ -163,10 +170,8 @@ class _FiiDiiDataPageState extends State<FiiDiiDataPage> {
             }
 
             final item = data[dataIndex];
-            final double fiiNet =
-                (item["fiiBuy"] ?? 0) - (item["fiiSell"] ?? 0);
-            final double diiNet =
-                (item["diiBuy"] ?? 0) - (item["diiSell"] ?? 0);
+            final double fiiNet = parseNum(item["fiiBuy"]) - parseNum(item["fiiSell"]);
+            final double diiNet = parseNum(item["diiBuy"]) - parseNum(item["diiSell"]);
 
             return TweenAnimationBuilder<double>(
               tween: Tween(begin: 0, end: 1),
@@ -222,8 +227,8 @@ class _FiiDiiDataPageState extends State<FiiDiiDataPage> {
 
                           _buildRow(
                               "FII",
-                              item["fiiBuy"] ?? 0,
-                              item["fiiSell"] ?? 0,
+                              parseNum(item["fiiBuy"]),
+                              parseNum(item["fiiSell"]),
                               fiiNet),
                           const SizedBox(height: 8),
                           _netBar(fiiNet),
@@ -232,8 +237,8 @@ class _FiiDiiDataPageState extends State<FiiDiiDataPage> {
 
                           _buildRow(
                               "DII",
-                              item["diiBuy"] ?? 0,
-                              item["diiSell"] ?? 0,
+                              parseNum(item["diiBuy"]),
+                              parseNum(item["diiSell"]),
                               diiNet),
                           const SizedBox(height: 8),
                           _netBar(diiNet),
