@@ -6,6 +6,7 @@ import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
 import 'package:xml/xml.dart' as xml;
 import 'package:url_launcher/url_launcher.dart';
+import 'package:tidistockmobileapp/service/CacheService.dart';
 import 'package:tidistockmobileapp/widgets/customScaffold.dart';
 import 'package:tidistockmobileapp/theme/theme.dart';
 
@@ -29,61 +30,92 @@ class _NewsScreenState extends State<NewsScreen> {
     _fetchNews();
   }
 
+  List<_NewsItem> _parseRssResponse(http.Response response) {
+    final document = xml.XmlDocument.parse(response.body);
+    final items = document.findAllElements('item');
+
+    final news = items.map((item) {
+      final pubDateStr = item.findElements('pubDate').firstOrNull?.text;
+      DateTime dateTime;
+      try {
+        dateTime = HttpDate.parse(pubDateStr ?? '');
+      } catch (_) {
+        try {
+          dateTime = DateFormat('EEE, dd MMM yyyy HH:mm:ss Z')
+              .parse(pubDateStr ?? '', true);
+        } catch (_) {
+          dateTime = DateTime.now();
+        }
+      }
+      final formattedDate =
+          '${DateFormat('d MMM, h:mm a').format(dateTime.toLocal())} IST';
+
+      final media = item.findElements('media:content');
+      String? imageUrl =
+          media.isNotEmpty ? media.first.getAttribute('url') : null;
+      if (imageUrl == null) {
+        final enclosure = item.findElements('enclosure');
+        if (enclosure.isNotEmpty) {
+          final type = enclosure.first.getAttribute('type') ?? '';
+          if (type.startsWith('image')) {
+            imageUrl = enclosure.first.getAttribute('url');
+          }
+        }
+      }
+
+      return _NewsItem(
+        title: item.findElements('title').first.text.trim(),
+        link: item.findElements('link').first.text.trim(),
+        pubDate: formattedDate,
+        dateTime: dateTime,
+        imageUrl: imageUrl,
+      );
+    }).toList();
+
+    news.sort((a, b) => b.dateTime.compareTo(a.dateTime));
+    return news;
+  }
+
+  void _applyNewsData(List<Map<String, dynamic>> rawItems) {
+    final news = rawItems.map((m) => _NewsItem(
+      title: m['title'] ?? '',
+      link: m['link'] ?? '',
+      pubDate: m['pubDate'] ?? '',
+      dateTime: DateTime.tryParse(m['dateTime'] ?? '') ?? DateTime.now(),
+      imageUrl: m['imageUrl'],
+    )).toList();
+
+    setState(() {
+      _newsItems = news;
+      _isLoading = false;
+    });
+  }
+
   Future<void> _fetchNews() async {
     try {
-      final response = await http.get(Uri.parse(rssUrl));
-      final document = xml.XmlDocument.parse(response.body);
-      final items = document.findAllElements('item');
-
-      final news = items.map((item) {
-        final pubDateStr = item.findElements('pubDate').firstOrNull?.text;
-        DateTime dateTime;
-        try {
-          dateTime = HttpDate.parse(pubDateStr ?? '');
-        } catch (_) {
-          try {
-            dateTime = DateFormat('EEE, dd MMM yyyy HH:mm:ss Z')
-                .parse(pubDateStr ?? '', true);
-          } catch (_) {
-            dateTime = DateTime.now();
-          }
-        }
-        final formattedDate =
-            '${DateFormat('d MMM, h:mm a').format(dateTime.toLocal())} IST';
-
-        // Support both <media:content> and <enclosure> for images
-        final media = item.findElements('media:content');
-        String? imageUrl =
-            media.isNotEmpty ? media.first.getAttribute('url') : null;
-        if (imageUrl == null) {
-          final enclosure = item.findElements('enclosure');
-          if (enclosure.isNotEmpty) {
-            final type = enclosure.first.getAttribute('type') ?? '';
-            if (type.startsWith('image')) {
-              imageUrl = enclosure.first.getAttribute('url');
-            }
-          }
-        }
-
-        return _NewsItem(
-          title: item.findElements('title').first.text.trim(),
-          link: item.findElements('link').first.text.trim(),
-          pubDate: formattedDate,
-          dateTime: dateTime,
-          imageUrl: imageUrl,
-        );
-      }).toList();
-
-      news.sort((a, b) => b.dateTime.compareTo(a.dateTime));
-
-      setState(() {
-        _newsItems = news;
-        _isLoading = false;
-      });
+      await CacheService.instance.fetchWithCache(
+        key: 'rss_news',
+        fetcher: () => http.get(Uri.parse(rssUrl)),
+        parseResponse: (response) {
+          final items = _parseRssResponse(response);
+          return items.map((n) => {
+            'title': n.title,
+            'link': n.link,
+            'pubDate': n.pubDate,
+            'dateTime': n.dateTime.toIso8601String(),
+            'imageUrl': n.imageUrl,
+          }).toList();
+        },
+        onData: (data, {required fromCache}) {
+          if (!mounted) return;
+          final items = (data as List).cast<Map<String, dynamic>>();
+          _applyNewsData(items);
+        },
+      );
     } catch (e) {
-      print("News fetch error: $e");
-      setState(() => _isLoading = false);
+      debugPrint("News fetch error: $e");
       if (mounted) {
+        setState(() => _isLoading = false);
         ScaffoldMessenger.of(context)
             .showSnackBar(const SnackBar(content: Text("Failed to load news")));
       }

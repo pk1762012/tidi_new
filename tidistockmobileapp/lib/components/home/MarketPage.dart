@@ -4,6 +4,7 @@ import 'dart:math';
 import 'dart:ui';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:tidistockmobileapp/service/ApiService.dart';
+import 'package:tidistockmobileapp/service/CacheService.dart';
 import 'package:flutter/material.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -199,6 +200,7 @@ class MarketPageState extends State<MarketPage> with TickerProviderStateMixin, W
 
   Future<void> logout() async {
     ApiService.invalidateTokenCache();
+    await CacheService.instance.clearAll();
     await secureStorage.deleteAll();
     if (!mounted) return;
     Navigator.of(context).pushAndRemoveUntil(
@@ -270,27 +272,32 @@ class MarketPageState extends State<MarketPage> with TickerProviderStateMixin, W
 
   Future<void> preloadStockData() async {
     try {
-      final response = await ApiService().getNifty50StockAnalysis();
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body)['data'];
-        if (mounted) setState(() {
-          stockData = data;
-        });
-      }
+      await ApiService().getCachedNifty50StockAnalysis(
+        onData: (data, {required fromCache}) {
+          if (!mounted) return;
+          setState(() {
+            stockData = data is List ? data : [];
+          });
+        },
+      );
     } catch (_) {}
   }
 
   void _showHolidayDialog() async {
     try {
-      ApiService apiService = ApiService();
-      final response = await apiService.getMarketHolidayList();
+      await ApiService().getCachedMarketHolidays(
+        onData: (data, {required fromCache}) {
+          if (!mounted) return;
+          _showHolidayDialogWithData(data is List ? data : []);
+        },
+      );
+    } catch (e) {
+      _showError("Error: $e");
+    }
+  }
 
-      if (response.statusCode != 200) {
-        _showError("Failed to load holidays");
-        return;
-      }
-
-      final List<dynamic> data = jsonDecode(response.body);
+  void _showHolidayDialogWithData(List<dynamic> data) {
+    try {
       if (data.isEmpty) {
         _showError("No holidays available");
         return;
@@ -477,7 +484,7 @@ class MarketPageState extends State<MarketPage> with TickerProviderStateMixin, W
         ),
       );
     } catch (e) {
-      _showError("Error: $e");
+      _showError("Error loading holidays: $e");
     }
   }
 

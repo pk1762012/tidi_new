@@ -27,18 +27,17 @@ class _StockPortfolioPageState extends State<StockPortfolioPage> {
 
   Future<void> fetchPortfolio() async {
     try {
-      ApiService apiService = ApiService();
-      final response = await apiService.getPortfolio();
-
-      if (response.statusCode == 200) {
-        final jsonData = jsonDecode(response.body);
-        setState(() {
-          portfolio = jsonData ?? [];
-          loading = false;
-        });
-      }
+      await ApiService().getCachedPortfolio(
+        onData: (data, {required fromCache}) {
+          if (!mounted) return;
+          setState(() {
+            portfolio = data is List ? data : (data is Map ? [data] : []);
+            loading = false;
+          });
+        },
+      );
     } catch (e) {
-      setState(() => loading = false);
+      if (mounted) setState(() => loading = false);
     }
   }
 

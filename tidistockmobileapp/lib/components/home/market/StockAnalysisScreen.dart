@@ -7,7 +7,6 @@ import '../../../theme/theme.dart';
 import '../../../widgets/SubscriptionPromptDialog.dart';
 import '../../../widgets/customScaffold.dart';
 
-import '../ai/AIBotButton.dart';
 import '../ai/MultiStockChatScreen.dart';
 import 'StockDetailsScreen.dart';
 import 'StockScannerSection.dart';
@@ -43,7 +42,8 @@ class _StockAnalysisScreenState extends State<StockAnalysisScreen> {
 
   Future<void> loadSubscriptionStatus() async {
     String? value = await secureStorage.read(key: 'is_subscribed');
-    setState(() => isSubscribed = value == 'true');
+    String? trialActive = await secureStorage.read(key: 'is_stock_analysis_trial_active');
+    setState(() => isSubscribed = value == 'true' || trialActive == 'true');
   }
 
   Future<void> _searchStock(String query) async {
@@ -157,52 +157,106 @@ class _StockAnalysisScreenState extends State<StockAnalysisScreen> {
               // COMPARE CHIPS
               // -------------------------------------------------------
               if (compareStocks.isNotEmpty)
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      "Compare Stocks",
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w700,
-                        color: lightColorScheme.primary.withOpacity(0.9),
-                      ),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: lightColorScheme.primary.withOpacity(0.06),
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(
+                      color: lightColorScheme.primary.withOpacity(0.2),
                     ),
-                    const SizedBox(height: 10),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 6,
-                      children: compareStocks.map((stock) {
-                        return Chip(
-                          backgroundColor: Colors.black12,
-                          label: Text(stock['name'],
-                              style: const TextStyle(color: Colors.black)),
-                          deleteIcon: const Icon(Icons.close, size: 18),
-                          onDeleted: () => _toggleCompareStock(stock),
-                        );
-                      }).toList(),
-                    ),
-                    const SizedBox(height: 15),
-                  ],
-                ),
-
-              if (compareStocks.length >= 2)
-                AIBotButton(
-                  title: "Compare ${compareStocks.length} Stocks",
-                  onTap: () async {
-                    await loadSubscriptionStatus();
-                    if (!isSubscribed) {
-                      SubscriptionPromptDialog.show(context);
-                      return;
-                    }
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) =>
-                            MultiStockChatScreen(symbols: compareStocks),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Icon(Icons.compare_arrows,
+                              size: 20, color: lightColorScheme.primary),
+                          const SizedBox(width: 8),
+                          Text(
+                            "Compare Stocks (${compareStocks.length}/3)",
+                            style: TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w700,
+                              color: lightColorScheme.primary,
+                            ),
+                          ),
+                        ],
                       ),
-                    );
-                  },
+                      const SizedBox(height: 10),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 6,
+                        children: compareStocks.map((stock) {
+                          return Chip(
+                            backgroundColor:
+                                lightColorScheme.primary.withOpacity(0.1),
+                            label: Text(
+                              stock['name'] ?? stock['symbol'] ?? '',
+                              style: TextStyle(
+                                color: lightColorScheme.primary,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                            deleteIcon: Icon(Icons.close,
+                                size: 18, color: lightColorScheme.primary),
+                            onDeleted: () => _toggleCompareStock(stock),
+                          );
+                        }).toList(),
+                      ),
+                      if (compareStocks.length >= 2) ...[
+                        const SizedBox(height: 14),
+                        SizedBox(
+                          width: double.infinity,
+                          height: 44,
+                          child: ElevatedButton.icon(
+                            onPressed: () async {
+                              await loadSubscriptionStatus();
+                              if (!isSubscribed) {
+                                SubscriptionPromptDialog.show(context);
+                                return;
+                              }
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (_) => MultiStockChatScreen(
+                                      symbols: compareStocks),
+                                ),
+                              );
+                            },
+                            icon: const Icon(Icons.compare_arrows, size: 20),
+                            label: Text(
+                              "Compare ${compareStocks.length} Stocks",
+                              style: const TextStyle(
+                                fontSize: 15,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: lightColorScheme.primary,
+                              foregroundColor: Colors.white,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              elevation: 2,
+                            ),
+                          ),
+                        ),
+                      ] else ...[
+                        const SizedBox(height: 8),
+                        Text(
+                          "Add at least 2 stocks to compare",
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.grey.shade600,
+                            fontStyle: FontStyle.italic,
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
                 ),
 
               const SizedBox(height: 16),
@@ -226,56 +280,125 @@ class _StockAnalysisScreenState extends State<StockAnalysisScreen> {
 
                     return Container(
                       margin: const EdgeInsets.only(bottom: 12),
+                      padding: const EdgeInsets.all(14),
                       decoration: BoxDecoration(
                         color: Colors.white,
                         borderRadius: BorderRadius.circular(14),
                         border: Border.all(
-                          color: Colors.black, // 👈 subtle border
+                          color: Colors.grey.shade300,
                           width: 1,
                         ),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.05),
+                            blurRadius: 6,
+                            offset: const Offset(0, 2),
+                          ),
+                        ],
                       ),
-                      child: ListTile(
-                        title: Text(
-                          stock['name'],
-                          style: const TextStyle(color: Colors.black),
-                        ),
-                        subtitle: Text(
-                          stock['symbol'],
-                          style: const TextStyle(color: Colors.black87),
-                        ),
-                        trailing: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            IconButton(
-                              icon: Icon(
-                                inCompare
-                                    ? Icons.check_circle
-                                    : Icons.add_circle_outline,
-                                color: inCompare
-                                    ? Colors.greenAccent
-                                    : Colors.black87,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          // Stock name & symbol
+                          Text(
+                            stock['name'] ?? '',
+                            style: const TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w600,
+                              color: Colors.black,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            stock['symbol'] ?? '',
+                            style: TextStyle(
+                              fontSize: 13,
+                              color: Colors.grey.shade600,
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                          // Action buttons row
+                          Row(
+                            children: [
+                              // Analyze button
+                              Expanded(
+                                child: SizedBox(
+                                  height: 38,
+                                  child: ElevatedButton.icon(
+                                    onPressed: () {
+                                      Navigator.push(
+                                        context,
+                                        MaterialPageRoute(
+                                          builder: (_) => StockDetailScreen(
+                                              symbol: stock['symbol']),
+                                        ),
+                                      );
+                                    },
+                                    icon: const Icon(Icons.analytics_outlined,
+                                        size: 18),
+                                    label: const Text('Analyze'),
+                                    style: ElevatedButton.styleFrom(
+                                      backgroundColor:
+                                          lightColorScheme.primary,
+                                      foregroundColor: Colors.white,
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius:
+                                            BorderRadius.circular(10),
+                                      ),
+                                      textStyle: const TextStyle(
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                  ),
+                                ),
                               ),
-                              onPressed: () => _toggleCompareStock(stock),
-                            ),
-                            const Icon(
-                              Icons.arrow_forward_ios,
-                              size: 16,
-                              color: Colors.black87,
-                            ),
-                          ],
-                        ),
-                        onTap: () {
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (_) =>
-                                  StockDetailScreen(symbol: stock['symbol']),
-                            ),
-                          );
-                        },
+                              const SizedBox(width: 10),
+                              // Compare toggle button
+                              SizedBox(
+                                height: 38,
+                                child: OutlinedButton.icon(
+                                  onPressed: () =>
+                                      _toggleCompareStock(stock),
+                                  icon: Icon(
+                                    inCompare
+                                        ? Icons.check_circle
+                                        : Icons.add_circle_outline,
+                                    size: 18,
+                                    color: inCompare
+                                        ? Colors.green
+                                        : lightColorScheme.primary,
+                                  ),
+                                  label: Text(
+                                    inCompare ? 'Added' : 'Compare',
+                                    style: TextStyle(
+                                      color: inCompare
+                                          ? Colors.green
+                                          : lightColorScheme.primary,
+                                    ),
+                                  ),
+                                  style: OutlinedButton.styleFrom(
+                                    side: BorderSide(
+                                      color: inCompare
+                                          ? Colors.green
+                                          : lightColorScheme.primary,
+                                    ),
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius:
+                                          BorderRadius.circular(10),
+                                    ),
+                                    textStyle: const TextStyle(
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
                       ),
                     );
-
                   },
                 ),
             ],

@@ -2,6 +2,7 @@ import 'dart:ui';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:tidistockmobileapp/screens/welcomeScreen.dart';
 import 'package:tidistockmobileapp/service/ApiService.dart';
+import 'package:tidistockmobileapp/service/CacheService.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -68,57 +69,56 @@ class ProfilePageState extends State<ProfilePage>
   }
 
   Future<void> updateUserDetails() async {
-    ApiService apiService = ApiService();
     setState(() => isLoading = true);
 
     try {
-      final response = await apiService.getUserDetails();
-      if (response.statusCode == 200) {
-        final data = json.decode(response.body)['data'];
+      await ApiService().getCachedUserDetails(
+        onData: (data, {required fromCache}) async {
+          if (!mounted) return;
 
-        if (data == null) {
-          showErrorSnackBar("No user data found");
-          setState(() => isLoading = false);
-          return;
-        }
+          if (data == null) {
+            showErrorSnackBar("No user data found");
+            setState(() => isLoading = false);
+            return;
+          }
 
-        imageUrl = data['profilePicture'];
-        firstName = data['firstName'] ?? '';
-        phoneNumber = data['username'] ?? '';
-        lastName = data['lastName'] ?? '';
-        isSubscribed = data['isSubscribed'] ?? false;
-        subscriptionEndDate = data['subscriptionEndDate']?.toString() ?? '';
+          imageUrl = data['profilePicture'];
+          firstName = data['firstName'] ?? '';
+          phoneNumber = data['username'] ?? '';
+          lastName = data['lastName'] ?? '';
+          isSubscribed = data['isSubscribed'] ?? false;
+          subscriptionEndDate = data['subscriptionEndDate']?.toString() ?? '';
 
-        await secureStorage.write(key: 'user_id', value: data['id']?.toString());
-        await secureStorage.write(key: 'profile_picture', value: imageUrl ?? '');
-        await secureStorage.write(key: 'phone_number', value: data['username']);
-        await secureStorage.write(key: 'first_name', value: firstName ?? '');
-        await secureStorage.write(key: 'last_name', value: lastName ?? '');
-        await secureStorage.write(key: 'is_subscribed', value: data['isSubscribed'].toString());
-        await secureStorage.write(key: 'is_paid', value: data['isPaid'].toString());
-        await secureStorage.write(key: 'subscription_end_date', value: data['subscriptionEndDate']?.toString());
-        await secureStorage.write(key: 'pan', value: data['pan']?.toString());
+          await secureStorage.write(key: 'user_id', value: data['id']?.toString());
+          await secureStorage.write(key: 'profile_picture', value: imageUrl ?? '');
+          await secureStorage.write(key: 'phone_number', value: data['username']);
+          await secureStorage.write(key: 'first_name', value: firstName ?? '');
+          await secureStorage.write(key: 'last_name', value: lastName ?? '');
+          await secureStorage.write(key: 'is_subscribed', value: data['isSubscribed'].toString());
+          await secureStorage.write(key: 'is_paid', value: data['isPaid'].toString());
+          await secureStorage.write(key: 'subscription_end_date', value: data['subscriptionEndDate']?.toString());
+          await secureStorage.write(key: 'pan', value: data['pan']?.toString());
+          await secureStorage.write(key: 'is_stock_analysis_trial_active', value: data['isStockAnalysisTrialActive'].toString());
 
+          final List configs = data['config'] ?? [];
 
-        final List configs = data['config'] ?? [];
+          for (final item in configs) {
+            await secureStorage.write(
+              key: item['name'],
+              value: item['value'].toString(),
+            );
+          }
 
-        for (final item in configs) {
-          await secureStorage.write(
-            key: item['name'],
-            value: item['value'].toString(),
-          );
-        }
-
-        _controller.forward();
-      } else {
-        if (!mounted) return;
-        showErrorSnackBar("Failed to fetch user details");
-      }
+          if (mounted) {
+            setState(() => isLoading = false);
+            _controller.forward();
+          }
+        },
+      );
     } catch (_) {
       if (!mounted) return;
       showErrorSnackBar("Something went wrong");
-    } finally {
-      if (mounted) setState(() => isLoading = false);
+      setState(() => isLoading = false);
     }
   }
 
@@ -128,6 +128,8 @@ class ProfilePageState extends State<ProfilePage>
       final response = await apiService.updateUserDetails(newFirstName, newLastName);
 
       if (response.statusCode == 200) {
+        CacheService.instance.invalidate('api/user');
+
         // Reset animation & state to reload profile page UI
         setState(() {
           isLoading = true;
@@ -362,6 +364,43 @@ class ProfilePageState extends State<ProfilePage>
   }
 
 
+  Widget _buildClearCacheButton() {
+    return InkWell(
+      onTap: () async {
+        await CacheService.instance.clearAll();
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Cache cleared")),
+        );
+        setState(() {}); // Refresh to update displayed size
+      },
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 16),
+        decoration: BoxDecoration(
+          color: Colors.grey.shade100,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: Colors.grey.shade300),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.cached, color: Colors.black54, size: 20),
+            const SizedBox(width: 8),
+            Text(
+              "Clear Cache (${CacheService.instance.formattedDiskSize})",
+              style: const TextStyle(
+                color: Colors.black87,
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   void showErrorSnackBar(String message) {
     ScaffoldMessenger.of(context)
         .showSnackBar(SnackBar(content: Text(message)));
@@ -394,6 +433,7 @@ class ProfilePageState extends State<ProfilePage>
 
   Future<void> logout() async {
     ApiService.invalidateTokenCache();
+    await CacheService.instance.clearAll();
     await secureStorage.deleteAll();
     if (!mounted) return;
     Navigator.of(context).pushAndRemoveUntil(
@@ -409,6 +449,7 @@ class ProfilePageState extends State<ProfilePage>
 
       final response = await ApiService().uploadProfilePicture(pickedFile);
       if (response.statusCode == 200) {
+        CacheService.instance.invalidate('api/user');
         updateUserDetails();
         showErrorSnackBar("Profile picture updated.");
         Navigator.of(navigatorKey.currentContext!, rootNavigator: true)
@@ -687,6 +728,8 @@ class ProfilePageState extends State<ProfilePage>
                         ),
                       ),
 
+                  const SizedBox(height: 10),
+                  _buildClearCacheButton(),
                   const SizedBox(height: 10),
                   InkWell(
                     onTap: confirmLogout,

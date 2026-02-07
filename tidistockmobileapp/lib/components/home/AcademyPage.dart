@@ -143,32 +143,32 @@ class _AcademyPageState extends State<AcademyPage>
 
   Future<void> getCourses() async {
     try {
-      //safeSetState(() => isLoading = true);
-      final response = await ApiService().getCourses();
-      if (response.statusCode == 200) {
-        final data = json.decode(response.body)['data'];
-        safeSetState(() => _courses = data);
-      }
+      await ApiService().getCachedCourses(
+        onData: (data, {required fromCache}) {
+          if (!mounted) return;
+          safeSetState(() => _courses = data is List ? data : []);
+        },
+      );
     } catch (e) {
       debugPrint("Error getCourses: $e");
     }
-    //safeSetState(() => isLoading = false);
   }
 
   Future<void> getBranches() async {
     try {
       safeSetState(() => isLoading = true);
-      final response = await ApiService().getBranches();
-      if (response.statusCode == 200) {
-        final data = json.decode(response.body)['data'];
-        safeSetState(() {
-          _branches = data;
-          _branchIdNameMap = {
-            for (var b in data) b['id']: b['name']
-          };
-        });
-
-      }
+      await ApiService().getCachedBranches(
+        onData: (data, {required fromCache}) {
+          if (!mounted) return;
+          final list = data is List ? data : [];
+          safeSetState(() {
+            _branches = list;
+            _branchIdNameMap = {
+              for (var b in list) b['id']: b['name']
+            };
+          });
+        },
+      );
     } catch (e) {
       debugPrint("Error getBranches: $e");
     }

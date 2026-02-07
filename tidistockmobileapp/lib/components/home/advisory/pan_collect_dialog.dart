@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../../../service/ApiService.dart';
+import '../../../service/CacheService.dart';
 import '../../../theme/theme.dart';
 
 class PanCollectDialog extends StatefulWidget {
@@ -43,6 +44,7 @@ class _PanCollectDialogState extends State<PanCollectDialog> {
       );
 
       if (response.statusCode == 200) {
+        CacheService.instance.invalidate('api/user');
         await storage.write(
           key: 'pan',
           value: _panController.text.trim(),

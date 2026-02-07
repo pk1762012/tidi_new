@@ -6,22 +6,16 @@ import '../../../service/ApiService.dart';
 class PreMarketDialog {
   static Future<void> show(BuildContext context) async {
     try {
-      ApiService api = ApiService();
-      final response = await api.getPreMarketSummary();
-
-      if (response.statusCode == 200) {
-        final data = json.decode(response.body)["data"];
-
-        showDialog(
-          context: context,
-          barrierDismissible: true,
-          builder: (_) => _PreMarketDialogFrame(data: data),
-        );
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Failed to fetch pre-market data")),
-        );
-      }
+      await ApiService().getCachedPreMarketSummary(
+        onData: (data, {required fromCache}) {
+          if (data == null) return;
+          showDialog(
+            context: context,
+            barrierDismissible: true,
+            builder: (_) => _PreMarketDialogFrame(data: Map<String, dynamic>.from(data)),
+          );
+        },
+      );
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text("Error: $e")),

@@ -5,6 +5,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../../screens/homeScreen.dart';
 import '../../screens/welcomeScreen.dart';
 import '../../service/ApiService.dart';
+import '../../service/CacheService.dart';
 
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
@@ -74,6 +75,7 @@ class _SplashScreenState extends State<SplashScreen> {
         await storage.write(key: 'is_paid', value: data['isPaid'].toString());
         await storage.write(key: 'subscription_end_date', value: data['subscriptionEndDate']?.toString());
         await storage.write(key: 'pan', value: data['pan']?.toString());
+        await storage.write(key: 'is_stock_analysis_trial_active', value: data['isStockAnalysisTrialActive'].toString());
 
         final List configs = data['config'] ?? [];
 
@@ -87,6 +89,7 @@ class _SplashScreenState extends State<SplashScreen> {
 
         return data;
       } else if (response.statusCode == 401) {
+        await CacheService.instance.clearAll();
         final FlutterSecureStorage secureStorage = FlutterSecureStorage();
         await secureStorage.deleteAll();
         Navigator.of(context).pushAndRemoveUntil(

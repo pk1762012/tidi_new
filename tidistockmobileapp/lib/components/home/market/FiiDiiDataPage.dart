@@ -55,24 +55,26 @@ class _FiiDiiDataPageState extends State<FiiDiiDataPage> {
 
   Future<void> fetchData() async {
     try {
-      ApiService api = ApiService();
-      final response = await api.getFiiData(limit, offset);
+      await ApiService().getCachedFiiData(
+        limit: limit,
+        offset: offset,
+        onData: (responseData, {required fromCache}) {
+          if (!mounted) return;
+          final json = responseData is Map ? responseData : jsonDecode(responseData.toString());
+          final List<dynamic> newItems = json["data"] ?? [];
 
-      if (response.statusCode == 200) {
-        final json = jsonDecode(response.body);
-        final List<dynamic> newItems = json["data"] ?? [];
+          setState(() {
+            data = newItems;
+            loading = false;
+            offset = limit; // After first page, offset is limit
 
-        setState(() {
-          data = newItems;
-          loading = false;
-          offset += limit;
-
-          int totalCount = json["totalCount"] ?? newItems.length;
-          hasMore = data.length < totalCount;
-        });
-      }
+            int totalCount = json["totalCount"] ?? newItems.length;
+            hasMore = data.length < totalCount;
+          });
+        },
+      );
     } catch (e) {
-      setState(() => loading = false);
+      if (mounted) setState(() => loading = false);
     }
   }
 

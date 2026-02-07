@@ -47,25 +47,31 @@ class _IpoListingPageState extends State<IpoListingPage> {
   Future<void> fetchIpos() async {
     setState(() => loading = true);
 
-    final response = await ApiService().getIPO();
-    if (response.statusCode == 200) {
-      final List data = jsonDecode(response.body);
-      final now = DateTime.now();
-      final today = DateTime(now.year, now.month, now.day);
+    try {
+      await ApiService().getCachedIPO(
+        onData: (data, {required fromCache}) {
+          if (!mounted) return;
+          final List list = data is List ? data : [];
+          final now = DateTime.now();
+          final today = DateTime(now.year, now.month, now.day);
 
-      setState(() {
-        openIpos = data.where((e) {
-          if (e['status'] != 'open') return false;
-          final endDateStr = e['endDate'];
-          if (endDateStr != null) {
-            final endDate = DateTime.tryParse(endDateStr);
-            if (endDate != null && endDate.isBefore(today)) return false;
-          }
-          return true;
-        }).toList();
-        upcomingIpos = data.where((e) => e['status'] == 'upcoming').toList();
-        loading = false;
-      });
+          setState(() {
+            openIpos = list.where((e) {
+              if (e['status'] != 'open') return false;
+              final endDateStr = e['endDate'];
+              if (endDateStr != null) {
+                final endDate = DateTime.tryParse(endDateStr);
+                if (endDate != null && endDate.isBefore(today)) return false;
+              }
+              return true;
+            }).toList();
+            upcomingIpos = list.where((e) => e['status'] == 'upcoming').toList();
+            loading = false;
+          });
+        },
+      );
+    } catch (e) {
+      if (mounted) setState(() => loading = false);
     }
   }
 

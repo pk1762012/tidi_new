@@ -6,6 +6,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:razorpay_flutter/razorpay_flutter.dart';
 
 import 'ApiService.dart';
+import 'CacheService.dart';
 
 class RazorpayService {
   late Razorpay _razorpay;
@@ -114,6 +115,11 @@ class RazorpayService {
 
   void _handleSuccess(PaymentSuccessResponse response) {
     print("Payment successful: ${response.paymentId}");
+    CacheService.instance.invalidate('api/user');
+    CacheService.instance.invalidateByPrefix('api/admin/stock/recommend/get');
+    CacheService.instance.invalidateByPrefix('api/user/get_subscription_transactions');
+    CacheService.instance.invalidateByPrefix('api/user/get_course_transactions');
+    CacheService.instance.invalidateByPrefix('api/workshop/register');
     _onFinishCallback?.call(); // 🔄 refresh UI
   }
 

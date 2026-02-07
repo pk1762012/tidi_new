@@ -58,23 +58,22 @@ class _StockDetailScreenState extends State<StockDetailScreen> with SingleTicker
 
   Future<void> _fetchStockAnalysis() async {
     try {
-      final response = await ApiService().getStockAnalysis(widget.symbol);
-      if (response.statusCode == 200) {
-        final data = json.decode(response.body);
-        setState(() {
-          _stockSummary = data['summary'] ?? {};
-          _fundamentalData = _stockSummary?['fundamental_data'] ?? {};
-          _technicalData = _stockSummary?['technical_data'] ?? {};
-          _loading = false;
-        });
-        _controller.forward();
-      } else {
-        setState(() => _loading = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Failed to fetch stock analysis')),
-        );
-      }
+      await ApiService().getCachedStockAnalysis(
+        symbol: widget.symbol,
+        onData: (data, {required fromCache}) {
+          if (!mounted) return;
+          final parsed = data is Map<String, dynamic> ? data : json.decode(data.toString());
+          setState(() {
+            _stockSummary = parsed['summary'] ?? {};
+            _fundamentalData = _stockSummary?['fundamental_data'] ?? {};
+            _technicalData = _stockSummary?['technical_data'] ?? {};
+            _loading = false;
+          });
+          _controller.forward();
+        },
+      );
     } catch (e) {
+      if (!mounted) return;
       setState(() => _loading = false);
       ScaffoldMessenger.of(context)
           .showSnackBar(SnackBar(content: Text('Error: $e')));

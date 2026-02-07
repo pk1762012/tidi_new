@@ -7,6 +7,8 @@ import 'package:http/http.dart' as http;
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'dart:convert';
 
+import 'CacheService.dart';
+
 class ApiService {
 
   final FlutterSecureStorage secureStorage = const FlutterSecureStorage();
@@ -105,12 +107,17 @@ class ApiService {
   }
 
   Future<http.Response> getSavedDeviceFcm() async {
-    String? token = await _getToken();
-    return http.get(
-      Uri.parse(apiUrl + 'api/user/fcm'),
-      headers: {
-        'Authorization': 'Bearer $token',
-        'Content-Type': 'application/json',
+    return CacheService.instance.cachedGet(
+      key: 'api/user/fcm',
+      fetcher: () async {
+        String? token = await _getToken();
+        return http.get(
+          Uri.parse(apiUrl + 'api/user/fcm'),
+          headers: {
+            'Authorization': 'Bearer $token',
+            'Content-Type': 'application/json',
+          },
+        );
       },
     );
   }
@@ -174,17 +181,22 @@ class ApiService {
   }
 
   Future<http.Response> getCourseTransactions(int? limit, int? offset) async {
-    String? token = await _getToken();
-    return http.post(
-      Uri.parse(apiUrl + 'api/user/get_course_transactions'),
-      headers: {
-        'Authorization': 'Bearer $token',
-        'Content-Type': 'application/json',
+    return CacheService.instance.cachedGet(
+      key: 'api/user/get_course_transactions:$limit:$offset',
+      fetcher: () async {
+        String? token = await _getToken();
+        return http.post(
+          Uri.parse(apiUrl + 'api/user/get_course_transactions'),
+          headers: {
+            'Authorization': 'Bearer $token',
+            'Content-Type': 'application/json',
+          },
+          body: jsonEncode({
+            "limit": limit,
+            "offset": offset,
+          }),
+        );
       },
-      body: jsonEncode({
-        "limit": limit,
-        "offset": offset,
-      }),
     );
   }
 
@@ -211,17 +223,22 @@ class ApiService {
   }
 
   Future<http.Response> getPortfolioHistory(int? limit, int? offset) async {
-    String? token = await _getToken();
-    return http.post(
-      Uri.parse(apiUrl + 'api/history/portfolio'),
-      headers: {
-        'Authorization': 'Bearer $token',
-        'Content-Type': 'application/json',
+    return CacheService.instance.cachedGet(
+      key: 'api/history/portfolio:$limit:$offset',
+      fetcher: () async {
+        String? token = await _getToken();
+        return http.post(
+          Uri.parse(apiUrl + 'api/history/portfolio'),
+          headers: {
+            'Authorization': 'Bearer $token',
+            'Content-Type': 'application/json',
+          },
+          body: jsonEncode({
+            "limit": limit,
+            "offset": offset,
+          }),
+        );
       },
-      body: jsonEncode({
-        "limit": limit,
-        "offset": offset,
-      }),
     );
   }
 
@@ -256,13 +273,18 @@ class ApiService {
   }
 
   Future<http.Response> getRegisteredWorkshops() async {
-    String? token = await _getToken();
-    return http.get(
-      Uri.parse(apiUrl + 'api/workshop/register'),
-      headers: {
-        'Authorization': 'Bearer $token',
-        'Content-Type': 'application/json',
-      }
+    return CacheService.instance.cachedGet(
+      key: 'api/workshop/register',
+      fetcher: () async {
+        String? token = await _getToken();
+        return http.get(
+          Uri.parse(apiUrl + 'api/workshop/register'),
+          headers: {
+            'Authorization': 'Bearer $token',
+            'Content-Type': 'application/json',
+          },
+        );
+      },
     );
   }
 
@@ -357,28 +379,38 @@ class ApiService {
   }
 
   Future<http.Response> getSubscriptionTransactions(int? limit, int? offset) async {
-    String? token = await _getToken();
-    return http.post(
-      Uri.parse(apiUrl + 'api/user/get_subscription_transactions'),
-      headers: {
-        'Authorization': 'Bearer $token',
-        'Content-Type': 'application/json',
+    return CacheService.instance.cachedGet(
+      key: 'api/user/get_subscription_transactions:$limit:$offset',
+      fetcher: () async {
+        String? token = await _getToken();
+        return http.post(
+          Uri.parse(apiUrl + 'api/user/get_subscription_transactions'),
+          headers: {
+            'Authorization': 'Bearer $token',
+            'Content-Type': 'application/json',
+          },
+          body: jsonEncode({
+            "limit": limit,
+            "offset": offset,
+          }),
+        );
       },
-      body: jsonEncode({
-        "limit": limit,
-        "offset": offset,
-      }),
     );
   }
 
   Future<http.Response> searchStock(String query) async {
-    String? token = await _getToken();
-    return http.get(
-      Uri.parse(apiUrl + 'api/stock/$query'),
-      headers: {
-        'Authorization': 'Bearer $token',
-        'Content-Type': 'application/json',
-      }
+    return CacheService.instance.cachedGet(
+      key: 'api/stock/search:$query',
+      fetcher: () async {
+        String? token = await _getToken();
+        return http.get(
+          Uri.parse(apiUrl + 'api/stock/$query'),
+          headers: {
+            'Authorization': 'Bearer $token',
+            'Content-Type': 'application/json',
+          },
+        );
+      },
     );
   }
 
@@ -397,12 +429,16 @@ class ApiService {
 
 
   Future<http.Response> getMarketQuote(String symbol) async {
-    return http.get(
+    return CacheService.instance.cachedGet(
+      key: 'index/quote:$symbol',
+      fetcher: () => http.get(
         Uri.parse(marketDataUrl + 'index/quote/$symbol'),
         headers: {
           'Authorization': 'Bearer $marketDataPassword',
           'Content-Type': 'application/json',
-        });
+        },
+      ),
+    );
   }
 
   Future<http.Response> getPreMarketSummary() async {
@@ -478,12 +514,153 @@ class ApiService {
   }
 
   Future<http.Response> getOptionPulsePCR(String symbol) async {
-    return http.get(
-      Uri.parse(marketDataUrl + 'option-chain/$symbol/pcr'),
-      headers: {
-        'Authorization': 'Bearer $marketDataPassword',
-        'Content-Type': 'application/json',
-      },
+    return CacheService.instance.cachedGet(
+      key: 'option-chain:$symbol:pcr',
+      fetcher: () => http.get(
+        Uri.parse(marketDataUrl + 'option-chain/$symbol/pcr'),
+        headers: {
+          'Authorization': 'Bearer $marketDataPassword',
+          'Content-Type': 'application/json',
+        },
+      ),
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Cached versions — opt-in stale-while-revalidate wrappers
+  // ---------------------------------------------------------------------------
+
+  /// Cached market holidays (30-day TTL).
+  Future<void> getCachedMarketHolidays({
+    required void Function(dynamic data, {required bool fromCache}) onData,
+  }) {
+    return CacheService.instance.fetchWithCache(
+      key: 'api/market/holiday',
+      fetcher: () => getMarketHolidayList(),
+      onData: onData,
+    );
+  }
+
+  /// Cached branches (30-day TTL).
+  Future<void> getCachedBranches({
+    required void Function(dynamic data, {required bool fromCache}) onData,
+  }) {
+    return CacheService.instance.fetchWithCache(
+      key: 'api/branch',
+      fetcher: () => getBranches(),
+      onData: onData,
+      parseResponse: (r) => jsonDecode(r.body)['data'],
+    );
+  }
+
+  /// Cached courses (30-day TTL).
+  Future<void> getCachedCourses({
+    required void Function(dynamic data, {required bool fromCache}) onData,
+  }) {
+    return CacheService.instance.fetchWithCache(
+      key: 'api/course',
+      fetcher: () => getCourses(),
+      onData: onData,
+      parseResponse: (r) => jsonDecode(r.body)['data'],
+    );
+  }
+
+  /// Cached IPO list (3-day TTL).
+  Future<void> getCachedIPO({
+    required void Function(dynamic data, {required bool fromCache}) onData,
+  }) {
+    return CacheService.instance.fetchWithCache(
+      key: 'api/ipo',
+      fetcher: () => getIPO(),
+      onData: onData,
+    );
+  }
+
+  /// Cached FII/DII data first page (12-hour TTL).
+  Future<void> getCachedFiiData({
+    required int limit,
+    required int offset,
+    required void Function(dynamic data, {required bool fromCache}) onData,
+  }) {
+    return CacheService.instance.fetchWithCache(
+      key: 'api/fii:$limit:$offset',
+      fetcher: () => getFiiData(limit, offset),
+      onData: onData,
+    );
+  }
+
+  /// Cached Nifty 50 stock analysis (12-hour TTL).
+  Future<void> getCachedNifty50StockAnalysis({
+    required void Function(dynamic data, {required bool fromCache}) onData,
+  }) {
+    return CacheService.instance.fetchWithCache(
+      key: 'nifty_50_stock_analysis',
+      fetcher: () => getNifty50StockAnalysis(),
+      onData: onData,
+      parseResponse: (r) => jsonDecode(r.body)['data'],
+    );
+  }
+
+  /// Cached individual stock analysis (12-hour TTL).
+  Future<void> getCachedStockAnalysis({
+    required String symbol,
+    required void Function(dynamic data, {required bool fromCache}) onData,
+  }) {
+    return CacheService.instance.fetchWithCache(
+      key: 'stock_analysis:$symbol',
+      fetcher: () => getStockAnalysis(symbol),
+      onData: onData,
+    );
+  }
+
+  /// Cached stock recommendations first page (2-hour TTL).
+  Future<void> getCachedStockRecommendations({
+    required int limit,
+    required int offset,
+    required String status,
+    required String? type,
+    required void Function(dynamic data, {required bool fromCache}) onData,
+  }) {
+    return CacheService.instance.fetchWithCache(
+      key: 'api/admin/stock/recommend/get:$status:${type ?? 'ALL'}:$limit:$offset',
+      fetcher: () => getStockRecommendations(limit, offset, status, type),
+      onData: onData,
+      parseResponse: (r) => jsonDecode(r.body)['data'],
+    );
+  }
+
+  /// Cached portfolio (4-hour TTL).
+  Future<void> getCachedPortfolio({
+    required void Function(dynamic data, {required bool fromCache}) onData,
+  }) {
+    return CacheService.instance.fetchWithCache(
+      key: 'api/portfolio',
+      fetcher: () => getPortfolio(),
+      onData: onData,
+    );
+  }
+
+  /// Cached user details (4-hour TTL).
+  Future<void> getCachedUserDetails({
+    required void Function(dynamic data, {required bool fromCache}) onData,
+  }) {
+    return CacheService.instance.fetchWithCache(
+      key: 'api/user',
+      fetcher: () => getUserDetails(),
+      onData: onData,
+      parseResponse: (r) => jsonDecode(r.body)['data'],
+    );
+  }
+
+  /// Cached pre-market summary (30-min TTL).
+  Future<void> getCachedPreMarketSummary({
+    required void Function(dynamic data, {required bool fromCache}) onData,
+  }) {
+    return CacheService.instance.fetchWithCache(
+      key: 'pre_market_summary',
+      fetcher: () => getPreMarketSummary(),
+      onData: onData,
+      parseResponse: (r) => jsonDecode(r.body)['data'],
     );
   }
 

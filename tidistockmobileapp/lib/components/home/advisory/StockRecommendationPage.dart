@@ -103,33 +103,48 @@ class _StockRecommendationsPageState extends State<StockRecommendationsPage> {
     }
 
     try {
-      ApiService apiService = ApiService();
-      final response = await apiService
-          .getStockRecommendations(limit, offset, selectedStatus, selectedTerm);
+      // Use cached version for first page, uncached for pagination
+      if (offset == 0) {
+        await ApiService().getCachedStockRecommendations(
+          limit: limit,
+          offset: offset,
+          status: selectedStatus,
+          type: selectedTerm,
+          onData: (newData, {required fromCache}) {
+            if (!mounted) return;
+            final List data = newData is List ? newData : [];
+            setState(() {
+              loading = false;
+              loadingMore = false;
+              if (data.length < limit) hasMore = false;
+              recommendations = List.from(data);
+              offset = limit;
+            });
+          },
+        );
+      } else {
+        final response = await ApiService()
+            .getStockRecommendations(limit, offset, selectedStatus, selectedTerm);
 
-      if (response.statusCode == 200) {
-        final jsonData = jsonDecode(response.body);
-        List newData = jsonData["data"] ?? [];
+        if (response.statusCode == 200) {
+          final jsonData = jsonDecode(response.body);
+          List newData = jsonData["data"] ?? [];
 
-        setState(() {
-          if (reset) {
-            loading = false;
-          } else if (offset == 0) {
-            loading = false; // first load
-          }
-
-          loadingMore = false;
-
-          if (newData.length < limit) hasMore = false;
-
-          recommendations.addAll(newData);
-          offset += limit;
-        });
-
+          setState(() {
+            loadingMore = false;
+            if (newData.length < limit) hasMore = false;
+            recommendations.addAll(newData);
+            offset += limit;
+          });
+        }
       }
     } catch (e) {
-      if (reset) loading = false;
-      loadingMore = false;
+      if (mounted) {
+        setState(() {
+          if (reset || offset == 0) loading = false;
+          loadingMore = false;
+        });
+      }
     }
   }
 
