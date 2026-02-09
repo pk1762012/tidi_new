@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
 import 'dart:ui';
-import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:tidistockmobileapp/service/ApiService.dart';
 import 'package:tidistockmobileapp/service/CacheService.dart';
 import 'package:flutter/material.dart';
@@ -185,7 +184,7 @@ class MarketPageState extends State<MarketPage> with TickerProviderStateMixin, W
   }
 
   Future<void> _verifyDeviceFcm(BuildContext context) async {
-    final currentFcm = await FirebaseMessaging.instance.getToken();
+    final currentFcm = await ApiService.getFcmTokenSafely();
     if (currentFcm == null) return;
 
     final response = await ApiService().getSavedDeviceFcm();

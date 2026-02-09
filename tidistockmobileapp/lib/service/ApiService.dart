@@ -29,6 +29,19 @@ class ApiService {
     _cachedToken = null;
   }
 
+  static Future<String?> getFcmTokenSafely() async {
+    final messaging = FirebaseMessaging.instance;
+    if (Platform.isIOS) {
+      for (int i = 0; i < 5; i++) {
+        final apnsToken = await messaging.getAPNSToken();
+        if (apnsToken != null) break;
+        await Future.delayed(const Duration(seconds: 1));
+      }
+      if (await messaging.getAPNSToken() == null) return null;
+    }
+    return await messaging.getToken();
+  }
+
   Future<http.Response> createUser(String fName, String lName, String phoneNumber) async {
     return http.post(
       Uri.parse(apiUrl + 'api/user/create'),
@@ -321,7 +334,7 @@ class ApiService {
 
   void updateDeviceDetails() async {
     String? token = await _getToken();
-    String? fcmToken = await FirebaseMessaging.instance.getToken();
+    String? fcmToken = await getFcmTokenSafely();
     final String topic = dotenv.env['FIREBASE_TOPIC'] ?? 'test_all';
     FirebaseMessaging.instance.subscribeToTopic(topic);
 
@@ -549,6 +562,7 @@ class ApiService {
       key: 'api/ipo',
       fetcher: () => getIPO(),
       onData: onData,
+      parseResponse: (r) => jsonDecode(r.body)['data'],
     );
   }
 
