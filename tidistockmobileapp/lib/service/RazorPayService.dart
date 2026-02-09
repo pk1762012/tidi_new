@@ -30,14 +30,21 @@ class RazorpayService {
   // --------------- CHECKOUT METHODS ---------------
 
   Future<bool> openCheckout(String duration) async {
-    if (_isProcessing) return false;
+    debugPrint('[RazorpayService] openCheckout called with duration: $duration');
+    if (_isProcessing) {
+      debugPrint('[RazorpayService] Already processing, returning false');
+      return false;
+    }
     _isProcessing = true;
 
     try {
       final apiService = ApiService();
+      debugPrint('[RazorpayService] Calling createSubscriptionOrder...');
       final response = await apiService.createSubscriptionOrder(duration);
+      debugPrint('[RazorpayService] API response status: ${response.statusCode}');
+      debugPrint('[RazorpayService] API response body: ${response.body}');
 
-      if (response.statusCode == 201) {
+      if (response.statusCode >= 200 && response.statusCode < 300) {
         try {
           String? phone = await secureStorage.read(key: 'phone_number');
           final jsonData = json.decode(response.body);
@@ -46,9 +53,6 @@ class RazorpayService {
           final orderId = jsonData['data']['orderId'];
 
           debugPrint('[RazorpayService] openCheckout - key: ${razorpayKey.substring(0, razorpayKey.length.clamp(0, 12))}..., orderId: $orderId');
-          if (razorpayKey.startsWith('rzp_test_')) {
-            debugPrint('[RazorpayService] WARNING: Using TEST key with production backend. Payment will silently fail.');
-          }
 
           var options = {
             'key': razorpayKey,
@@ -59,7 +63,7 @@ class RazorpayService {
             'description':
                 '${duration.replaceAll('_', ' ').toUpperCase()} Membership',
             'timeout': 60,
-            'prefill': {'contact': phone}
+            'prefill': {'contact': phone ?? ''}
           };
 
           _razorpay.open(options);
@@ -91,7 +95,7 @@ class RazorpayService {
       final apiService = ApiService();
       final response = await apiService.createCourseOrder(courseId, branchId);
 
-      if (response.statusCode == 201) {
+      if (response.statusCode >= 200 && response.statusCode < 300) {
         try {
           String? phone = await secureStorage.read(key: 'phone_number');
           final jsonData = json.decode(response.body);
@@ -100,9 +104,6 @@ class RazorpayService {
           final orderId = jsonData['data']['orderId'];
 
           debugPrint('[RazorpayService] openCourseCheckout - key: ${razorpayKey.substring(0, razorpayKey.length.clamp(0, 12))}..., orderId: $orderId');
-          if (razorpayKey.startsWith('rzp_test_')) {
-            debugPrint('[RazorpayService] WARNING: Using TEST key with production backend. Payment will silently fail.');
-          }
 
           var options = {
             'key': razorpayKey,
@@ -112,7 +113,7 @@ class RazorpayService {
             'order_id': orderId,
             'description': 'Course Booking',
             'timeout': 60,
-            'prefill': {'contact': phone}
+            'prefill': {'contact': phone ?? ''}
           };
 
           _razorpay.open(options);
@@ -143,7 +144,7 @@ class RazorpayService {
     try {
       final response = await ApiService().registerToWorkshop(date, branchId);
 
-      if (response.statusCode == 201) {
+      if (response.statusCode >= 200 && response.statusCode < 300) {
         try {
           final jsonData = json.decode(response.body);
 
@@ -151,9 +152,6 @@ class RazorpayService {
           final orderId = jsonData['data']['orderId'];
 
           debugPrint('[RazorpayService] openWorkshopCheckout - key: ${razorpayKey.substring(0, razorpayKey.length.clamp(0, 12))}..., orderId: $orderId');
-          if (razorpayKey.startsWith('rzp_test_')) {
-            debugPrint('[RazorpayService] WARNING: Using TEST key with production backend. Payment will silently fail.');
-          }
 
           var options = {
             'key': razorpayKey,
