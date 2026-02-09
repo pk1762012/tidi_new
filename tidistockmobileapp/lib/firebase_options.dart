@@ -34,8 +34,8 @@ class DefaultFirebaseOptions {
   );
 
   static const FirebaseOptions ios = FirebaseOptions(
-    apiKey: 'AIzaSyCQbeL63O8-X65UqHQC256oLr0xXJIMQUo',
-    appId: '1:29712834204:android:b077a9fc622fe599899759',
+    apiKey: 'AIzaSyC7AD6b7TFDBX9D-GXJ4RFGv0-L_3XROoc',
+    appId: '1:29712834204:ios:3371528f5225b11e899759',
     messagingSenderId: '29712834204',
     projectId: 'tidi-4af58',
     storageBucket: 'tidi-4af58.firebasestorage.app',
@@ -52,8 +52,8 @@ class DefaultFirebaseOptions {
   );
 
   static const FirebaseOptions macos = FirebaseOptions(
-    apiKey: 'AIzaSyCQbeL63O8-X65UqHQC256oLr0xXJIMQUo',
-    appId: '1:29712834204:android:b077a9fc622fe599899759',
+    apiKey: 'AIzaSyC7AD6b7TFDBX9D-GXJ4RFGv0-L_3XROoc',
+    appId: '1:29712834204:ios:3371528f5225b11e899759',
     messagingSenderId: '29712834204',
     projectId: 'tidi-4af58',
     storageBucket: 'tidi-4af58.firebasestorage.app',

@@ -451,8 +451,9 @@ class ApiService {
   }
 
   Future<http.Response> getStockAnalysis(String symbol) async {
+    final cleanSymbol = symbol.replaceAll(RegExp(r'\.(NS|BO)$'), '');
     return http.get(
-        Uri.parse(marketDataUrl + 'stock_analysis/${symbol}.NS'),
+        Uri.parse(marketDataUrl + 'stock_analysis/$cleanSymbol.NS'),
         headers: {
           'Authorization': 'Bearer $marketDataPassword',
           'Content-Type': 'application/json',

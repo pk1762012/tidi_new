@@ -24,6 +24,7 @@ class _StockDetailScreenState extends State<StockDetailScreen> with SingleTicker
   Map<String, dynamic>? _fundamentalData;
   Map<String, dynamic>? _technicalData;
   bool _loading = true;
+  String? _errorMessage;
   final FlutterSecureStorage secureStorage = FlutterSecureStorage();
   bool isSubscribed = false;
 
@@ -54,6 +55,10 @@ class _StockDetailScreenState extends State<StockDetailScreen> with SingleTicker
   }
 
   Future<void> _fetchStockAnalysis() async {
+    setState(() {
+      _loading = true;
+      _errorMessage = null;
+    });
     try {
       await ApiService().getCachedStockAnalysis(
         symbol: widget.symbol,
@@ -65,15 +70,17 @@ class _StockDetailScreenState extends State<StockDetailScreen> with SingleTicker
             _fundamentalData = _stockSummary?['fundamental_data'] ?? {};
             _technicalData = _stockSummary?['technical_data'] ?? {};
             _loading = false;
+            _errorMessage = null;
           });
           _controller.forward();
         },
       );
     } catch (e) {
       if (!mounted) return;
-      setState(() => _loading = false);
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text('Error: $e')));
+      setState(() {
+        _loading = false;
+        _errorMessage = 'Failed to fetch stock analysis. Please try again.';
+      });
     }
   }
 
@@ -940,8 +947,37 @@ class _StockDetailScreenState extends State<StockDetailScreen> with SingleTicker
       menu: null,
       child: _loading
           ? Center(child: CircularProgressIndicator(color: lightColorScheme.primary))
-          : (_stockSummary == null || _stockSummary!.isEmpty)
-          ? const Center(child: Text('No data found', style: TextStyle(color: Colors.black)))
+          : (_errorMessage != null || _stockSummary == null || _stockSummary!.isEmpty)
+          ? Center(
+              child: Padding(
+                padding: const EdgeInsets.all(32),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(Icons.error_outline, size: 48, color: Colors.grey.shade400),
+                    const SizedBox(height: 16),
+                    Text(
+                      _errorMessage ?? 'No data found',
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(color: Colors.black54, fontSize: 15),
+                    ),
+                    const SizedBox(height: 20),
+                    ElevatedButton.icon(
+                      onPressed: _fetchStockAnalysis,
+                      icon: const Icon(Icons.refresh, size: 18),
+                      label: const Text('Retry'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: lightColorScheme.primary,
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            )
           : Stack(
         children: [
           SingleChildScrollView(
