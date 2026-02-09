@@ -179,6 +179,7 @@ class CacheService {
     'stock_analysis':              const _TierConfig(tier: CacheTier.nonCritical, memoryTtl: Duration(minutes: 10), diskTtl: Duration(hours: 12)),
     'nifty_50_stock_analysis':     const _TierConfig(tier: CacheTier.nonCritical, memoryTtl: Duration(minutes: 10), diskTtl: Duration(hours: 12)),
     'rss_news':                    const _TierConfig(tier: CacheTier.nonCritical, memoryTtl: Duration(minutes: 5),  diskTtl: Duration(hours: 1)),
+    'option-chain':                const _TierConfig(tier: CacheTier.nonCritical, memoryTtl: Duration(minutes: 2), diskTtl: Duration(hours: 1)),
 
     // ── SEMI-CRITICAL: memory only, short TTL (no disk persistence) ──
     'api/user':                        const _TierConfig(tier: CacheTier.semiCritical, memoryTtl: Duration(seconds: 60)),
@@ -189,7 +190,6 @@ class CacheService {
     'api/workshop/register':           const _TierConfig(tier: CacheTier.semiCritical, memoryTtl: Duration(seconds: 30)),
     'api/user/fcm':                    const _TierConfig(tier: CacheTier.semiCritical, memoryTtl: Duration(seconds: 30)),
     'index/quote':                     const _TierConfig(tier: CacheTier.semiCritical, memoryTtl: Duration(seconds: 15)),
-    'option-chain':                    const _TierConfig(tier: CacheTier.semiCritical, memoryTtl: Duration(seconds: 30)),
     'api/history/portfolio':           const _TierConfig(tier: CacheTier.semiCritical, memoryTtl: Duration(seconds: 30)),
     'api/user/get_subscription_transactions': const _TierConfig(tier: CacheTier.semiCritical, memoryTtl: Duration(seconds: 30)),
     'api/user/get_course_transactions':       const _TierConfig(tier: CacheTier.semiCritical, memoryTtl: Duration(seconds: 30)),

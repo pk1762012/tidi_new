@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:tidistockmobileapp/service/ApiService.dart';
@@ -36,41 +35,48 @@ class _OptionPulsePageState extends State<OptionPulsePage> {
   }
 
   Future<void> fetchData() async {
+    final api = ApiService();
     try {
-      final api = ApiService();
-      final results = await Future.wait([
-        api.getOptionPulsePCR('NIFTY'),
-        api.getOptionPulsePCR('BANKNIFTY'),
+      await Future.wait([
+        api.getCachedOptionPulsePCR(
+          symbol: 'NIFTY',
+          onData: (data, {required fromCache}) {
+            if (!mounted) return;
+            setState(() {
+              niftyData = data is Map<String, dynamic> ? data : null;
+              loading = false;
+              if (niftyData != null || bankNiftyData != null) errorMessage = null;
+            });
+          },
+        ),
+        api.getCachedOptionPulsePCR(
+          symbol: 'BANKNIFTY',
+          onData: (data, {required fromCache}) {
+            if (!mounted) return;
+            setState(() {
+              bankNiftyData = data is Map<String, dynamic> ? data : null;
+              loading = false;
+              if (niftyData != null || bankNiftyData != null) errorMessage = null;
+            });
+          },
+        ),
       ]);
 
-      Map<String, dynamic>? nifty;
-      Map<String, dynamic>? bankNifty;
-      String? err;
-
-      if (results[0].statusCode == 200) {
-        nifty = jsonDecode(results[0].body)['data'];
-      }
-      if (results[1].statusCode == 200) {
-        bankNifty = jsonDecode(results[1].body)['data'];
-      }
-
-      if (nifty == null && bankNifty == null) {
-        err = 'Failed to load option data. Pull down to refresh.';
-      }
-
       if (!mounted) return;
-      setState(() {
-        niftyData = nifty;
-        bankNiftyData = bankNifty;
-        errorMessage = err;
-        loading = false;
-      });
+      if (niftyData == null && bankNiftyData == null) {
+        setState(() {
+          errorMessage = 'Failed to load option data. Pull down to refresh.';
+          loading = false;
+        });
+      }
     } catch (e) {
       if (!mounted) return;
-      setState(() {
-        errorMessage = 'Network error. Pull down to refresh.';
-        loading = false;
-      });
+      if (niftyData == null && bankNiftyData == null) {
+        setState(() {
+          errorMessage = 'Network error. Pull down to refresh.';
+          loading = false;
+        });
+      }
     }
   }
 
@@ -144,7 +150,10 @@ class _OptionPulsePageState extends State<OptionPulsePage> {
               const SizedBox(height: 20),
               ElevatedButton.icon(
                 onPressed: () {
-                  setState(() => loading = true);
+                  setState(() {
+                    loading = true;
+                    errorMessage = null;
+                  });
                   fetchData();
                 },
                 icon: const Icon(Icons.refresh),

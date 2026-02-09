@@ -483,6 +483,25 @@ class ApiService {
     );
   }
 
+  /// Cached Option Pulse PCR — stale-while-revalidate wrapper.
+  Future<void> getCachedOptionPulsePCR({
+    required String symbol,
+    required void Function(dynamic data, {required bool fromCache}) onData,
+  }) {
+    return CacheService.instance.fetchWithCache(
+      key: 'option-chain:$symbol:pcr',
+      fetcher: () => http.get(
+        Uri.parse(marketDataUrl + 'option-chain/$symbol/pcr'),
+        headers: {
+          'Authorization': 'Bearer $marketDataPassword',
+          'Content-Type': 'application/json',
+        },
+      ),
+      onData: onData,
+      parseResponse: (r) => jsonDecode(r.body)['data'],
+    );
+  }
+
   // ---------------------------------------------------------------------------
   // Cached versions — opt-in stale-while-revalidate wrappers
   // ---------------------------------------------------------------------------
