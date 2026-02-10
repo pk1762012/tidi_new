@@ -562,7 +562,6 @@ class ApiService {
       key: 'api/ipo',
       fetcher: () => getIPO(),
       onData: onData,
-      parseResponse: (r) => jsonDecode(r.body)['data'],
     );
   }
 
