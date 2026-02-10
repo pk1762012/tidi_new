@@ -563,6 +563,7 @@ class ApiService {
       fetcher: () => getIPO(),
       onData: onData,
     );
+
   }
 
   /// Cached FII/DII data first page (12-hour TTL).
