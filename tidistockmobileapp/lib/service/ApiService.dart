@@ -509,7 +509,7 @@ class ApiService {
           'Authorization': 'Bearer $marketDataPassword',
           'Content-Type': 'application/json',
         },
-      ),
+      ).timeout(const Duration(seconds: 10)),
       onData: onData,
       parseResponse: (r) => jsonDecode(r.body)['data'],
     );

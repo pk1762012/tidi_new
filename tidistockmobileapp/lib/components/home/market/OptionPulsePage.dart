@@ -12,11 +12,13 @@ class OptionPulsePage extends StatefulWidget {
 }
 
 class _OptionPulsePageState extends State<OptionPulsePage> {
-  bool loading = true;
+  bool _initialLoading = true;
   String? errorMessage;
   Map<String, dynamic>? niftyData;
   Map<String, dynamic>? bankNiftyData;
   Timer? _autoRefreshTimer;
+
+  bool get _hasData => niftyData != null || bankNiftyData != null;
 
   @override
   void initState() {
@@ -37,6 +39,7 @@ class _OptionPulsePageState extends State<OptionPulsePage> {
   Future<void> fetchData() async {
     final api = ApiService();
     try {
+      // Wrap each call individually so one failure doesn't cancel the other.
       await Future.wait([
         api.getCachedOptionPulsePCR(
           symbol: 'NIFTY',
@@ -44,37 +47,39 @@ class _OptionPulsePageState extends State<OptionPulsePage> {
             if (!mounted) return;
             setState(() {
               niftyData = data is Map<String, dynamic> ? data : null;
-              loading = false;
-              if (niftyData != null || bankNiftyData != null) errorMessage = null;
+              if (_hasData) errorMessage = null;
             });
           },
-        ),
+        ).catchError((_) {}),
         api.getCachedOptionPulsePCR(
           symbol: 'BANKNIFTY',
           onData: (data, {required fromCache}) {
             if (!mounted) return;
             setState(() {
               bankNiftyData = data is Map<String, dynamic> ? data : null;
-              loading = false;
-              if (niftyData != null || bankNiftyData != null) errorMessage = null;
+              if (_hasData) errorMessage = null;
             });
           },
-        ),
+        ).catchError((_) {}),
       ]);
 
       if (!mounted) return;
-      if (niftyData == null && bankNiftyData == null) {
+      if (!_hasData) {
         setState(() {
           errorMessage = 'Failed to load option data. Pull down to refresh.';
-          loading = false;
         });
       }
     } catch (e) {
       if (!mounted) return;
-      if (niftyData == null && bankNiftyData == null) {
+      if (!_hasData) {
         setState(() {
           errorMessage = 'Network error. Pull down to refresh.';
-          loading = false;
+        });
+      }
+    } finally {
+      if (mounted && _initialLoading) {
+        setState(() {
+          _initialLoading = false;
         });
       }
     }
@@ -127,13 +132,19 @@ class _OptionPulsePageState extends State<OptionPulsePage> {
   }
 
   Widget _buildBody() {
-    if (loading) {
-      return const Center(
-        child: CircularProgressIndicator(color: Colors.black),
+    // Show skeleton shimmer only on very first load with no data
+    if (_initialLoading && !_hasData) {
+      return ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          _skeletonCard(),
+          const SizedBox(height: 16),
+          _skeletonCard(),
+        ],
       );
     }
 
-    if (errorMessage != null && niftyData == null && bankNiftyData == null) {
+    if (errorMessage != null && !_hasData) {
       return Center(
         child: Padding(
           padding: const EdgeInsets.all(32),
@@ -151,7 +162,7 @@ class _OptionPulsePageState extends State<OptionPulsePage> {
               ElevatedButton.icon(
                 onPressed: () {
                   setState(() {
-                    loading = true;
+                    _initialLoading = true;
                     errorMessage = null;
                   });
                   fetchData();
@@ -213,6 +224,98 @@ class _OptionPulsePageState extends State<OptionPulsePage> {
       ),
     );
   }
+
+  // ── Skeleton shimmer card ──
+
+  Widget _skeletonCard() {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: Colors.grey.shade200, width: 1),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Header row
+          Row(
+            children: [
+              _shimmerBox(width: 80, height: 22),
+              const Spacer(),
+              _shimmerBox(width: 70, height: 28, radius: 20),
+            ],
+          ),
+          const SizedBox(height: 14),
+          // Metrics row
+          Row(
+            children: [
+              Expanded(child: _shimmerBox(height: 56, radius: 14)),
+              const SizedBox(width: 10),
+              Expanded(child: _shimmerBox(height: 56, radius: 14)),
+              const SizedBox(width: 10),
+              Expanded(child: _shimmerBox(height: 56, radius: 14)),
+            ],
+          ),
+          const SizedBox(height: 18),
+          // Bar 1
+          _shimmerBox(width: 100, height: 14),
+          const SizedBox(height: 8),
+          _shimmerBox(height: 14, radius: 6),
+          const SizedBox(height: 14),
+          // Bar 2
+          _shimmerBox(width: 60, height: 14),
+          const SizedBox(height: 8),
+          _shimmerBox(height: 14, radius: 6),
+          const SizedBox(height: 18),
+          // Strike rows
+          Row(
+            children: [
+              Expanded(child: _shimmerBox(height: 70, radius: 12)),
+              const SizedBox(width: 10),
+              Expanded(child: _shimmerBox(height: 70, radius: 12)),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(child: _shimmerBox(height: 70, radius: 12)),
+              const SizedBox(width: 10),
+              Expanded(child: _shimmerBox(height: 70, radius: 12)),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _shimmerBox({double? width, required double height, double radius = 8}) {
+    return TweenAnimationBuilder<double>(
+      tween: Tween(begin: 0.3, end: 1.0),
+      duration: const Duration(milliseconds: 800),
+      curve: Curves.easeInOut,
+      builder: (context, value, child) {
+        // Repeat the pulse by rebuilding
+        return AnimatedOpacity(
+          opacity: value,
+          duration: const Duration(milliseconds: 800),
+          child: child,
+        );
+      },
+      child: _PulseShimmer(
+        child: Container(
+          width: width,
+          height: height,
+          decoration: BoxDecoration(
+            color: Colors.grey.shade200,
+            borderRadius: BorderRadius.circular(radius),
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ── Data cards ──
 
   Widget _indexCard(Map<String, dynamic> data) {
     final sentiment = data['sentiment'] as String? ?? 'Neutral';
@@ -536,6 +639,43 @@ class _OptionPulsePageState extends State<OptionPulsePage> {
           ),
         ],
       ),
+    );
+  }
+}
+
+/// Pulsing shimmer effect widget.
+class _PulseShimmer extends StatefulWidget {
+  final Widget child;
+  const _PulseShimmer({required this.child});
+
+  @override
+  State<_PulseShimmer> createState() => _PulseShimmerState();
+}
+
+class _PulseShimmerState extends State<_PulseShimmer>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1000),
+    )..repeat(reverse: true);
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FadeTransition(
+      opacity: _controller.drive(Tween(begin: 0.3, end: 1.0)),
+      child: widget.child,
     );
   }
 }
