@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:http/http.dart' as http;
 
@@ -12,6 +13,7 @@ class AqApiService {
 
   final String baseUrl = dotenv.env['AQ_BACKEND_URL'] ?? '';
   final String advisorSubdomain = dotenv.env['AQ_ADVISOR_SUBDOMAIN'] ?? '';
+  final String advisorName = dotenv.env['AQ_ADVISOR_NAME'] ?? '';
   final String _apiKey = dotenv.env['AQ_API_KEY'] ?? '';
   final String _apiSecret = dotenv.env['AQ_API_SECRET'] ?? '';
 
@@ -32,27 +34,31 @@ class AqApiService {
   // Model Portfolio APIs
   // ---------------------------------------------------------------------------
 
-  /// Fetch all model portfolios for the advisor
-  Future<http.Response> getPortfolios() async {
+  /// Fetch all model portfolios via the Plans API (same as web frontend)
+  Future<http.Response> getPortfolios({required String email}) async {
+    final safeEmail = email.isNotEmpty ? email : 'guest';
+    final uri = Uri.parse(
+      '${baseUrl}api/admin/plan/$advisorName/model%20portfolio/${Uri.encodeComponent(safeEmail)}',
+    );
     return CacheService.instance.cachedGet(
-      key: 'aq/model-portfolio/portfolios',
-      fetcher: () => http.get(
-        Uri.parse('${baseUrl}api/model-portfolio/portfolios/$advisorSubdomain'),
-        headers: _headers(),
-      ),
+      key: 'aq/admin/plan/portfolios',
+      fetcher: () => http.get(uri, headers: _headers()),
     );
   }
 
-  /// Cached portfolios with stale-while-revalidate
+  /// Cached portfolios via Plans API with stale-while-revalidate
   Future<void> getCachedPortfolios({
+    required String email,
     required void Function(dynamic data, {required bool fromCache}) onData,
   }) {
+    final safeEmail = email.isNotEmpty ? email : 'guest';
+    final uri = Uri.parse(
+      '${baseUrl}api/admin/plan/$advisorName/model%20portfolio/${Uri.encodeComponent(safeEmail)}',
+    );
+    debugPrint('[AqApiService] getCachedPortfolios url=$uri');
     return CacheService.instance.fetchWithCache(
-      key: 'aq/model-portfolio/portfolios',
-      fetcher: () => http.get(
-        Uri.parse('${baseUrl}api/model-portfolio/portfolios/$advisorSubdomain'),
-        headers: _headers(),
-      ),
+      key: 'aq/admin/plan/portfolios',
+      fetcher: () => http.get(uri, headers: _headers()),
       onData: onData,
     );
   }

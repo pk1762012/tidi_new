@@ -3,6 +3,7 @@ import 'dart:collection';
 import 'dart:convert';
 
 import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:flutter/foundation.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:http/http.dart' as http;
 
@@ -182,6 +183,7 @@ class CacheService {
     'option-chain':                const _TierConfig(tier: CacheTier.nonCritical, memoryTtl: Duration(minutes: 2), diskTtl: Duration(hours: 1)),
 
     // ── NON-CRITICAL: aq_backend model portfolio data ──────────────────
+    'aq/admin/plan/portfolios':        const _TierConfig(tier: CacheTier.nonCritical, memoryTtl: Duration(minutes: 5), diskTtl: Duration(hours: 6)),
     'aq/model-portfolio/portfolios':   const _TierConfig(tier: CacheTier.nonCritical, memoryTtl: Duration(minutes: 5), diskTtl: Duration(hours: 6)),
     'aq/model-portfolio/strategy':     const _TierConfig(tier: CacheTier.nonCritical, memoryTtl: Duration(minutes: 5), diskTtl: Duration(hours: 6)),
 
@@ -294,6 +296,7 @@ class CacheService {
       if (response.statusCode >= 200 && response.statusCode < 300) {
         onData(parser(response), fromCache: false);
       } else {
+        debugPrint('[CacheService] HTTP ${response.statusCode} for key=$key body=${response.body.length > 200 ? response.body.substring(0, 200) : response.body}');
         throw HttpException(response.statusCode, response.body);
       }
       return;
@@ -378,6 +381,7 @@ class CacheService {
         _putWithConfig(key, response.body, response.statusCode, config);
         onData(data, fromCache: false);
       } else {
+        debugPrint('[CacheService] HTTP ${response.statusCode} for key=$key body=${response.body.length > 200 ? response.body.substring(0, 200) : response.body}');
         throw HttpException(response.statusCode, response.body);
       }
     } catch (e) {
@@ -476,15 +480,21 @@ class CacheService {
   }) {
     Future(() async {
       try {
-        if (!_isOnline) return;
+        if (!_isOnline) {
+          debugPrint('[CacheService] revalidate skipped (offline) key=$key');
+          return;
+        }
         final response = await fetcher();
+        debugPrint('[CacheService] revalidate key=$key status=${response.statusCode} bodyLen=${response.body.length}');
         if (response.statusCode >= 200 && response.statusCode < 300) {
           final data = parser(response);
           _putWithConfig(key, response.body, response.statusCode, config);
           onData(data, fromCache: false);
+        } else {
+          debugPrint('[CacheService] revalidate FAILED key=$key body=${response.body.length > 300 ? response.body.substring(0, 300) : response.body}');
         }
-      } catch (_) {
-        // Background revalidation failure is silent — stale data already served
+      } catch (e) {
+        debugPrint('[CacheService] revalidate ERROR key=$key: $e');
       }
     });
   }
