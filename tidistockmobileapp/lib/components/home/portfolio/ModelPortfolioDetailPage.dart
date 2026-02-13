@@ -1,23 +1,19 @@
-import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:tidistockmobileapp/models/model_portfolio.dart';
 import 'package:tidistockmobileapp/models/portfolio_stock.dart';
 import 'package:tidistockmobileapp/service/AqApiService.dart';
 import 'package:tidistockmobileapp/widgets/customScaffold.dart';
 
-import 'BrokerSelectionPage.dart';
-import 'InvestmentModal.dart';
+import 'AqWebViewPage.dart';
 
 class ModelPortfolioDetailPage extends StatefulWidget {
   final ModelPortfolio portfolio;
-  final String? userEmail;
 
   const ModelPortfolioDetailPage({
     super.key,
     required this.portfolio,
-    this.userEmail,
   });
 
   @override
@@ -26,7 +22,6 @@ class ModelPortfolioDetailPage extends StatefulWidget {
 
 class _ModelPortfolioDetailPageState extends State<ModelPortfolioDetailPage> {
   late ModelPortfolio portfolio;
-  bool subscribing = false;
 
   @override
   void initState() {
@@ -42,79 +37,16 @@ class _ModelPortfolioDetailPageState extends State<ModelPortfolioDetailPage> {
         onData: (data, {required fromCache}) {
           if (!mounted) return;
           final raw = data is Map ? data : (data is List && data.isNotEmpty ? data[0] : null);
-          if (raw != null) {
-            setState(() => portfolio = ModelPortfolio.fromJson(raw));
+          if (raw != null && raw is Map) {
+            final strategyData = ModelPortfolio.fromJson(Map<String, dynamic>.from(raw));
+            // Merge only stocks/rebalance from strategy, keep Plans API data as source of truth
+            setState(() => portfolio = portfolio.mergeStrategyData(strategyData));
           }
         },
       );
-    } catch (_) {}
-  }
-
-  bool get _isSubscribed =>
-      widget.userEmail != null && portfolio.isSubscribedBy(widget.userEmail!);
-
-  Future<void> _handleInvestTap() async {
-    if (widget.userEmail == null) return;
-
-    if (!_isSubscribed) {
-      await _subscribe();
+    } catch (e) {
+      debugPrint('[DetailPage] _refreshDetails error: $e');
     }
-
-    if (!mounted) return;
-
-    // Check broker connection, then proceed to investment
-    final response = await AqApiService.instance.getConnectedBrokers(widget.userEmail!);
-    if (!mounted) return;
-
-    if (response.statusCode == 200) {
-      final data = jsonDecode(response.body);
-      final brokers = data['data'] ?? data['connected_brokers'] ?? [];
-      final connected = (brokers as List).where((b) =>
-          b['status'] == 'connected').toList();
-
-      if (connected.isEmpty) {
-        // No connected broker — go to broker selection
-        Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (_) => BrokerSelectionPage(
-              email: widget.userEmail!,
-              portfolio: portfolio,
-            ),
-          ),
-        );
-      } else {
-        // Has connected broker — proceed to investment
-        Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (_) => InvestmentModal(
-              portfolio: portfolio,
-              email: widget.userEmail!,
-            ),
-          ),
-        );
-      }
-    }
-  }
-
-  Future<void> _subscribe() async {
-    setState(() => subscribing = true);
-    try {
-      await AqApiService.instance.subscribeStrategy(
-        strategyId: portfolio.id,
-        email: widget.userEmail!,
-        action: 'subscribe',
-      );
-      await _refreshDetails();
-    } catch (_) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Failed to subscribe. Please try again.")),
-        );
-      }
-    }
-    if (mounted) setState(() => subscribing = false);
   }
 
   @override
@@ -133,16 +65,18 @@ class _ModelPortfolioDetailPageState extends State<ModelPortfolioDetailPage> {
                 padding: const EdgeInsets.fromLTRB(16, 8, 16, 100),
                 children: [
                   _header(),
-                  const SizedBox(height: 20),
-                  if (portfolio.overView != null) _overviewSection(),
+                  if (portfolio.overView != null && portfolio.overView!.isNotEmpty)
+                    _overviewSection(),
                   const SizedBox(height: 16),
                   _statsGrid(),
-                  const SizedBox(height: 20),
+                  const SizedBox(height: 16),
                   _stockComposition(),
-                  const SizedBox(height: 20),
-                  if (portfolio.whyThisStrategy != null) _whySection(),
-                  if (portfolio.investmentStrategy.isNotEmpty) _strategySection(),
-                  _rebalanceInfo(),
+                  if (portfolio.whyThisStrategy != null && portfolio.whyThisStrategy!.isNotEmpty)
+                    _whySection(),
+                  if (portfolio.investmentStrategy.isNotEmpty)
+                    _strategySection(),
+                  if (portfolio.frequency != null || portfolio.nextRebalanceDate != null || portfolio.rebalanceHistory.isNotEmpty)
+                    _rebalanceInfo(),
                 ],
               ),
             ),
@@ -153,44 +87,96 @@ class _ModelPortfolioDetailPageState extends State<ModelPortfolioDetailPage> {
     );
   }
 
+  Color _riskColor(String? risk) {
+    switch (risk?.toLowerCase()) {
+      case 'aggressive':
+        return Colors.red.shade400;
+      case 'moderate':
+        return Colors.orange.shade400;
+      default:
+        return Colors.green.shade400;
+    }
+  }
+
   Widget _header() {
-    return Row(
-      children: [
-        if (portfolio.image != null && portfolio.image!.isNotEmpty)
-          ClipRRect(
-            borderRadius: BorderRadius.circular(14),
-            child: Image.network(
-              portfolio.image!,
-              width: 56,
-              height: 56,
-              fit: BoxFit.cover,
-              errorBuilder: (_, __, ___) => _placeholderIcon(),
-            ),
-          )
-        else
-          _placeholderIcon(),
-        const SizedBox(width: 16),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                portfolio.modelName,
-                style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w700),
-              ),
-              const SizedBox(height: 4),
-              if (portfolio.riskProfile != null)
-                _riskBadge(portfolio.riskProfile!),
-            ],
-          ),
+    final riskColor = _riskColor(portfolio.riskProfile);
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(16),
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            riskColor.withOpacity(0.08),
+            riskColor.withOpacity(0.03),
+          ],
         ),
-      ],
+      ),
+      child: Row(
+        children: [
+          if (portfolio.image != null && portfolio.image!.isNotEmpty)
+            ClipRRect(
+              borderRadius: BorderRadius.circular(14),
+              child: Image.network(
+                portfolio.image!,
+                width: 60,
+                height: 60,
+                fit: BoxFit.cover,
+                errorBuilder: (_, __, ___) => _placeholderIcon(),
+              ),
+            )
+          else
+            _placeholderIcon(),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  portfolio.modelName,
+                  style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w700),
+                ),
+                const SizedBox(height: 6),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 6,
+                  children: [
+                    if (portfolio.riskProfile != null && portfolio.riskProfile!.trim().isNotEmpty)
+                      _riskBadge(portfolio.riskProfile!),
+                    if (portfolio.stocks.isNotEmpty)
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: Colors.grey.shade100,
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Text(
+                          "${portfolio.stocks.length} stocks",
+                          style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Colors.grey.shade600),
+                        ),
+                      ),
+                  ],
+                ),
+                if (portfolio.advisor.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: Text(
+                      "by ${portfolio.advisor}",
+                      style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 
   Widget _placeholderIcon() {
     return Container(
-      width: 56, height: 56,
+      width: 60, height: 60,
       decoration: BoxDecoration(
         color: const Color(0xFFE8EAF6),
         borderRadius: BorderRadius.circular(14),
@@ -200,12 +186,8 @@ class _ModelPortfolioDetailPageState extends State<ModelPortfolioDetailPage> {
   }
 
   Widget _riskBadge(String risk) {
-    Color color;
-    switch (risk.toLowerCase()) {
-      case 'aggressive': color = Colors.red.shade400; break;
-      case 'moderate': color = Colors.orange.shade400; break;
-      default: color = Colors.green.shade400;
-    }
+    if (risk.trim().isEmpty) return const SizedBox.shrink();
+    final color = _riskColor(risk);
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
       decoration: BoxDecoration(
@@ -228,43 +210,48 @@ class _ModelPortfolioDetailPageState extends State<ModelPortfolioDetailPage> {
   }
 
   Widget _statsGrid() {
-    return Row(
-      children: [
-        _statCard("Min Investment", "\u20B9${NumberFormat('#,##,###').format(portfolio.minInvestment)}",
-            Icons.currency_rupee, Colors.blue),
-        const SizedBox(width: 12),
-        _statCard("Frequency", portfolio.frequency ?? "—",
-            Icons.calendar_today_rounded, Colors.purple),
-        const SizedBox(width: 12),
-        _statCard("Stocks", "${portfolio.stocks.length}",
-            Icons.pie_chart_rounded, Colors.teal),
-      ],
-    );
+    final cards = <Widget>[
+      _statCard("Min Investment", "\u20B9${NumberFormat('#,##,###').format(portfolio.minInvestment)}",
+          Icons.currency_rupee, Colors.blue),
+    ];
+    if (portfolio.frequency != null && portfolio.frequency!.isNotEmpty && portfolio.frequency != "—") {
+      cards.add(_statCard("Frequency", portfolio.frequency!,
+          Icons.calendar_today_rounded, Colors.purple));
+    }
+    if (portfolio.stocks.isNotEmpty) {
+      cards.add(_statCard("Stocks", "${portfolio.stocks.length}",
+          Icons.pie_chart_rounded, Colors.teal));
+    }
+
+    final children = <Widget>[];
+    for (int i = 0; i < cards.length; i++) {
+      if (i > 0) children.add(const SizedBox(width: 12));
+      children.add(Expanded(child: cards[i]));
+    }
+    return Row(children: children);
   }
 
   Widget _statCard(String label, String value, IconData icon, Color color) {
-    return Expanded(
-      child: Container(
-        padding: const EdgeInsets.all(14),
-        decoration: BoxDecoration(
-          color: color.withOpacity(0.08),
-          borderRadius: BorderRadius.circular(14),
-        ),
-        child: Column(
-          children: [
-            Icon(icon, size: 20, color: color),
-            const SizedBox(height: 8),
-            Text(value,
-              style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: color),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 2),
-            Text(label,
-              style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
-              textAlign: TextAlign.center,
-            ),
-          ],
-        ),
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.08),
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Column(
+        children: [
+          Icon(icon, size: 20, color: color),
+          const SizedBox(height: 8),
+          Text(value,
+            style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: color),
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 2),
+          Text(label,
+            style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
+            textAlign: TextAlign.center,
+          ),
+        ],
       ),
     );
   }
@@ -278,6 +265,7 @@ class _ModelPortfolioDetailPageState extends State<ModelPortfolioDetailPage> {
 
     // Calculate total weight for percentage
     final totalWeight = sorted.fold(0.0, (sum, s) => sum + s.weight);
+    final maxPct = totalWeight > 0 ? (sorted.first.weight / totalWeight * 100) : 1.0;
 
     return _section(
       "Stock Composition",
@@ -300,28 +288,51 @@ class _ModelPortfolioDetailPageState extends State<ModelPortfolioDetailPage> {
             ),
           ),
           const Divider(height: 1),
-          ...sorted.map((stock) {
+          ...List.generate(sorted.length, (index) {
+            final stock = sorted[index];
             final pct = totalWeight > 0 ? (stock.weight / totalWeight * 100) : 0.0;
-            return Padding(
-              padding: const EdgeInsets.symmetric(vertical: 10),
-              child: Row(
+            final isEven = index % 2 == 0;
+            return Container(
+              color: isEven ? Colors.grey.shade50 : Colors.white,
+              child: Column(
                 children: [
-                  Expanded(
-                    flex: 3,
-                    child: Text(stock.symbol,
-                      style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 4),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          flex: 3,
+                          child: Text(stock.symbol,
+                            style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+                        ),
+                        Expanded(
+                          flex: 2,
+                          child: Text(stock.exchange ?? "NSE",
+                            style: TextStyle(fontSize: 13, color: Colors.grey.shade600),
+                            textAlign: TextAlign.center),
+                        ),
+                        Expanded(
+                          flex: 2,
+                          child: Text("${pct.toStringAsFixed(1)}%",
+                            style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+                            textAlign: TextAlign.right),
+                        ),
+                      ],
+                    ),
                   ),
-                  Expanded(
-                    flex: 2,
-                    child: Text(stock.exchange ?? "NSE",
-                      style: TextStyle(fontSize: 13, color: Colors.grey.shade600),
-                      textAlign: TextAlign.center),
-                  ),
-                  Expanded(
-                    flex: 2,
-                    child: Text("${pct.toStringAsFixed(1)}%",
-                      style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
-                      textAlign: TextAlign.right),
+                  // Weight bar
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: FractionallySizedBox(
+                      widthFactor: maxPct > 0 ? (pct / maxPct).clamp(0.0, 1.0) : 0,
+                      child: Container(
+                        height: 3,
+                        decoration: BoxDecoration(
+                          color: Colors.blue.withOpacity(0.3),
+                          borderRadius: BorderRadius.circular(2),
+                        ),
+                      ),
+                    ),
                   ),
                 ],
               ),
@@ -421,37 +432,51 @@ class _ModelPortfolioDetailPageState extends State<ModelPortfolioDetailPage> {
 
   Widget _bottomCta() {
     return Container(
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+      padding: const EdgeInsets.fromLTRB(16, 20, 16, 16),
       decoration: BoxDecoration(
-        color: Colors.white,
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.08),
-            blurRadius: 10,
-            offset: const Offset(0, -4),
-          ),
-        ],
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [Colors.white.withOpacity(0), Colors.white],
+          stops: const [0.0, 0.3],
+        ),
       ),
       child: SafeArea(
         top: false,
         child: SizedBox(
           width: double.infinity,
           height: 50,
-          child: ElevatedButton(
-            onPressed: widget.userEmail == null || subscribing ? null : _handleInvestTap,
+          child: ElevatedButton.icon(
+            onPressed: () {
+              final encodedName = Uri.encodeComponent(portfolio.modelName);
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => AqWebViewPage(
+                    url: 'https://prod.alphaquark.in/model-portfolio/$encodedName',
+                    title: portfolio.modelName,
+                  ),
+                ),
+              );
+            },
             style: ElevatedButton.styleFrom(
-              backgroundColor: _isSubscribed ? const Color(0xFF1A237E) : const Color(0xFF2E7D32),
+              backgroundColor: const Color(0xFF2E7D32),
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
               elevation: 0,
             ),
-            child: subscribing
-                ? const SizedBox(width: 20, height: 20,
-                    child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                : Text(
-                    _isSubscribed ? "Invest Now" : "Subscribe & Invest",
-                    style: const TextStyle(
-                      fontSize: 16, fontWeight: FontWeight.w700, color: Colors.white),
-                  ),
+            icon: const SizedBox.shrink(),
+            label: const Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  "Subscribe & Invest",
+                  style: TextStyle(
+                    fontSize: 16, fontWeight: FontWeight.w700, color: Colors.white),
+                ),
+                SizedBox(width: 8),
+                Icon(Icons.arrow_forward_rounded, color: Colors.white, size: 20),
+              ],
+            ),
           ),
         ),
       ),
