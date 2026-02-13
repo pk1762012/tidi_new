@@ -3,10 +3,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:tidistockmobileapp/theme/theme.dart';
-import 'package:url_launcher/url_launcher.dart';
 import 'StockPortfolioPage.dart';
 import 'StockRecommendationPage.dart';
 import '../../../widgets/SubscriptionPromptDialog.dart';
+import '../portfolio/ModelPortfolioListPage.dart';
 
 class StockRecommendationScreen extends StatefulWidget {
   const StockRecommendationScreen({super.key});
@@ -116,19 +116,19 @@ class _StockRecommendationScreenState extends State<StockRecommendationScreen> w
                   ),
 
                   _menuCard(
-                    icon: Icons.newspaper_rounded,
-                    title: "Smallcase",
-                    subtitle: "Thematic & smart portfolios",
+                    icon: Icons.account_balance_rounded,
+                    title: "Model Portfolios",
+                    subtitle: "Expert-managed investment strategies",
                     gradient: const [
                       Color(0xFFF3E5F5),
                       Color(0xFFE1BEE7),
                     ],
 
-                    onTap: () async {
-                      final url = Uri.parse("https://tidiwealth.smallcase.com/");
-                      if (await canLaunchUrl(url)) {
-                        await launchUrl(url, mode: LaunchMode.externalApplication);
-                      }
+                    onTap: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (_) => const ModelPortfolioListPage()),
+                      );
                     },
                   ),
                 ],

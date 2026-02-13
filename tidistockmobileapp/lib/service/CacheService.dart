@@ -181,6 +181,15 @@ class CacheService {
     'rss_news':                    const _TierConfig(tier: CacheTier.nonCritical, memoryTtl: Duration(minutes: 5),  diskTtl: Duration(hours: 1)),
     'option-chain':                const _TierConfig(tier: CacheTier.nonCritical, memoryTtl: Duration(minutes: 2), diskTtl: Duration(hours: 1)),
 
+    // ── NON-CRITICAL: aq_backend model portfolio data ──────────────────
+    'aq/model-portfolio/portfolios':   const _TierConfig(tier: CacheTier.nonCritical, memoryTtl: Duration(minutes: 5), diskTtl: Duration(hours: 6)),
+    'aq/model-portfolio/strategy':     const _TierConfig(tier: CacheTier.nonCritical, memoryTtl: Duration(minutes: 5), diskTtl: Duration(hours: 6)),
+
+    // ── SEMI-CRITICAL: aq_backend user-specific data ──
+    'aq/model-portfolio/subscribed':   const _TierConfig(tier: CacheTier.semiCritical, memoryTtl: Duration(seconds: 60)),
+    'aq/user/brokers':                 const _TierConfig(tier: CacheTier.semiCritical, memoryTtl: Duration(seconds: 30)),
+    'aq/subscription-raw':             const _TierConfig(tier: CacheTier.semiCritical, memoryTtl: Duration(seconds: 60)),
+
     // ── SEMI-CRITICAL: memory only, short TTL (no disk persistence) ──
     'api/user':                        const _TierConfig(tier: CacheTier.semiCritical, memoryTtl: Duration(seconds: 60)),
     'api/admin/stock/recommend/get':   const _TierConfig(tier: CacheTier.semiCritical, memoryTtl: Duration(seconds: 30)),
