@@ -291,7 +291,15 @@ class MarketPageState extends State<MarketPage> with TickerProviderStateMixin, W
         },
       );
     } catch (e) {
-      _showError("Error: $e");
+      debugPrint("Holiday fetch error: $e");
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Unable to load holidays. Please check your connection and try again.'),
+            duration: Duration(seconds: 3),
+          ),
+        );
+      }
     }
   }
 

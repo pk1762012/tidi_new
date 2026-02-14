@@ -351,4 +351,78 @@ class AqApiService {
       }),
     );
   }
+
+  // ---------------------------------------------------------------------------
+  // Payment APIs (Razorpay via AQ backend)
+  // ---------------------------------------------------------------------------
+
+  /// Create a Razorpay order for a one-time model portfolio subscription
+  Future<http.Response> createModelPortfolioOrder({
+    required String planId,
+    required String planName,
+    required String userEmail,
+    required String userName,
+    required String phone,
+    required String pricingTier,
+    required int amount,
+  }) async {
+    return http.post(
+      Uri.parse('${baseUrl}api/admin/subscription/one-time-payment/subscription'),
+      headers: _headers(),
+      body: jsonEncode({
+        'plan_id': planId,
+        'user_email': userEmail,
+        'name': userName,
+        'mobileNumber': phone,
+        'advisor': advisorName,
+        'amount': amount,
+        'duration': _tierToDays(pricingTier),
+      }),
+    );
+  }
+
+  /// Complete a one-time payment after Razorpay checkout succeeds
+  Future<http.Response> completeModelPortfolioPayment({
+    required String razorpayOrderId,
+    required String razorpayPaymentId,
+    required String razorpaySignature,
+    required String userEmail,
+    required String planId,
+    required int amount,
+    required String endDate,
+  }) async {
+    return http.post(
+      Uri.parse('${baseUrl}api/admin/subscription/one-time-payment/subscription/complete-one-time-payment'),
+      headers: _headers(),
+      body: jsonEncode({
+        'razorpay_order_id': razorpayOrderId,
+        'razorpay_payment_id': razorpayPaymentId,
+        'razorpay_signature': razorpaySignature,
+        'user_email': userEmail,
+        'plan_id': planId,
+        'amount': amount,
+        'end_date': endDate,
+      }),
+    );
+  }
+
+  /// Convert pricing tier name to duration in days
+  static int _tierToDays(String tier) {
+    switch (tier.toLowerCase()) {
+      case 'monthly':
+        return 30;
+      case 'quarterly':
+        return 90;
+      case 'half_yearly':
+      case 'halfyearly':
+        return 180;
+      case 'yearly':
+        return 365;
+      case 'onetime':
+      case 'one_time':
+        return 365;
+      default:
+        return 30;
+    }
+  }
 }
