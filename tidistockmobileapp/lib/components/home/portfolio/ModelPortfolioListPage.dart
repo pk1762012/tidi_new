@@ -355,6 +355,14 @@ class _ModelPortfolioListPageState extends State<ModelPortfolioListPage>
                             _statChip(Icons.pie_chart_rounded, "Stocks",
                                 "${portfolio.stocks.length}", Colors.teal),
                           ],
+                          ...[
+                            const SizedBox(width: 8),
+                            _statChip(Icons.card_membership, "Fee",
+                                portfolio.pricingDisplayText.isNotEmpty
+                                    ? portfolio.pricingDisplayText
+                                    : "Free",
+                                Colors.green),
+                          ],
                         ],
                       ),
                     ],

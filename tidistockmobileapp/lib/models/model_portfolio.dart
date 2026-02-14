@@ -68,11 +68,7 @@ class PerformanceData {
       ulcerIndex: _toDouble(json['ulcer_index'] ?? json['ulcerIndex']),
       maxDrawdown: _toDouble(json['max_drawdown'] ?? json['maxDrawdown']),
       avgDrawdown: _toDouble(json['avg_drawdown'] ?? json['avgDrawdown']),
-      longestDdDays: json['longest_dd_days'] != null
-          ? (json['longest_dd_days'] as num).toInt()
-          : json['longestDdDays'] != null
-              ? (json['longestDdDays'] as num).toInt()
-              : null,
+      longestDdDays: _toInt(json['longest_dd_days'] ?? json['longestDdDays']),
       sharpeRatio: _toDouble(json['sharpe_ratio'] ?? json['sharpeRatio']),
       sortinoRatio: _toDouble(json['sortino_ratio'] ?? json['sortinoRatio']),
       profitFactor: _toDouble(json['profit_factor'] ?? json['profitFactor']),
@@ -90,6 +86,13 @@ class PerformanceData {
     if (value == null) return null;
     if (value is num) return value.toDouble();
     if (value is String) return double.tryParse(value);
+    return null;
+  }
+
+  static int? _toInt(dynamic value) {
+    if (value == null) return null;
+    if (value is num) return value.toInt();
+    if (value is String) return int.tryParse(value);
     return null;
   }
 }
@@ -226,9 +229,9 @@ class ModelPortfolio {
 
     // Handle subscription: Plans API appends a 'subscription' object (non-null = subscribed)
     List<String> subscribedBy = _toStringList(json['subscribed_by']);
-    if (json['subscription'] != null && subscribedBy.isEmpty) {
-      // Plans API: mark subscription status via the appended subscription object
-      final subEmail = json['subscription']['user_email'];
+    final subscription = json['subscription'];
+    if (subscription is Map && subscribedBy.isEmpty) {
+      final subEmail = subscription['user_email'];
       if (subEmail != null) subscribedBy = [subEmail.toString()];
     }
 
@@ -249,8 +252,8 @@ class ModelPortfolio {
       advisor: json['advisor'] ?? '',
       // Plans API uses 'name', model_portfolio API uses 'model_name'
       modelName: json['model_name'] ?? json['name'] ?? '',
-      minInvestment: (json['minInvestment'] ?? 0).toInt(),
-      maxNetWorth: json['maxNetWorth']?.toInt(),
+      minInvestment: _safeInt(json['minInvestment']) ?? 0,
+      maxNetWorth: _safeInt(json['maxNetWorth']),
       // Plans API uses 'description' (may contain HTML), model_portfolio API uses 'overView'
       overView: _stripHtml(json['overView'] ?? json['description']),
       investmentStrategy: _toStringList(json['investmentStrategy']),
@@ -286,6 +289,26 @@ class ModelPortfolio {
   }
 
   bool isSubscribedBy(String email) => subscribedBy.contains(email);
+
+  /// Short human-readable pricing string based on the lowest-priced tier.
+  /// Returns empty string if no pricing tiers exist.
+  String get pricingDisplayText {
+    if (pricing.isEmpty) return '';
+    const abbr = {
+      'monthly': '/mo',
+      'quarterly': '/qtr',
+      'half_yearly': '/6mo',
+      'yearly': '/yr',
+    };
+    final sorted = pricing.entries.toList()
+      ..sort((a, b) => a.value.compareTo(b.value));
+    final lowest = sorted.first;
+    final amount = lowest.value >= 1000
+        ? '\u20B9${(lowest.value / 1000).toStringAsFixed(lowest.value % 1000 == 0 ? 0 : 1)}K'
+        : '\u20B9${lowest.value}';
+    final period = abbr[lowest.key] ?? '/${lowest.key}';
+    return '$amount$period';
+  }
 
   /// Merge only stocks & rebalance data from the strategy endpoint,
   /// keeping Plans API data as the source of truth for plan-level fields.
@@ -339,6 +362,14 @@ class ModelPortfolio {
       }
     }
     return result;
+  }
+
+  /// Safely parse a dynamic value (num or String) to int.
+  static int? _safeInt(dynamic value) {
+    if (value == null) return null;
+    if (value is num) return value.toInt();
+    if (value is String) return int.tryParse(value);
+    return null;
   }
 
   /// Safely convert a dynamic value to List<String>.
