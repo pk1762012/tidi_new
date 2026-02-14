@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:intl/intl.dart';
 import 'package:tidistockmobileapp/models/model_portfolio.dart';
 import 'package:tidistockmobileapp/models/portfolio_stock.dart';
@@ -7,6 +8,8 @@ import 'package:tidistockmobileapp/service/AqApiService.dart';
 import 'package:tidistockmobileapp/widgets/customScaffold.dart';
 
 import 'AqWebViewPage.dart';
+import 'InvestedPortfoliosPage.dart';
+import 'PlanSelectionSheet.dart';
 
 class ModelPortfolioDetailPage extends StatefulWidget {
   final ModelPortfolio portfolio;
@@ -22,12 +25,20 @@ class ModelPortfolioDetailPage extends StatefulWidget {
 
 class _ModelPortfolioDetailPageState extends State<ModelPortfolioDetailPage> {
   late ModelPortfolio portfolio;
+  bool _loadingStrategy = true;
+  String? userEmail;
 
   @override
   void initState() {
     super.initState();
     portfolio = widget.portfolio;
+    _loadUserEmail();
     _refreshDetails();
+  }
+
+  Future<void> _loadUserEmail() async {
+    final email = await const FlutterSecureStorage().read(key: 'email');
+    if (mounted) setState(() => userEmail = email);
   }
 
   Future<void> _refreshDetails() async {
@@ -40,12 +51,18 @@ class _ModelPortfolioDetailPageState extends State<ModelPortfolioDetailPage> {
           if (raw != null && raw is Map) {
             final strategyData = ModelPortfolio.fromJson(Map<String, dynamic>.from(raw));
             // Merge only stocks/rebalance from strategy, keep Plans API data as source of truth
-            setState(() => portfolio = portfolio.mergeStrategyData(strategyData));
+            setState(() {
+              portfolio = portfolio.mergeStrategyData(strategyData);
+              _loadingStrategy = false;
+            });
+          } else {
+            if (mounted) setState(() => _loadingStrategy = false);
           }
         },
       );
     } catch (e) {
       debugPrint('[DetailPage] _refreshDetails error: $e');
+      if (mounted) setState(() => _loadingStrategy = false);
     }
   }
 
@@ -257,7 +274,20 @@ class _ModelPortfolioDetailPageState extends State<ModelPortfolioDetailPage> {
   }
 
   Widget _stockComposition() {
-    if (portfolio.stocks.isEmpty) return const SizedBox.shrink();
+    if (portfolio.stocks.isEmpty) {
+      if (_loadingStrategy) {
+        return _section(
+          "Stock Composition",
+          const Center(
+            child: Padding(
+              padding: EdgeInsets.all(16),
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ),
+          ),
+        );
+      }
+      return const SizedBox.shrink();
+    }
 
     // Sort by weight descending
     final sorted = List<PortfolioStock>.from(portfolio.stocks)
@@ -430,7 +460,63 @@ class _ModelPortfolioDetailPageState extends State<ModelPortfolioDetailPage> {
     );
   }
 
+  void _showPlanSelectionSheet() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => PlanSelectionSheet(
+        portfolio: portfolio,
+        onSubscribed: () {
+          _refreshDetails();
+          if (mounted) setState(() {});
+        },
+      ),
+    );
+  }
+
   Widget _bottomCta() {
+    final bool isSubscribed =
+        userEmail != null && portfolio.isSubscribedBy(userEmail!);
+    final bool hasPricing = portfolio.pricing.isNotEmpty;
+
+    String label;
+    IconData icon;
+    VoidCallback onPressed;
+
+    if (isSubscribed) {
+      label = "View Holdings";
+      icon = Icons.account_balance_wallet_rounded;
+      onPressed = () {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => InvestedPortfoliosPage(email: userEmail!),
+          ),
+        );
+      };
+    } else if (hasPricing) {
+      label = "Subscribe & Invest";
+      icon = Icons.arrow_forward_rounded;
+      onPressed = _showPlanSelectionSheet;
+    } else {
+      // Fallback to WebView
+      label = "Subscribe & Invest";
+      icon = Icons.arrow_forward_rounded;
+      onPressed = () {
+        final encodedName = Uri.encodeComponent(portfolio.modelName);
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => AqWebViewPage(
+              url: 'https://prod.alphaquark.in/model-portfolio/$encodedName',
+              title: portfolio.modelName,
+            ),
+          ),
+        );
+      };
+    }
+
     return Container(
       padding: const EdgeInsets.fromLTRB(16, 20, 16, 16),
       decoration: BoxDecoration(
@@ -447,34 +533,29 @@ class _ModelPortfolioDetailPageState extends State<ModelPortfolioDetailPage> {
           width: double.infinity,
           height: 50,
           child: ElevatedButton.icon(
-            onPressed: () {
-              final encodedName = Uri.encodeComponent(portfolio.modelName);
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (_) => AqWebViewPage(
-                    url: 'https://prod.alphaquark.in/model-portfolio/$encodedName',
-                    title: portfolio.modelName,
-                  ),
-                ),
-              );
-            },
+            onPressed: onPressed,
             style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF2E7D32),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+              backgroundColor: isSubscribed
+                  ? const Color(0xFF1565C0)
+                  : const Color(0xFF2E7D32),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14)),
               elevation: 0,
             ),
             icon: const SizedBox.shrink(),
-            label: const Row(
+            label: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
                 Text(
-                  "Subscribe & Invest",
-                  style: TextStyle(
-                    fontSize: 16, fontWeight: FontWeight.w700, color: Colors.white),
+                  label,
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w700,
+                    color: Colors.white,
+                  ),
                 ),
-                SizedBox(width: 8),
-                Icon(Icons.arrow_forward_rounded, color: Colors.white, size: 20),
+                const SizedBox(width: 8),
+                Icon(icon, color: Colors.white, size: 20),
               ],
             ),
           ),

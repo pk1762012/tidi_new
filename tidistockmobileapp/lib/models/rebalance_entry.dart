@@ -26,7 +26,7 @@ class RebalanceHistoryEntry {
           ? DateTime.tryParse(json['rebalanceDate'].toString())
           : null,
       updatedModelName: json['updatedModelName'],
-      totalInvestmentValue: json['totalInvestmentvalue']?.toDouble(),
+      totalInvestmentValue: _toDouble(json['totalInvestmentvalue']),
       researchReportLink: json['rr_link_mpf'],
       adviceEntries: (json['adviceEntries'] as List<dynamic>?)
               ?.map((e) => PortfolioStock.fromJson(e))
@@ -80,4 +80,12 @@ class SubscriberExecution {
 
   bool get isPending => status == 'pending' || status == 'toExecute';
   bool get isExecuted => status == 'executed';
+}
+
+/// Safely parse a dynamic value (String or num) to double.
+double? _toDouble(dynamic value) {
+  if (value == null) return null;
+  if (value is num) return value.toDouble();
+  if (value is String) return double.tryParse(value);
+  return null;
 }

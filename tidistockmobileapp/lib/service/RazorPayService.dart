@@ -16,6 +16,8 @@ class RazorpayService {
 
   void Function(bool success)? _onResultCallback;
   bool _isProcessing = false;
+  String? _currentCheckoutType;
+  Map<String, String> _pendingMetadata = {};
 
   bool get isProcessing => _isProcessing;
 
@@ -184,10 +186,106 @@ class RazorpayService {
     }
   }
 
+  Future<bool> openModelPortfolioCheckout({
+    required String planId,
+    required String planName,
+    required String strategyId,
+    required String pricingTier,
+    required int amount,
+  }) async {
+    if (_isProcessing) return false;
+    _isProcessing = true;
+
+    try {
+      final response = await ApiService().createModelPortfolioOrder(
+        planId: planId,
+        planName: planName,
+        strategyId: strategyId,
+        pricingTier: pricingTier,
+        amount: amount,
+      );
+
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        try {
+          String? phone = await secureStorage.read(key: 'phone_number');
+          final jsonData = json.decode(response.body);
+
+          final razorpayKey = dotenv.env['RAZORPAY_KEY'] ?? '';
+          final orderId = jsonData['data']['orderId'];
+
+          debugPrint('[RazorpayService] openModelPortfolioCheckout - orderId: $orderId');
+
+          _currentCheckoutType = 'model_portfolio';
+          _pendingMetadata = {
+            'planId': planId,
+            'strategyId': strategyId,
+          };
+
+          var options = {
+            'key': razorpayKey,
+            'amount': jsonData['data']['amount'],
+            'currency': 'INR',
+            'name': 'TIDI Wealth',
+            'order_id': orderId,
+            'description': '$planName - ${pricingTier.replaceAll('_', ' ').toUpperCase()}',
+            'timeout': 120,
+            'prefill': {'contact': phone ?? ''}
+          };
+
+          _razorpay.open(options);
+          return true;
+        } catch (e) {
+          _isProcessing = false;
+          _currentCheckoutType = null;
+          debugPrint('[RazorpayService] openModelPortfolioCheckout error: $e');
+          _showError('Unable to open payment screen. Please try again.');
+          return false;
+        }
+      } else {
+        _isProcessing = false;
+        _showError('Unable to create order (${response.statusCode}). Please try again later.');
+        return false;
+      }
+    } catch (e) {
+      _isProcessing = false;
+      _currentCheckoutType = null;
+      _showError('Network error. Please check your connection and try again.');
+      return false;
+    }
+  }
+
   // --------------- HANDLERS ---------------
 
-  void _handleSuccess(PaymentSuccessResponse response) {
+  void _handleSuccess(PaymentSuccessResponse response) async {
     _isProcessing = false;
+
+    if (_currentCheckoutType == 'model_portfolio') {
+      try {
+        final verifyResp = await ApiService().verifyModelPortfolioPayment(
+          razorpayOrderId: response.orderId ?? '',
+          razorpayPaymentId: response.paymentId ?? '',
+          razorpaySignature: response.signature ?? '',
+        );
+        if (verifyResp.statusCode >= 200 && verifyResp.statusCode < 300) {
+          CacheService.instance.invalidateByPrefix('aq/admin/plan/portfolios');
+          CacheService.instance.invalidateByPrefix('aq/model-portfolio/subscribed');
+          _navigateToSuccess();
+          _onResultCallback?.call(true);
+        } else {
+          _showError('Payment received but activation failed. Contact support.');
+          _onResultCallback?.call(false);
+        }
+      } catch (e) {
+        debugPrint('[RazorpayService] model_portfolio verify error: $e');
+        _showError('Payment received. Subscription will activate shortly.');
+        _onResultCallback?.call(false);
+      }
+      _currentCheckoutType = null;
+      _pendingMetadata = {};
+      return;
+    }
+
+    // Existing flow for membership/course/workshop
     CacheService.instance.invalidate('api/user');
     CacheService.instance.invalidateByPrefix('api/admin/stock/recommend/get');
     CacheService.instance

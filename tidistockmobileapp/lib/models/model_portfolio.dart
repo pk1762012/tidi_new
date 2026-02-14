@@ -24,6 +24,9 @@ class ModelPortfolio {
   final String? weighting;
   final String? rebalanceMethodologyText;
   final String? assetAllocationText;
+  final String? planType;           // "onetime" | "recurring" | "combined"
+  final Map<String, int> pricing;   // {"monthly": 999, "quarterly": 2499}
+  final String? strategyId;         // model_portfolio _id for subscribe API
   final List<String> subscribedBy;
   final List<PortfolioStock> stocks;
   final List<RebalanceHistoryEntry> rebalanceHistory;
@@ -51,6 +54,9 @@ class ModelPortfolio {
     this.weighting,
     this.rebalanceMethodologyText,
     this.assetAllocationText,
+    this.planType,
+    this.pricing = const {},
+    this.strategyId,
     this.subscribedBy = const [],
     this.stocks = const [],
     this.rebalanceHistory = const [],
@@ -65,18 +71,54 @@ class ModelPortfolio {
     }
 
     // Extract stocks from the latest rebalance history entry
+    // Strategy API may nest under 'model', or have rebalanceHistory at the top level
     List<PortfolioStock> stocks = [];
     List<RebalanceHistoryEntry> rebalanceHistory = [];
 
+    // Try nested 'model.rebalanceHistory' first, then top-level 'rebalanceHistory'
     final model = json['model'];
-    if (model != null && model['rebalanceHistory'] != null) {
-      final List<dynamic> history = model['rebalanceHistory'] ?? [];
-      rebalanceHistory = history.map((e) => RebalanceHistoryEntry.fromJson(e)).toList();
+    List<dynamic>? historyRaw;
+    if (model != null && model is Map && model['rebalanceHistory'] is List) {
+      historyRaw = model['rebalanceHistory'];
+    } else if (json['rebalanceHistory'] is List) {
+      historyRaw = json['rebalanceHistory'];
+    }
 
-      if (history.isNotEmpty) {
-        final latest = history.last;
+    if (historyRaw != null && historyRaw.isNotEmpty) {
+      rebalanceHistory = historyRaw
+          .whereType<Map>()
+          .map((e) => RebalanceHistoryEntry.fromJson(Map<String, dynamic>.from(e)))
+          .toList();
+
+      final latest = historyRaw.last;
+      if (latest is Map) {
         final List<dynamic> entries = latest['adviceEntries'] ?? [];
-        stocks = entries.map((e) => PortfolioStock.fromJson(e)).toList();
+        stocks = entries
+            .whereType<Map>()
+            .map((e) => PortfolioStock.fromJson(Map<String, dynamic>.from(e)))
+            .toList();
+      }
+    }
+
+    // Fallback: some API responses include 'adviceEntries' or 'stocks' at the top level
+    if (stocks.isEmpty) {
+      final directEntries = json['adviceEntries'] ?? json['stocks'];
+      if (directEntries is List && directEntries.isNotEmpty) {
+        stocks = directEntries
+            .whereType<Map>()
+            .map((e) => PortfolioStock.fromJson(Map<String, dynamic>.from(e)))
+            .toList();
+      }
+    }
+
+    // Fallback: check inside 'model' for direct adviceEntries
+    if (stocks.isEmpty && model != null && model is Map) {
+      final modelEntries = model['adviceEntries'] ?? model['stocks'];
+      if (modelEntries is List && modelEntries.isNotEmpty) {
+        stocks = modelEntries
+            .whereType<Map>()
+            .map((e) => PortfolioStock.fromJson(Map<String, dynamic>.from(e)))
+            .toList();
       }
     }
 
@@ -99,6 +141,9 @@ class ModelPortfolio {
 
     // Handle lastUpdated: Plans API uses 'updated_at', model_portfolio uses 'last_updated'
     final lastUpdatedRaw = json['last_updated'] ?? json['updated_at'];
+
+    // Parse pricing tiers from Plans API
+    final pricing = _parsePricing(json['pricing']);
 
     return ModelPortfolio(
       id: json['_id'] ?? '',
@@ -125,6 +170,9 @@ class ModelPortfolio {
       weighting: json['weighting'],
       rebalanceMethodologyText: json['rebalanceMethodologyText'],
       assetAllocationText: json['assetAllocationText'],
+      planType: json['planType'],
+      pricing: pricing,
+      strategyId: json['strategyId'] ?? json['strategy_id'],
       subscribedBy: subscribedBy,
       stocks: stocks,
       rebalanceHistory: rebalanceHistory,
@@ -165,11 +213,24 @@ class ModelPortfolio {
       weighting: weighting ?? strategyData.weighting,
       rebalanceMethodologyText: rebalanceMethodologyText ?? strategyData.rebalanceMethodologyText,
       assetAllocationText: assetAllocationText ?? strategyData.assetAllocationText,
+      planType: planType ?? strategyData.planType,
+      pricing: pricing.isNotEmpty ? pricing : strategyData.pricing,
+      strategyId: strategyId ?? strategyData.strategyId,
       subscribedBy: subscribedBy.isNotEmpty ? subscribedBy : strategyData.subscribedBy,
       stocks: strategyData.stocks,
       rebalanceHistory: strategyData.rebalanceHistory,
       lastUpdated: lastUpdated ?? strategyData.lastUpdated,
       createdAt: createdAt ?? strategyData.createdAt,
+    );
+  }
+
+  /// Parse pricing tiers from Plans API response.
+  static Map<String, int> _parsePricing(dynamic raw) {
+    if (raw == null || raw is! Map) return {};
+    return Map.fromEntries(
+      raw.entries
+          .where((e) => e.value != null && e.value != 0)
+          .map((e) => MapEntry(e.key.toString(), (e.value as num).toInt())),
     );
   }
 

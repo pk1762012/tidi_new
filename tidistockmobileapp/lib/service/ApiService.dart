@@ -380,6 +380,65 @@ class ApiService {
   }
 
 
+  // ---------------------------------------------------------------------------
+  // Model Portfolio Payment APIs
+  // ---------------------------------------------------------------------------
+
+  Future<http.Response> createModelPortfolioOrder({
+    required String planId,
+    required String planName,
+    required String strategyId,
+    required String pricingTier,
+    required int amount,
+  }) async {
+    String? token = await _getToken();
+    return http.post(
+      Uri.parse(apiUrl + 'api/user/model-portfolio/create-order'),
+      headers: {
+        'Authorization': 'Bearer $token',
+        'Content-Type': 'application/json',
+      },
+      body: jsonEncode({
+        'planId': planId,
+        'planName': planName,
+        'strategyId': strategyId,
+        'pricingTier': pricingTier,
+        'amount': amount,
+      }),
+    );
+  }
+
+  Future<http.Response> verifyModelPortfolioPayment({
+    required String razorpayOrderId,
+    required String razorpayPaymentId,
+    required String razorpaySignature,
+  }) async {
+    String? token = await _getToken();
+    return http.post(
+      Uri.parse(apiUrl + 'api/user/model-portfolio/verify-payment'),
+      headers: {
+        'Authorization': 'Bearer $token',
+        'Content-Type': 'application/json',
+      },
+      body: jsonEncode({
+        'razorpay_order_id': razorpayOrderId,
+        'razorpay_payment_id': razorpayPaymentId,
+        'razorpay_signature': razorpaySignature,
+      }),
+    );
+  }
+
+  Future<http.Response> getModelPortfolioSubscriptionStatus(String planId) async {
+    String? token = await _getToken();
+    return http.get(
+      Uri.parse(apiUrl + 'api/user/model-portfolio/subscription-status/$planId'),
+      headers: {
+        'Authorization': 'Bearer $token',
+        'Content-Type': 'application/json',
+      },
+    );
+  }
+
   Future<http.Response> createSubscriptionOrder(String duration) async {
     String? token = await _getToken();
     return http.post(
