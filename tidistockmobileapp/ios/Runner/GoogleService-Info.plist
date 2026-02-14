@@ -3,9 +3,11 @@
 <plist version="1.0">
 <dict>
 	<key>CLIENT_ID</key>
-	<string>29712834204-g46i4drtnnnvq22egop39so4al9ghpu2.apps.googleusercontent.com</string>
+	<string>29712834204-0knh04k3p7d6nivkb2jk9rd1oue2ed7u.apps.googleusercontent.com</string>
 	<key>REVERSED_CLIENT_ID</key>
-	<string>com.googleusercontent.apps.29712834204-g46i4drtnnnvq22egop39so4al9ghpu2</string>
+	<string>com.googleusercontent.apps.29712834204-0knh04k3p7d6nivkb2jk9rd1oue2ed7u</string>
+	<key>ANDROID_CLIENT_ID</key>
+	<string>29712834204-r43o8arh6jgusjamcu7hg8h9idn5g32p.apps.googleusercontent.com</string>
 	<key>API_KEY</key>
 	<string>AIzaSyC7AD6b7TFDBX9D-GXJ4RFGv0-L_3XROoc</string>
 	<key>GCM_SENDER_ID</key>
@@ -13,7 +15,7 @@
 	<key>PLIST_VERSION</key>
 	<string>1</string>
 	<key>BUNDLE_ID</key>
-	<string>com.tidi.tidistockmobileapp</string>
+	<string>com.tidi.tidistock</string>
 	<key>PROJECT_ID</key>
 	<string>tidi-4af58</string>
 	<key>STORAGE_BUCKET</key>
@@ -29,6 +31,6 @@
 	<key>IS_SIGNIN_ENABLED</key>
 	<true></true>
 	<key>GOOGLE_APP_ID</key>
-	<string>1:29712834204:ios:3371528f5225b11e899759</string>
+	<string>1:29712834204:ios:2e3d8027c2926ee2899759</string>
 </dict>
 </plist>

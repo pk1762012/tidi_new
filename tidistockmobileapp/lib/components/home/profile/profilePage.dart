@@ -6,6 +6,7 @@ import 'package:tidistockmobileapp/service/CacheService.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'dart:convert';
 import 'package:image_picker/image_picker.dart';
 import 'package:package_info_plus/package_info_plus.dart';
@@ -72,6 +73,27 @@ class ProfilePageState extends State<ProfilePage>
     setState(() => isLoading = true);
 
     try {
+      // Check if test user (skip backend call)
+      final accessToken = await secureStorage.read(key: 'access_token');
+      final enableTestLogin = dotenv.env['ENABLE_TEST_LOGIN'] == 'true';
+      final isTestUser = accessToken == 'test_review_token_9999999999';
+
+      if (enableTestLogin && isTestUser) {
+        // Use stored test user data (skip backend call)
+        imageUrl = null;
+        firstName = await secureStorage.read(key: 'first_name') ?? 'Test';
+        phoneNumber = await secureStorage.read(key: 'phone_number') ?? '9999999999';
+        lastName = await secureStorage.read(key: 'last_name') ?? 'User';
+        isSubscribed = true;
+        subscriptionEndDate = '';
+
+        setState(() {
+          isLoading = false;
+        });
+        _controller.forward();
+        return;
+      }
+
       await ApiService().getCachedUserDetails(
         onData: (data, {required fromCache}) async {
           if (!mounted) return;

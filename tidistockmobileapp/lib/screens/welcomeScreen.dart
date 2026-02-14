@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:tidistockmobileapp/service/ApiService.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'dart:async';
 import 'dart:convert';
 
@@ -39,6 +41,13 @@ class _WelcomeScreenState extends State<WelcomeScreen>
     setState(() => isLoading = true);
 
     try {
+      // Test number bypass for app review
+      final enableTestLogin = dotenv.env['ENABLE_TEST_LOGIN'] == 'true';
+      if (enableTestLogin && phone == "9999999999") {
+        showOtpPopup(phone);
+        return;
+      }
+
       ApiService apiService = ApiService();
       final response = await apiService.validateUser(phone);
 
@@ -293,6 +302,47 @@ class _WelcomeScreenState extends State<WelcomeScreen>
 
                           setStatePopup(() => verifying = true);
 
+                          // Hardcoded test credentials for app review
+                          final enableTestLogin = dotenv.env['ENABLE_TEST_LOGIN'] == 'true';
+                          if (enableTestLogin && phone == "9999999999" && otp == "1234") {
+                            // Skip backend call, create dummy token for test account
+                            const String testToken = "test_review_token_9999999999";
+
+                            secureStorage.deleteAll();
+                            await secureStorage.write(key: 'access_token', value: testToken);
+
+                            setStatePopup(() => verifying = false);
+                            timer?.cancel();
+                            Navigator.pop(context);
+
+                            Navigator.pushAndRemoveUntil(
+                              context,
+                              MaterialPageRoute(
+                                builder: (context) => DisclaimerScreen(
+                                  onAccept: () {
+                                    Navigator.pushAndRemoveUntil(
+                                      context,
+                                      MaterialPageRoute(
+                                        builder: (context) => SplashScreen(),
+                                      ),
+                                      (route) => false,
+                                    );
+                                  },
+                                  onDecline: () async {
+                                    await secureStorage.deleteAll();
+                                    Navigator.pushAndRemoveUntil(
+                                      context,
+                                      MaterialPageRoute(builder: (context) => WelcomeScreen()),
+                                      (route) => false,
+                                    );
+                                  },
+                                ),
+                              ),
+                              (route) => false,
+                            );
+                            return;
+                          }
+
                           final response = await apiService.verifyOtp(phone, otp);
 
                           if (response.statusCode == 202) {
@@ -365,7 +415,11 @@ class _WelcomeScreenState extends State<WelcomeScreen>
                     canResend
                         ? TextButton(
                       onPressed: () async {
-                        await apiService.loginUser(phone);
+                        // Skip backend call for test number
+                        final enableTestLogin = dotenv.env['ENABLE_TEST_LOGIN'] == 'true';
+                        if (!enableTestLogin || phone != "9999999999") {
+                          await apiService.loginUser(phone);
+                        }
                         startTimer(setStatePopup);
                       },
                       child: Text("Resend OTP"),

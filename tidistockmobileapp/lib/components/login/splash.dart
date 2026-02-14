@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 
 import '../../screens/homeScreen.dart';
 import '../../screens/welcomeScreen.dart';
@@ -28,8 +29,41 @@ class _SplashScreenState extends State<SplashScreen> {
     String? accessToken = await storage.read(key: 'access_token');
 
     if (accessToken != null && accessToken.isNotEmpty) {
-      // Fetch user details while splash is showing
-      final userData = await fetchUserData();
+      // Check if test user bypass is enabled
+      final enableTestLogin = dotenv.env['ENABLE_TEST_LOGIN'] == 'true';
+      final isTestUser = accessToken == 'test_review_token_9999999999';
+
+      Map<String, dynamic>? userData;
+
+      if (enableTestLogin && isTestUser) {
+        // Create mock user data for test account (skip backend call)
+        userData = {
+          'id': 'test_user_id',
+          'username': '9999999999',
+          'firstName': 'Test',
+          'lastName': 'User',
+          'profilePicture': null,
+          'isSubscribed': true,
+          'isPaid': true,
+          'subscriptionEndDate': null,
+          'pan': null,
+          'isStockAnalysisTrialActive': true,
+          'config': [],
+        };
+
+        // Store test user data
+        await storage.write(key: 'user_id', value: 'test_user_id');
+        await storage.write(key: 'phone_number', value: '9999999999');
+        await storage.write(key: 'first_name', value: 'Test');
+        await storage.write(key: 'last_name', value: 'User');
+        await storage.write(key: 'is_subscribed', value: 'true');
+        await storage.write(key: 'is_paid', value: 'true');
+        await storage.write(key: 'is_stock_analysis_trial_active', value: 'true');
+      } else {
+        // Fetch user details from backend
+        userData = await fetchUserData();
+      }
+
       if (!mounted) return;
 
       nextScreen = HomeScreen(
