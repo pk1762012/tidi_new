@@ -187,6 +187,10 @@ class CacheService {
     'aq/model-portfolio/portfolios':   const _TierConfig(tier: CacheTier.nonCritical, memoryTtl: Duration(minutes: 5), diskTtl: Duration(hours: 6)),
     'aq/model-portfolio/strategy':     const _TierConfig(tier: CacheTier.nonCritical, memoryTtl: Duration(minutes: 5), diskTtl: Duration(hours: 6)),
 
+    // ── NON-CRITICAL: aq_ccxt performance data ──────────────────────
+    'aq/ccxt/performance':             const _TierConfig(tier: CacheTier.nonCritical, memoryTtl: Duration(minutes: 10), diskTtl: Duration(hours: 6)),
+    'aq/ccxt/index-data':              const _TierConfig(tier: CacheTier.nonCritical, memoryTtl: Duration(minutes: 10), diskTtl: Duration(hours: 6)),
+
     // ── SEMI-CRITICAL: aq_backend user-specific data ──
     'aq/model-portfolio/subscribed':   const _TierConfig(tier: CacheTier.semiCritical, memoryTtl: Duration(seconds: 60)),
     'aq/user/brokers':                 const _TierConfig(tier: CacheTier.semiCritical, memoryTtl: Duration(seconds: 30)),

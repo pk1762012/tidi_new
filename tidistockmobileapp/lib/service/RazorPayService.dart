@@ -193,10 +193,16 @@ class RazorpayService {
     required String pricingTier,
     required int amount,
   }) async {
-    if (_isProcessing) return false;
+    debugPrint('[RazorpayService] openModelPortfolioCheckout called - planId: $planId, strategyId: $strategyId, tier: $pricingTier, amount: $amount');
+
+    if (_isProcessing) {
+      debugPrint('[RazorpayService] openModelPortfolioCheckout - already processing, returning false');
+      return false;
+    }
     _isProcessing = true;
 
     try {
+      debugPrint('[RazorpayService] openModelPortfolioCheckout - calling createModelPortfolioOrder API...');
       final response = await ApiService().createModelPortfolioOrder(
         planId: planId,
         planName: planName,
@@ -204,6 +210,9 @@ class RazorpayService {
         pricingTier: pricingTier,
         amount: amount,
       );
+
+      debugPrint('[RazorpayService] openModelPortfolioCheckout - API response status: ${response.statusCode}');
+      debugPrint('[RazorpayService] openModelPortfolioCheckout - API response body: ${response.body}');
 
       if (response.statusCode >= 200 && response.statusCode < 300) {
         try {
@@ -213,7 +222,7 @@ class RazorpayService {
           final razorpayKey = dotenv.env['RAZORPAY_KEY'] ?? '';
           final orderId = jsonData['data']['orderId'];
 
-          debugPrint('[RazorpayService] openModelPortfolioCheckout - orderId: $orderId');
+          debugPrint('[RazorpayService] openModelPortfolioCheckout - key: ${razorpayKey.substring(0, razorpayKey.length.clamp(0, 12))}..., orderId: $orderId');
 
           _currentCheckoutType = 'model_portfolio';
           _pendingMetadata = {
@@ -232,23 +241,26 @@ class RazorpayService {
             'prefill': {'contact': phone ?? ''}
           };
 
+          debugPrint('[RazorpayService] openModelPortfolioCheckout - opening Razorpay with options: $options');
           _razorpay.open(options);
           return true;
         } catch (e) {
           _isProcessing = false;
           _currentCheckoutType = null;
-          debugPrint('[RazorpayService] openModelPortfolioCheckout error: $e');
+          debugPrint('[RazorpayService] openModelPortfolioCheckout parse/open error: $e');
           _showError('Unable to open payment screen. Please try again.');
           return false;
         }
       } else {
         _isProcessing = false;
+        debugPrint('[RazorpayService] create-order failed: ${response.statusCode} - ${response.body}');
         _showError('Unable to create order (${response.statusCode}). Please try again later.');
         return false;
       }
     } catch (e) {
       _isProcessing = false;
       _currentCheckoutType = null;
+      debugPrint('[RazorpayService] openModelPortfolioCheckout network error: $e');
       _showError('Network error. Please check your connection and try again.');
       return false;
     }

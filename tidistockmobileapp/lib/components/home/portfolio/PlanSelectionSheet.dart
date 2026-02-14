@@ -69,6 +69,9 @@ class _PlanSelectionSheetState extends State<PlanSelectionSheet> {
     if (_loading || _selectedTier == null) return;
     setState(() => _loading = true);
 
+    debugPrint('[PlanSelectionSheet] _handlePay - tier: $_selectedTier, amount: $_selectedAmount');
+    debugPrint('[PlanSelectionSheet] planId: ${widget.portfolio.id}, strategyId: ${widget.portfolio.strategyId}');
+
     final opened = await _razorpayService.openModelPortfolioCheckout(
       planId: widget.portfolio.id,
       planName: widget.portfolio.modelName,
@@ -77,8 +80,17 @@ class _PlanSelectionSheetState extends State<PlanSelectionSheet> {
       amount: _selectedAmount,
     );
 
+    debugPrint('[PlanSelectionSheet] checkout opened: $opened');
+
     if (!opened && mounted) {
       setState(() => _loading = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text('Unable to start payment. Please try again.'),
+          backgroundColor: Colors.red.shade700,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
     }
   }
 

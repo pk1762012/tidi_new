@@ -12,6 +12,7 @@ class AqApiService {
   static final AqApiService instance = AqApiService._();
 
   final String baseUrl = dotenv.env['AQ_BACKEND_URL'] ?? '';
+  final String ccxtUrl = dotenv.env['AQ_CCXT_URL'] ?? '';
   final String advisorSubdomain = dotenv.env['AQ_ADVISOR_SUBDOMAIN'] ?? '';
   final String advisorName = dotenv.env['AQ_ADVISOR_NAME'] ?? '';
   final String _apiKey = dotenv.env['AQ_API_KEY'] ?? '';
@@ -129,6 +130,44 @@ class AqApiService {
       Uri.parse('${baseUrl}api/model-portfolio/subscribe-strategy/$strategyId'),
       headers: _headers(),
       body: jsonEncode({'email': email, 'action': action}),
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // CCXT Performance APIs
+  // ---------------------------------------------------------------------------
+
+  /// Fetch portfolio performance time series data
+  Future<http.Response> getPortfolioPerformance({
+    required String advisor,
+    required String modelName,
+  }) async {
+    return CacheService.instance.cachedGet(
+      key: 'aq/ccxt/performance:$advisor:$modelName',
+      fetcher: () => http.post(
+        Uri.parse('${ccxtUrl}rebalance/v2/get-portfolio-performance'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'advisor': advisor, 'modelName': modelName}),
+      ),
+    );
+  }
+
+  /// Fetch index data for comparison (e.g., ^NSEI, NIFTY_MID_SELECT.NS, ^CRSLDX)
+  Future<http.Response> getIndexData({
+    required String symbol,
+    required String startDate,
+    required String endDate,
+  }) async {
+    final uri = Uri.parse('${ccxtUrl}misc/data-fetcher').replace(
+      queryParameters: {
+        'symbol': symbol,
+        'start_date': startDate,
+        'end_date': endDate,
+      },
+    );
+    return CacheService.instance.cachedGet(
+      key: 'aq/ccxt/index-data:$symbol:$startDate:$endDate',
+      fetcher: () => http.get(uri, headers: {'Content-Type': 'application/json'}),
     );
   }
 
