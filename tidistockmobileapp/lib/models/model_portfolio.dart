@@ -3,6 +3,97 @@ import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'portfolio_stock.dart';
 import 'rebalance_entry.dart';
 
+class PerformanceData {
+  // Returns
+  final double? cagr;
+  final double? totalReturn;
+  final double? ytdReturn;
+  final double? oneYearReturn;
+  // Risk
+  final double? volatility;
+  final double? valueAtRisk;
+  final double? cvar;
+  final double? ulcerIndex;
+  // Drawdown
+  final double? maxDrawdown;
+  final double? avgDrawdown;
+  final int? longestDdDays;
+  // Ratios
+  final double? sharpeRatio;
+  final double? sortinoRatio;
+  final double? profitFactor;
+  final double? gainToPain;
+  // Timing
+  final double? winRate;
+  final double? bestDay;
+  final double? worstDay;
+  final double? timeInMarket;
+  // General
+  final String? startDate;
+  final String? endDate;
+
+  PerformanceData({
+    this.cagr,
+    this.totalReturn,
+    this.ytdReturn,
+    this.oneYearReturn,
+    this.volatility,
+    this.valueAtRisk,
+    this.cvar,
+    this.ulcerIndex,
+    this.maxDrawdown,
+    this.avgDrawdown,
+    this.longestDdDays,
+    this.sharpeRatio,
+    this.sortinoRatio,
+    this.profitFactor,
+    this.gainToPain,
+    this.winRate,
+    this.bestDay,
+    this.worstDay,
+    this.timeInMarket,
+    this.startDate,
+    this.endDate,
+  });
+
+  factory PerformanceData.fromJson(Map<String, dynamic> json) {
+    return PerformanceData(
+      cagr: _toDouble(json['cagr']),
+      totalReturn: _toDouble(json['total_return'] ?? json['totalReturn']),
+      ytdReturn: _toDouble(json['ytd_return'] ?? json['ytdReturn']),
+      oneYearReturn: _toDouble(json['one_year_return'] ?? json['oneYearReturn']),
+      volatility: _toDouble(json['volatility']),
+      valueAtRisk: _toDouble(json['value_at_risk'] ?? json['valueAtRisk']),
+      cvar: _toDouble(json['cvar']),
+      ulcerIndex: _toDouble(json['ulcer_index'] ?? json['ulcerIndex']),
+      maxDrawdown: _toDouble(json['max_drawdown'] ?? json['maxDrawdown']),
+      avgDrawdown: _toDouble(json['avg_drawdown'] ?? json['avgDrawdown']),
+      longestDdDays: json['longest_dd_days'] != null
+          ? (json['longest_dd_days'] as num).toInt()
+          : json['longestDdDays'] != null
+              ? (json['longestDdDays'] as num).toInt()
+              : null,
+      sharpeRatio: _toDouble(json['sharpe_ratio'] ?? json['sharpeRatio']),
+      sortinoRatio: _toDouble(json['sortino_ratio'] ?? json['sortinoRatio']),
+      profitFactor: _toDouble(json['profit_factor'] ?? json['profitFactor']),
+      gainToPain: _toDouble(json['gain_to_pain'] ?? json['gainToPain']),
+      winRate: _toDouble(json['win_rate'] ?? json['winRate']),
+      bestDay: _toDouble(json['best_day'] ?? json['bestDay']),
+      worstDay: _toDouble(json['worst_day'] ?? json['worstDay']),
+      timeInMarket: _toDouble(json['time_in_market'] ?? json['timeInMarket']),
+      startDate: json['start_date']?.toString() ?? json['startDate']?.toString(),
+      endDate: json['end_date']?.toString() ?? json['endDate']?.toString(),
+    );
+  }
+
+  static double? _toDouble(dynamic value) {
+    if (value == null) return null;
+    if (value is num) return value.toDouble();
+    if (value is String) return double.tryParse(value);
+    return null;
+  }
+}
+
 class ModelPortfolio {
   final String id;
   final String advisor;
@@ -32,6 +123,7 @@ class ModelPortfolio {
   final List<RebalanceHistoryEntry> rebalanceHistory;
   final DateTime? lastUpdated;
   final DateTime? createdAt;
+  final PerformanceData? performanceData;
 
   ModelPortfolio({
     required this.id,
@@ -62,6 +154,7 @@ class ModelPortfolio {
     this.rebalanceHistory = const [],
     this.lastUpdated,
     this.createdAt,
+    this.performanceData,
   });
 
   factory ModelPortfolio.fromJson(Map<String, dynamic> json) {
@@ -145,6 +238,12 @@ class ModelPortfolio {
     // Parse pricing tiers from Plans API
     final pricing = _parsePricing(json['pricing']);
 
+    // Parse performance data if available
+    final perfRaw = json['performance_data'] ?? json['performanceData'];
+    final performanceData = perfRaw is Map
+        ? PerformanceData.fromJson(Map<String, dynamic>.from(perfRaw))
+        : null;
+
     return ModelPortfolio(
       id: json['_id'] ?? '',
       advisor: json['advisor'] ?? '',
@@ -182,6 +281,7 @@ class ModelPortfolio {
       createdAt: json['created_at'] != null
           ? DateTime.tryParse(json['created_at'].toString())
           : null,
+      performanceData: performanceData,
     );
   }
 
@@ -221,17 +321,24 @@ class ModelPortfolio {
       rebalanceHistory: strategyData.rebalanceHistory,
       lastUpdated: lastUpdated ?? strategyData.lastUpdated,
       createdAt: createdAt ?? strategyData.createdAt,
+      performanceData: performanceData ?? strategyData.performanceData,
     );
   }
 
   /// Parse pricing tiers from Plans API response.
   static Map<String, int> _parsePricing(dynamic raw) {
     if (raw == null || raw is! Map) return {};
-    return Map.fromEntries(
-      raw.entries
-          .where((e) => e.value != null && e.value != 0)
-          .map((e) => MapEntry(e.key.toString(), (e.value as num).toInt())),
-    );
+    final result = <String, int>{};
+    for (final e in raw.entries) {
+      if (e.value == null) continue;
+      final parsed = e.value is num
+          ? e.value.toInt()
+          : int.tryParse(e.value.toString());
+      if (parsed != null && parsed != 0) {
+        result[e.key.toString()] = parsed;
+      }
+    }
+    return result;
   }
 
   /// Safely convert a dynamic value to List<String>.
