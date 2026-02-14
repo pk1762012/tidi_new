@@ -8,7 +8,6 @@ import 'package:razorpay_flutter/razorpay_flutter.dart';
 import '../components/login/PaymentSuccess.dart';
 import '../main.dart';
 import 'ApiService.dart';
-import 'AqApiService.dart';
 import 'CacheService.dart';
 
 class RazorpayService {
@@ -205,17 +204,12 @@ class RazorpayService {
     try {
       String? phone = await secureStorage.read(key: 'phone_number');
       String? email = await secureStorage.read(key: 'user_email');
-      String? firstName = await secureStorage.read(key: 'first_name');
-      String? lastName = await secureStorage.read(key: 'last_name');
-      final userName = '${firstName ?? ''} ${lastName ?? ''}'.trim();
 
-      debugPrint('[RazorpayService] openModelPortfolioCheckout - calling AQ createModelPortfolioOrder API...');
-      final response = await AqApiService.instance.createModelPortfolioOrder(
+      debugPrint('[RazorpayService] openModelPortfolioCheckout - calling TIDI createModelPortfolioOrder API...');
+      final response = await ApiService().createModelPortfolioOrder(
         planId: planId,
         planName: planName,
-        userEmail: email ?? '',
-        userName: userName,
-        phone: phone ?? '',
+        strategyId: strategyId,
         pricingTier: pricingTier,
         amount: amount,
       );
@@ -228,9 +222,8 @@ class RazorpayService {
           final jsonData = json.decode(response.body);
 
           final razorpayKey = dotenv.env['RAZORPAY_KEY'] ?? '';
-          final orderId = jsonData['razorpay_order_id'] ?? jsonData['data']?['orderId'] ?? jsonData['data']?['razorpay_order_id'];
-          final rawAmount = jsonData['amount'] ?? jsonData['data']?['amount'] ?? amount;
-          final amountInPaise = rawAmount is int ? rawAmount : amount;
+          final orderId = jsonData['data']['orderId'];
+          final amountInPaise = jsonData['data']['amount'] ?? amount;
 
           debugPrint('[RazorpayService] openModelPortfolioCheckout - key: ${razorpayKey.substring(0, razorpayKey.length.clamp(0, 12))}..., orderId: $orderId');
 
