@@ -97,8 +97,8 @@ class _SplashScreenState extends State<SplashScreen> {
               (Route<dynamic> route) => false,
         );
       }
-    } catch (_) {
-      // Handle errors silently
+    } catch (e) {
+      debugPrint('SplashScreen fetchUserData error: $e');
     }
 
     return null;

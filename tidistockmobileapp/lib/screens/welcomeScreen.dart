@@ -43,17 +43,22 @@ class _WelcomeScreenState extends State<WelcomeScreen>
       final response = await apiService.validateUser(phone);
 
       if (response.statusCode == 200) {
+        // Existing user — send OTP
         final loginResponse = await apiService.loginUser(phone);
         if (loginResponse.statusCode == 200) {
           showOtpPopup(phone);
         } else {
           setState(() => phoneError = "Something went wrong. Try again.");
         }
-      } else {
+      } else if (response.statusCode == 404) {
+        // New user — show registration popup
         showNamePopup();
+      } else {
+        // Server error (500, timeout, etc.) — don't assume new user
+        setState(() => phoneError = "Server error. Please try again later.");
       }
     } catch (e) {
-      setState(() => phoneError = "Something went wrong. Try again.");
+      setState(() => phoneError = "Network error. Please check your connection.");
     }
 
     setState(() => isLoading = false);
@@ -150,13 +155,13 @@ class _WelcomeScreenState extends State<WelcomeScreen>
                           // Stop if fname has any error OR lname has an error
                           if (fnameError != null || lnameError != null) return;
 
-                          Navigator.pop(context);
                           ApiService apiService = ApiService();
                           final response = await apiService.createUser(fnameCtrl.text.trim(), lnameCtrl.text.trim(), phoneCtrl.text.trim());
                           if (response.statusCode == 201 || response.statusCode == 202) {
+                            Navigator.pop(context);   // Close name popup
                             showOtpPopup(phoneCtrl.text.trim());
                           } else {
-                            Navigator.pop(context);   // <-- Close name popup and go back
+                            Navigator.pop(context);   // Close name popup
                             ScaffoldMessenger.of(context).showSnackBar(
                               SnackBar(content: Text("Failed to register. Please try again.")),
                             );
@@ -299,7 +304,7 @@ class _WelcomeScreenState extends State<WelcomeScreen>
                             var responseData = jsonDecode(response.body);
                             String accessToken = responseData['data']['token'];
 
-                            secureStorage.deleteAll();
+                            await secureStorage.deleteAll();
                             await secureStorage.write(key: 'access_token', value: accessToken);
                             apiService.updateDeviceDetails();
 
