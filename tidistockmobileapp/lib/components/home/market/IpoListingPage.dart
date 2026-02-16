@@ -26,9 +26,11 @@ class _IpoListingPageState extends State<IpoListingPage> {
 
   bool loading = true;
   bool isSubscribed = false;
+  String? errorMsg;
 
   List<dynamic> openIpos = [];
   List<dynamic> upcomingIpos = [];
+  List<dynamic> recentlyClosedIpos = [];
 
   @override
   void initState() {
@@ -45,7 +47,11 @@ class _IpoListingPageState extends State<IpoListingPage> {
   }
 
   Future<void> fetchIpos() async {
-    setState(() => loading = true);
+    if (loading == false && openIpos.isEmpty && upcomingIpos.isEmpty) {
+      setState(() => loading = true);
+    } else if (openIpos.isEmpty && upcomingIpos.isEmpty) {
+      setState(() => loading = true);
+    }
 
     try {
       await ApiService().getCachedIPO(
@@ -54,24 +60,95 @@ class _IpoListingPageState extends State<IpoListingPage> {
           final List list = data is List ? data : [];
           final now = DateTime.now();
           final today = DateTime(now.year, now.month, now.day);
+          final recentCutoff = today.subtract(const Duration(days: 15));
 
-          setState(() {
-            openIpos = list.where((e) {
-              if (e['status'] != 'open') return false;
+          debugPrint('[IPO] Raw data type: ${data.runtimeType}, items: ${list.length}, fromCache: $fromCache');
+          if (list.isNotEmpty) {
+            debugPrint('[IPO] Statuses: ${list.map((e) => e['status']).toSet()}');
+            debugPrint('[IPO] First item keys: ${list.first is Map ? (list.first as Map).keys.toList() : 'N/A'}');
+          } else {
+            debugPrint('[IPO] WARNING: API returned empty list! data=$data');
+          }
+
+          const openStatuses = {'open', 'active', 'live'};
+
+          final filteredOpen = list.where((e) {
+            final status = (e['status'] ?? '').toString().toLowerCase();
+            if (!openStatuses.contains(status)) return false;
+            final endDateStr = e['endDate'];
+            if (endDateStr != null) {
+              final endDate = DateTime.tryParse(endDateStr);
+              if (endDate != null && endDate.isBefore(today)) return false;
+            }
+            return true;
+          }).toList();
+
+          final filteredUpcoming = list.where((e) {
+            final status = (e['status'] ?? '').toString().toLowerCase();
+            if (status != 'upcoming') return false;
+            // Exclude upcoming IPOs whose endDate has already passed
+            final endDateStr = e['endDate'];
+            if (endDateStr != null) {
+              final endDate = DateTime.tryParse(endDateStr);
+              if (endDate != null && endDate.isBefore(today)) return false;
+            }
+            return true;
+          }).toList();
+
+          // Recently closed: status is closed/listed, OR was open/upcoming but endDate has passed
+          final filteredClosed = list.where((e) {
+            final status = (e['status'] ?? '').toString().toLowerCase();
+            // Skip anything already shown in open or upcoming
+            if (openStatuses.contains(status)) {
+              // If it's "open" but endDate passed, show in recently closed
               final endDateStr = e['endDate'];
               if (endDateStr != null) {
                 final endDate = DateTime.tryParse(endDateStr);
-                if (endDate != null && endDate.isBefore(today)) return false;
+                if (endDate != null && endDate.isBefore(today)) {
+                  // Only show if within recent cutoff
+                  return !endDate.isBefore(recentCutoff);
+                }
               }
-              return true;
-            }).toList();
-            upcomingIpos = list.where((e) => e['status'] == 'upcoming').toList();
+              return false;
+            }
+            if (status == 'upcoming') {
+              final endDateStr = e['endDate'];
+              if (endDateStr != null) {
+                final endDate = DateTime.tryParse(endDateStr);
+                if (endDate != null && endDate.isBefore(today)) {
+                  return !endDate.isBefore(recentCutoff);
+                }
+              }
+              return false;
+            }
+            // Explicitly closed/listed
+            final endDateStr = e['endDate'] ?? e['listingDate'];
+            if (endDateStr != null) {
+              final endDate = DateTime.tryParse(endDateStr);
+              if (endDate != null && endDate.isBefore(recentCutoff)) return false;
+            }
+            return true;
+          }).toList();
+
+          setState(() {
+            errorMsg = null;
+            openIpos = filteredOpen;
+            upcomingIpos = filteredUpcoming;
+            recentlyClosedIpos = filteredClosed;
             loading = false;
           });
+
+          debugPrint('[IPO] Open: ${openIpos.length}, Upcoming: ${upcomingIpos.length}, RecentlyClosed: ${recentlyClosedIpos.length}');
         },
       );
     } catch (e) {
-      if (mounted) setState(() => loading = false);
+      debugPrint('[IPO] Fetch error: $e');
+      if (mounted) {
+        setState(() {
+          errorMsg = 'Unable to load IPOs. Pull down to retry.';
+          loading = false;
+        });
+      }
     }
   }
 
@@ -103,33 +180,102 @@ class _IpoListingPageState extends State<IpoListingPage> {
       menu: "IPO",
       child: loading
           ? const Center(child: CircularProgressIndicator())
-          : ListView.builder(
-        padding: const EdgeInsets.all(16),
-        // Layout: openHeader + openIpos + spacer + upcomingHeader + upcomingIpos
-        itemCount: 1 + openIpos.length + 1 + 1 + upcomingIpos.length,
-        itemBuilder: (context, index) {
-          if (index == 0) {
-            return Padding(
-              padding: const EdgeInsets.only(bottom: 12),
-              child: _sectionTitle("Open IPOs"),
-            );
-          }
-          if (index <= openIpos.length) {
-            return _ipoCard(openIpos[index - 1]);
-          }
-          if (index == openIpos.length + 1) {
-            return const SizedBox(height: 32);
-          }
-          if (index == openIpos.length + 2) {
-            return Padding(
-              padding: const EdgeInsets.only(bottom: 12),
-              child: _sectionTitle("Upcoming IPOs"),
-            );
-          }
-          final upcomingIndex = index - openIpos.length - 3;
-          return _ipoCard(upcomingIpos[upcomingIndex]);
-        },
+          : RefreshIndicator(
+        onRefresh: fetchIpos,
+        child: errorMsg != null && openIpos.isEmpty && upcomingIpos.isEmpty
+            ? _buildErrorState()
+            : _buildIpoList(),
       ),
+    );
+  }
+
+  Widget _buildErrorState() {
+    return ListView(
+      padding: const EdgeInsets.all(32),
+      children: [
+        const SizedBox(height: 80),
+        Icon(Icons.cloud_off, size: 64, color: Colors.grey.shade400),
+        const SizedBox(height: 16),
+        Text(
+          errorMsg ?? 'Something went wrong',
+          textAlign: TextAlign.center,
+          style: TextStyle(fontSize: 16, color: Colors.grey.shade600),
+        ),
+        const SizedBox(height: 24),
+        Center(
+          child: ElevatedButton.icon(
+            onPressed: fetchIpos,
+            icon: const Icon(Icons.refresh),
+            label: const Text("Retry"),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: lightColorScheme.primary,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildIpoList() {
+    final sections = <Widget>[];
+
+    // Open IPOs
+    sections.add(Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: _sectionTitle("Open IPOs"),
+    ));
+    if (openIpos.isEmpty) {
+      sections.add(Padding(
+        padding: const EdgeInsets.only(bottom: 8),
+        child: Text(
+          "No open IPOs right now",
+          style: TextStyle(color: Colors.grey.shade600, fontSize: 14),
+        ),
+      ));
+    } else {
+      for (final ipo in openIpos) {
+        sections.add(_ipoCard(ipo));
+      }
+    }
+
+    sections.add(const SizedBox(height: 32));
+
+    // Upcoming IPOs
+    sections.add(Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: _sectionTitle("Upcoming IPOs"),
+    ));
+    if (upcomingIpos.isEmpty) {
+      sections.add(Padding(
+        padding: const EdgeInsets.only(bottom: 8),
+        child: Text(
+          "No upcoming IPOs right now",
+          style: TextStyle(color: Colors.grey.shade600, fontSize: 14),
+        ),
+      ));
+    } else {
+      for (final ipo in upcomingIpos) {
+        sections.add(_ipoCard(ipo));
+      }
+    }
+
+    // Recently Closed/Listed IPOs
+    if (recentlyClosedIpos.isNotEmpty) {
+      sections.add(const SizedBox(height: 32));
+      sections.add(Padding(
+        padding: const EdgeInsets.only(bottom: 12),
+        child: _sectionTitle("Recently Listed"),
+      ));
+      for (final ipo in recentlyClosedIpos) {
+        sections.add(_ipoCard(ipo));
+      }
+    }
+
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: sections,
     );
   }
 
@@ -255,7 +401,7 @@ class _IpoListingPageState extends State<IpoListingPage> {
                     ),
                   ),
 
-                  if (ipo['status'] == 'open')
+                  if ((ipo['status'] ?? '').toString().toLowerCase() == 'open')
                     Align(
                       alignment: Alignment.centerRight,
                       child: TextButton.icon(
@@ -471,8 +617,15 @@ class _IpoListingPageState extends State<IpoListingPage> {
   );
 
   Widget _statusChip(String status) {
-    final color =
-    status == 'open' ? Colors.green : Colors.orange;
+    final s = status.toLowerCase();
+    final Color color;
+    if (s == 'open' || s == 'active' || s == 'live') {
+      color = Colors.green;
+    } else if (s == 'upcoming') {
+      color = Colors.orange;
+    } else {
+      color = Colors.blueGrey;
+    }
     return Container(
       padding: const EdgeInsets.symmetric(
           horizontal: 10, vertical: 5),

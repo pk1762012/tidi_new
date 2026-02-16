@@ -1,5 +1,7 @@
+import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:image/image.dart' as img;
@@ -9,6 +11,35 @@ import 'dart:convert';
 
 import 'CacheService.dart';
 
+/// Retries an HTTP call on transient network errors (DNS failures, socket
+/// resets, timeouts). Uses exponential backoff: 500ms, 1s, 2s.
+Future<http.Response> _resilientHttp(
+  Future<http.Response> Function() request, {
+  int maxRetries = 2,
+}) async {
+  int attempt = 0;
+  while (true) {
+    try {
+      return await request();
+    } on SocketException catch (e) {
+      attempt++;
+      if (attempt > maxRetries) rethrow;
+      debugPrint('[ApiService] SocketException (attempt $attempt/$maxRetries): $e');
+      await Future.delayed(Duration(milliseconds: 500 * attempt));
+    } on TimeoutException catch (e) {
+      attempt++;
+      if (attempt > maxRetries) rethrow;
+      debugPrint('[ApiService] Timeout (attempt $attempt/$maxRetries): $e');
+      await Future.delayed(Duration(milliseconds: 500 * attempt));
+    } on HttpException catch (e) {
+      attempt++;
+      if (attempt > maxRetries) rethrow;
+      debugPrint('[ApiService] HttpException (attempt $attempt/$maxRetries): $e');
+      await Future.delayed(Duration(milliseconds: 500 * attempt));
+    }
+  }
+}
+
 class ApiService {
 
   final FlutterSecureStorage secureStorage = const FlutterSecureStorage();
@@ -16,17 +47,33 @@ class ApiService {
   final String marketDataUrl = dotenv.env['MARKET_DATA_URL'] ?? '';
   final String marketDataPassword = dotenv.env['MARKET_DATA_PASSWORD'] ?? '';
 
-  // In-memory token cache to avoid repeated platform channel reads
+  // In-memory token cache to avoid repeated platform channel reads.
+  // Completer-based lock ensures only one concurrent read from secure storage.
   static String? _cachedToken;
+  static Completer<String?>? _tokenCompleter;
 
   Future<String?> _getToken() async {
     if (_cachedToken != null) return _cachedToken;
-    _cachedToken = await secureStorage.read(key: 'access_token');
+
+    // If another call is already reading the token, wait for it
+    if (_tokenCompleter != null) return _tokenCompleter!.future;
+
+    _tokenCompleter = Completer<String?>();
+    try {
+      _cachedToken = await secureStorage.read(key: 'access_token');
+      _tokenCompleter!.complete(_cachedToken);
+    } catch (e) {
+      _tokenCompleter!.completeError(e);
+      _tokenCompleter = null;
+      rethrow;
+    }
+    _tokenCompleter = null;
     return _cachedToken;
   }
 
   static void invalidateTokenCache() {
     _cachedToken = null;
+    _tokenCompleter = null;
   }
 
   static Future<String?> getFcmTokenSafely() async {
@@ -53,7 +100,7 @@ class ApiService {
       "lastName": lName,
       "phone_number": phoneNumber
     })
-    );
+    ).timeout(const Duration(seconds: 15));
   }
 
   Future<http.Response> loginUser(String phoneNumber) async {
@@ -62,7 +109,7 @@ class ApiService {
         headers: {
           'Content-Type': 'application/json',
         }
-    );
+    ).timeout(const Duration(seconds: 15));
   }
 
   Future<http.Response> verifyOtp(String phoneNumber, String otp) async {
@@ -71,7 +118,7 @@ class ApiService {
         headers: {
           'Content-Type': 'application/json',
         }
-    );
+    ).timeout(const Duration(seconds: 15));
   }
 
   Future<http.Response> validateUser(String phoneNumber) async {
@@ -80,7 +127,7 @@ class ApiService {
         headers: {
           'Content-Type': 'application/json',
         }
-    );
+    ).timeout(const Duration(seconds: 15));
   }
 
   Future<bool> isAuthenticated() async {
@@ -124,13 +171,13 @@ class ApiService {
       key: 'api/user/fcm',
       fetcher: () async {
         String? token = await _getToken();
-        return http.get(
+        return _resilientHttp(() => http.get(
           Uri.parse(apiUrl + 'api/user/fcm'),
           headers: {
             'Authorization': 'Bearer $token',
             'Content-Type': 'application/json',
           },
-        );
+        ).timeout(const Duration(seconds: 10)));
       },
     );
   }
@@ -231,6 +278,7 @@ class ApiService {
       headers: {
         'Authorization': 'Bearer $token',
         'Content-Type': 'application/json',
+        'Accept': 'application/json',
       },
     );
   }
@@ -332,13 +380,14 @@ class ApiService {
     );
   }
 
-  void updateDeviceDetails() async {
-    String? token = await _getToken();
-    String? fcmToken = await getFcmTokenSafely();
-    final String topic = dotenv.env['FIREBASE_TOPIC'] ?? 'test_all';
-    FirebaseMessaging.instance.subscribeToTopic(topic);
+  Future<void> updateDeviceDetails() async {
+    try {
+      String? token = await _getToken();
+      String? fcmToken = await getFcmTokenSafely();
+      final String topic = dotenv.env['FIREBASE_TOPIC'] ?? 'test_all';
+      FirebaseMessaging.instance.subscribeToTopic(topic);
 
-    http.post(
+      final response = await _resilientHttp(() => http.post(
         Uri.parse(apiUrl + 'api/user/update_device_details'),
         headers: {
           'Authorization': 'Bearer $token',
@@ -347,8 +396,15 @@ class ApiService {
         body: jsonEncode({
           "fcmToken": fcmToken,
           "deviceType": Platform.isIOS ? "IOS" : "ANDROID"
-        })
-    );
+        }),
+      ).timeout(const Duration(seconds: 10)));
+
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        debugPrint('[ApiService] updateDeviceDetails failed: ${response.statusCode}');
+      }
+    } catch (e) {
+      debugPrint('[ApiService] updateDeviceDetails error: $e');
+    }
   }
 
   Future<http.StreamedResponse> uploadProfilePicture(imageFile) async {
@@ -428,6 +484,24 @@ class ApiService {
     );
   }
 
+  Future<http.Response> subscribeFreeModelPortfolio({
+    required String planId,
+    required String strategyId,
+  }) async {
+    String? token = await _getToken();
+    return http.post(
+      Uri.parse(apiUrl + 'api/user/model-portfolio/subscribe-free'),
+      headers: {
+        'Authorization': 'Bearer $token',
+        'Content-Type': 'application/json',
+      },
+      body: jsonEncode({
+        'planId': planId,
+        'strategyId': strategyId,
+      }),
+    );
+  }
+
   Future<http.Response> getModelPortfolioSubscriptionStatus(String planId) async {
     String? token = await _getToken();
     return http.get(
@@ -503,23 +577,23 @@ class ApiService {
   Future<http.Response> getMarketQuote(String symbol) async {
     return CacheService.instance.cachedGet(
       key: 'index/quote:$symbol',
-      fetcher: () => http.get(
+      fetcher: () => _resilientHttp(() => http.get(
         Uri.parse(marketDataUrl + 'index/quote/$symbol'),
         headers: {
           'Authorization': 'Bearer $marketDataPassword',
           'Content-Type': 'application/json',
         },
-      ),
+      ).timeout(const Duration(seconds: 8))),
     );
   }
 
   Future<http.Response> getPreMarketSummary() async {
-    return http.get(
+    return _resilientHttp(() => http.get(
         Uri.parse(marketDataUrl + 'pre_market_summary'),
         headers: {
           'Authorization': 'Bearer $marketDataPassword',
           'Content-Type': 'application/json',
-        });
+        }).timeout(const Duration(seconds: 10)));
   }
 
   Future<http.Response> getStockAnalysis(String symbol) async {
@@ -545,13 +619,13 @@ class ApiService {
   Future<http.Response> getOptionPulsePCR(String symbol) async {
     return CacheService.instance.cachedGet(
       key: 'option-chain:$symbol:pcr',
-      fetcher: () => http.get(
+      fetcher: () => _resilientHttp(() => http.get(
         Uri.parse(marketDataUrl + 'option-chain/$symbol/pcr'),
         headers: {
           'Authorization': 'Bearer $marketDataPassword',
           'Content-Type': 'application/json',
         },
-      ),
+      ).timeout(const Duration(seconds: 8))),
     );
   }
 
@@ -613,7 +687,7 @@ class ApiService {
     );
   }
 
-  /// Cached IPO list (3-day TTL).
+  /// Cached IPO list.
   Future<void> getCachedIPO({
     required void Function(dynamic data, {required bool fromCache}) onData,
   }) {
@@ -621,8 +695,21 @@ class ApiService {
       key: 'api/ipo',
       fetcher: () => getIPO(),
       onData: onData,
+      parseResponse: (r) {
+        final decoded = jsonDecode(r.body);
+        // Handle flat list [...] from Grails respond
+        if (decoded is List) return decoded;
+        // Handle wrapped response {"data": [...]} or similar
+        if (decoded is Map) {
+          if (decoded['data'] is List) return decoded['data'];
+          if (decoded['ipos'] is List) return decoded['ipos'];
+          // Grails might wrap as numbered/keyed map — extract values
+          return decoded.values.whereType<Map>().toList();
+        }
+        debugPrint('[IPO] Unexpected response type: ${decoded.runtimeType} body=${r.body.length > 300 ? r.body.substring(0, 300) : r.body}');
+        return [];
+      },
     );
-
   }
 
   /// Cached FII/DII data first page (12-hour TTL).

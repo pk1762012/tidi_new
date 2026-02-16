@@ -175,7 +175,7 @@ class CacheService {
     'api/market/holiday':          const _TierConfig(tier: CacheTier.nonCritical, memoryTtl: Duration(minutes: 10), diskTtl: Duration(days: 30)),
     'api/branch':                  const _TierConfig(tier: CacheTier.nonCritical, memoryTtl: Duration(minutes: 10), diskTtl: Duration(days: 30)),
     'api/course':                  const _TierConfig(tier: CacheTier.nonCritical, memoryTtl: Duration(minutes: 10), diskTtl: Duration(days: 30)),
-    'api/ipo':                     const _TierConfig(tier: CacheTier.nonCritical, memoryTtl: Duration(minutes: 10), diskTtl: Duration(days: 3)),
+    'api/ipo':                     const _TierConfig(tier: CacheTier.nonCritical, memoryTtl: Duration(minutes: 5),  diskTtl: Duration(hours: 6)),
     'api/fii':                     const _TierConfig(tier: CacheTier.nonCritical, memoryTtl: Duration(minutes: 10), diskTtl: Duration(hours: 12)),
     'stock_analysis':              const _TierConfig(tier: CacheTier.nonCritical, memoryTtl: Duration(minutes: 10), diskTtl: Duration(hours: 12)),
     'nifty_50_stock_analysis':     const _TierConfig(tier: CacheTier.nonCritical, memoryTtl: Duration(minutes: 10), diskTtl: Duration(hours: 12)),
@@ -566,8 +566,8 @@ class CacheService {
   void _writeToDisk(String key, CacheEntry entry) {
     try {
       _diskCache.put(key, jsonEncode(entry.toJson()));
-    } catch (_) {
-      // Disk write failure is non-fatal
+    } catch (e) {
+      debugPrint('[CacheService] Disk write failed for key=$key: $e');
     }
   }
 
@@ -576,8 +576,8 @@ class CacheService {
       final raw = _diskCache.get(key);
       if (raw == null) return null;
       return CacheEntry.fromJson(jsonDecode(raw) as Map<String, dynamic>);
-    } catch (_) {
-      // Corrupted entry — remove it
+    } catch (e) {
+      debugPrint('[CacheService] Corrupted disk entry for key=$key, removing: $e');
       _diskCache.delete(key);
       return null;
     }
@@ -633,6 +633,7 @@ class CacheService {
         final item = _OfflineQueueItem.fromJson(jsonDecode(raw) as Map<String, dynamic>);
 
         if (item.retries >= _maxOfflineRetries) {
+          debugPrint('[CacheService] Offline queue: permanently dropping ${item.method} ${item.url} after $_maxOfflineRetries retries');
           await _offlineQueue.delete(key);
           continue;
         }
@@ -665,8 +666,8 @@ class CacheService {
           );
           await _offlineQueue.put(key, jsonEncode(updated.toJson()));
         }
-      } catch (_) {
-        // Will retry next time connectivity changes
+      } catch (e) {
+        debugPrint('[CacheService] Offline queue retry error for key=$key: $e');
       }
     }
   }
