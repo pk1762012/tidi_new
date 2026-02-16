@@ -1,26 +1,73 @@
-import 'dart:convert';
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import '../../../service/ApiService.dart';
 
 class PreMarketDialog {
   static Future<void> show(BuildContext context) async {
+    bool dataDialogShown = false;
+
+    // Show loading dialog immediately for instant feedback
+    showDialog(
+      context: context,
+      barrierDismissible: true,
+      builder: (_) => const _PreMarketLoadingDialog(),
+    );
+
     try {
       await ApiService().getCachedPreMarketSummary(
         onData: (data, {required fromCache}) {
           if (data == null) return;
-          showDialog(
-            context: context,
-            barrierDismissible: true,
-            builder: (_) => _PreMarketDialogFrame(data: Map<String, dynamic>.from(data)),
-          );
+          if (!context.mounted) return;
+
+          if (!dataDialogShown) {
+            // First callback — dismiss loading, show data dialog
+            dataDialogShown = true;
+            Navigator.of(context).pop(); // dismiss loading spinner
+            showDialog(
+              context: context,
+              barrierDismissible: true,
+              builder: (_) => _PreMarketDialogFrame(data: Map<String, dynamic>.from(data)),
+            );
+          }
+          // Ignore subsequent callbacks (background revalidation) to prevent duplicate dialogs
         },
       );
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Error: $e")),
-      );
+      debugPrint('[PreMarketDialog] Error: $e');
+      if (context.mounted) {
+        // Dismiss loading dialog if still visible
+        if (!dataDialogShown) {
+          Navigator.of(context).pop();
+        }
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Unable to load pre-market data. Please try again.")),
+        );
+      }
     }
+  }
+}
+
+// ---------------- LOADING ----------------
+class _PreMarketLoadingDialog extends StatelessWidget {
+  const _PreMarketLoadingDialog();
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      backgroundColor: Colors.transparent,
+      elevation: 0,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const CircularProgressIndicator(color: Colors.white70),
+          const SizedBox(height: 16),
+          Text(
+            "Loading pre-market data...",
+            style: TextStyle(color: Colors.white.withOpacity(0.7), fontSize: 14),
+          ),
+        ],
+      ),
+    );
   }
 }
 
@@ -228,15 +275,17 @@ class _PreMarketDialogContent extends StatelessWidget {
                 ),
 
                 // ---------------- Nifty Spot ----------------
+                if (data["nifty_spot"] != null)
                 _glassCard(
                   child: _rowItem(
                     "Nifty Spot",
-                    "${data["nifty_spot"]["last"]}",
-                    "${data["nifty_spot"]["pct_change"]}",
+                    "${data["nifty_spot"]["last"] ?? "-"}",
+                    "${data["nifty_spot"]["pct_change"] ?? "-"}",
                   ),
                 ),
 
                 // ---------------- Global Cues ----------------
+                if (data["global_cues"] is Map) ...[
                 _sectionTitle("Global Cues"),
                 _glassCard(
                   child: Column(
@@ -249,8 +298,10 @@ class _PreMarketDialogContent extends StatelessWidget {
                     }).toList(),
                   ),
                 ),
+                ],
 
                 // ---------------- FX & Commodities ----------------
+                if (data["fx_and_commodities"] is Map) ...[
                 _sectionTitle("FX & Commodities"),
                 _glassCard(
                   child: Column(
@@ -258,7 +309,7 @@ class _PreMarketDialogContent extends StatelessWidget {
                     (data["fx_and_commodities"] as Map).entries.map((e) {
                       final v = e.value;
                       String val = "${v["last"]}";
-                      if (v.containsKey("last_inr")) {
+                      if (v is Map && v.containsKey("last_inr")) {
                         val += "  •  ₹${v["last_inr"]}";
                       }
                       return _rowItem(
@@ -269,8 +320,10 @@ class _PreMarketDialogContent extends StatelessWidget {
                     }).toList(),
                   ),
                 ),
+                ],
 
                 // ---------------- Volatility & Sectors ----------------
+                if (data["volatility_sectors"] is Map) ...[
                 _sectionTitle("Volatility & Sectors"),
                 _glassCard(
                   child: Column(
@@ -284,8 +337,10 @@ class _PreMarketDialogContent extends StatelessWidget {
                     }).toList(),
                   ),
                 ),
+                ],
 
                 // ---------------- Headlines ----------------
+                if (data["headlines"] is List && (data["headlines"] as List).isNotEmpty) ...[
                 _sectionTitle("Top Headlines"),
                 _glassCard(
                   child: Column(
@@ -302,6 +357,7 @@ class _PreMarketDialogContent extends StatelessWidget {
                         .toList(),
                   ),
                 ),
+                ],
 
                 // ---------------- Strategy Tip ----------------
                 _glassCard(

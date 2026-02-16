@@ -155,6 +155,9 @@ class CacheService {
   static const int _maxOfflineRetries = 5;
   static const String _cacheBoxName = 'tidi_cache';
   static const String _offlineQueueBoxName = 'tidi_offline_queue';
+  static const Map<String, String> _syntheticHeaders = {
+    'content-type': 'application/json; charset=utf-8',
+  };
 
   /// In-memory LRU cache.
   final LinkedHashMap<String, CacheEntry> _memoryCache = LinkedHashMap();
@@ -200,7 +203,7 @@ class CacheService {
     'api/user':                        const _TierConfig(tier: CacheTier.semiCritical, memoryTtl: Duration(seconds: 60)),
     'api/admin/stock/recommend/get':   const _TierConfig(tier: CacheTier.semiCritical, memoryTtl: Duration(seconds: 30)),
     'api/portfolio':                   const _TierConfig(tier: CacheTier.semiCritical, memoryTtl: Duration(seconds: 60)),
-    'pre_market_summary':              const _TierConfig(tier: CacheTier.semiCritical, memoryTtl: Duration(seconds: 60)),
+    'pre_market_summary':              const _TierConfig(tier: CacheTier.nonCritical, memoryTtl: Duration(minutes: 5), diskTtl: Duration(hours: 3)),
     'api/stock/search':                const _TierConfig(tier: CacheTier.semiCritical, memoryTtl: Duration(seconds: 30)),
     'api/workshop/register':           const _TierConfig(tier: CacheTier.semiCritical, memoryTtl: Duration(seconds: 30)),
     'api/user/fcm':                    const _TierConfig(tier: CacheTier.semiCritical, memoryTtl: Duration(seconds: 30)),
@@ -337,14 +340,14 @@ class CacheService {
 
     // ── 3. Fresh cache hit — return immediately, skip network ──
     if (cached != null && isFresh) {
-      final syntheticResponse = http.Response(cached.body, cached.statusCode);
+      final syntheticResponse = http.Response(cached.body, cached.statusCode, headers: _syntheticHeaders);
       onData(parser(syntheticResponse), fromCache: true);
       return;
     }
 
     // ── 4. Stale cache hit — return stale, revalidate in background ──
     if (cached != null) {
-      final syntheticResponse = http.Response(cached.body, cached.statusCode);
+      final syntheticResponse = http.Response(cached.body, cached.statusCode, headers: _syntheticHeaders);
       onData(parser(syntheticResponse), fromCache: true);
       _revalidateInBackground(
         key: key,
@@ -360,7 +363,7 @@ class CacheService {
     if (config.tier == CacheTier.nonCritical) {
       final staleDisk = _readFromDisk(key);
       if (staleDisk != null) {
-        final syntheticResponse = http.Response(staleDisk.body, staleDisk.statusCode);
+        final syntheticResponse = http.Response(staleDisk.body, staleDisk.statusCode, headers: _syntheticHeaders);
         onData(parser(syntheticResponse), fromCache: true);
         _revalidateInBackground(
           key: key,
@@ -394,7 +397,7 @@ class CacheService {
       }
     } catch (e) {
       if (e is OfflineException || e is HttpException) rethrow;
-      throw OfflineException('Network error and no cached data for $key');
+      throw OfflineException('Network error and no cached data for $key: $e');
     }
   }
 
@@ -446,13 +449,13 @@ class CacheService {
 
     // 3. Fresh hit — return synthetic response
     if (cached != null && isFresh) {
-      return http.Response(cached.body, cached.statusCode);
+      return http.Response(cached.body, cached.statusCode, headers: _syntheticHeaders);
     }
 
     // 4. Stale hit — return stale, revalidate in background
     if (cached != null) {
       _revalidateGetInBackground(key, fetcher, config);
-      return http.Response(cached.body, cached.statusCode);
+      return http.Response(cached.body, cached.statusCode, headers: _syntheticHeaders);
     }
 
     // 4b. Stale disk data for non-critical
@@ -460,7 +463,7 @@ class CacheService {
       final staleDisk = _readFromDisk(key);
       if (staleDisk != null) {
         _revalidateGetInBackground(key, fetcher, config);
-        return http.Response(staleDisk.body, staleDisk.statusCode);
+        return http.Response(staleDisk.body, staleDisk.statusCode, headers: _syntheticHeaders);
       }
     }
 
