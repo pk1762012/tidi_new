@@ -3,8 +3,10 @@ import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:http/http.dart' as http;
 import 'package:web_socket_channel/io.dart';
 import 'package:tidistockmobileapp/service/ApiService.dart';
+import 'package:tidistockmobileapp/service/DataRepository.dart';
 import 'MarketIndexBar.dart';
 
 class MarketDataWidget extends StatefulWidget {
@@ -109,7 +111,7 @@ class MarketDataWidgetState extends State<MarketDataWidget>
         final bankNiftyResponse = results[1];
 
         if (niftyResponse.statusCode == 200) {
-          final body = json.decode(niftyResponse.body);
+          final body = await DataRepository.parseJsonMap(niftyResponse.body);
           final data = body['data'] ?? body;
           final cmp = (data['cmp'] ?? data['last'] ?? data['ltp'] ?? 0).toDouble();
           final prevClose = (data['prev_close'] ?? data['previousClose'] ?? cmp).toDouble();
@@ -121,7 +123,7 @@ class MarketDataWidgetState extends State<MarketDataWidget>
         }
 
         if (bankNiftyResponse.statusCode == 200) {
-          final body = json.decode(bankNiftyResponse.body);
+          final body = await DataRepository.parseJsonMap(bankNiftyResponse.body);
           final data = body['data'] ?? body;
           final cmp = (data['cmp'] ?? data['last'] ?? data['ltp'] ?? 0).toDouble();
           final prevClose = (data['prev_close'] ?? data['previousClose'] ?? cmp).toDouble();
@@ -135,15 +137,23 @@ class MarketDataWidgetState extends State<MarketDataWidget>
         print("Primary index/quote failed: $e");
       }
 
-      // Fallback: use pre_market_summary + option-chain PCR individually
+      // Fallback: use pre_market_summary + option-chain PCR in parallel
       if (!gotData) {
-        // Try pre_market_summary for Nifty
+        final fallbackResults = await Future.wait([
+          apiService.getPreMarketSummary().catchError((_) => http.Response('{}', 0)),
+          apiService.getOptionPulsePCR('NIFTY').catchError((_) => http.Response('{}', 0)),
+          apiService.getOptionPulsePCR('BANKNIFTY').catchError((_) => http.Response('{}', 0)),
+        ]).timeout(const Duration(seconds: 10), onTimeout: () => [
+          http.Response('{}', 0),
+          http.Response('{}', 0),
+          http.Response('{}', 0),
+        ]);
+
+        // Pre-market summary for Nifty
         try {
-          final summaryResponse = await apiService
-              .getPreMarketSummary()
-              .timeout(const Duration(seconds: 15));
+          final summaryResponse = fallbackResults[0];
           if (summaryResponse.statusCode == 200) {
-            final body = json.decode(summaryResponse.body);
+            final body = await DataRepository.parseJsonMap(summaryResponse.body);
             final data = body['data'];
             if (data != null) {
               final niftySpot = data['nifty_spot'] ?? data['gift_nifty']?['data'];
@@ -164,13 +174,11 @@ class MarketDataWidgetState extends State<MarketDataWidget>
           print("Pre-market summary fallback failed: $e");
         }
 
-        // Try option-chain PCR for more accurate Nifty underlying value
+        // Nifty PCR for more accurate underlying value
         try {
-          final niftyPcrResponse = await apiService
-              .getOptionPulsePCR('NIFTY')
-              .timeout(const Duration(seconds: 15));
+          final niftyPcrResponse = fallbackResults[1];
           if (niftyPcrResponse.statusCode == 200) {
-            final body = json.decode(niftyPcrResponse.body);
+            final body = await DataRepository.parseJsonMap(niftyPcrResponse.body);
             final pcrData = body['data'];
             if (pcrData != null) {
               final uv = (pcrData['underlyingValue'] ?? 0).toDouble();
@@ -184,13 +192,11 @@ class MarketDataWidgetState extends State<MarketDataWidget>
           print("Nifty PCR fallback failed: $e");
         }
 
-        // Try option-chain PCR for Bank Nifty
+        // BankNifty PCR
         try {
-          final bankNiftyPcrResponse = await apiService
-              .getOptionPulsePCR('BANKNIFTY')
-              .timeout(const Duration(seconds: 15));
+          final bankNiftyPcrResponse = fallbackResults[2];
           if (bankNiftyPcrResponse.statusCode == 200) {
-            final body = json.decode(bankNiftyPcrResponse.body);
+            final body = await DataRepository.parseJsonMap(bankNiftyPcrResponse.body);
             final pcrData = body['data'];
             if (pcrData != null) {
               final uv = (pcrData['underlyingValue'] ?? 0).toDouble();

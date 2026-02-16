@@ -53,8 +53,7 @@ class MarketPageState extends State<MarketPage> with TickerProviderStateMixin, W
   List<dynamic> stockData = [];
 
   final int _maxPoints = 20;
-  final int _updateIntervalMs = 500;
-  final Map<int, Timer> _chartTimers = {};
+  Timer? _chartTimer;
 
   // Subscription
   bool isSubscribed = false;
@@ -124,17 +123,8 @@ class MarketPageState extends State<MarketPage> with TickerProviderStateMixin, W
             (index) => FlSpot(index.toDouble(), 10 + _random.nextDouble() * 5),
       );
       _chartDataNotifiers[i] = ValueNotifier<List<FlSpot>>(initialData);
-
-      _chartTimers[i] =
-          Timer.periodic(Duration(milliseconds: _updateIntervalMs), (_) {
-            final currentData = List<FlSpot>.from(_chartDataNotifiers[i]!.value);
-            final lastX = currentData.isNotEmpty ? currentData.last.x : 0;
-            final newY = 10 + _random.nextDouble() * 5;
-            currentData.add(FlSpot(lastX + 1, newY));
-            if (currentData.length > _maxPoints) currentData.removeAt(0);
-            _chartDataNotifiers[i]!.value = currentData;
-          });
     }
+    _startChartTimer();
 
     _bannerTimer = Timer.periodic(const Duration(seconds: 4), (timer) {
       if (!_bannerController.hasClients) return;
@@ -184,16 +174,21 @@ class MarketPageState extends State<MarketPage> with TickerProviderStateMixin, W
   }
 
   Future<void> _verifyDeviceFcm(BuildContext context) async {
-    final currentFcm = await ApiService.getFcmTokenSafely();
-    if (currentFcm == null) return;
+    try {
+      final currentFcm = await ApiService.getFcmTokenSafely();
+      if (currentFcm == null) return;
 
-    final response = await ApiService().getSavedDeviceFcm();
-    if (response.statusCode != 200) return;
+      final response = await ApiService().getSavedDeviceFcm()
+          .timeout(const Duration(seconds: 15));
+      if (response.statusCode != 200) return;
 
-    final savedFcm = jsonDecode(response.body)['FCM'];
+      final savedFcm = jsonDecode(response.body)['FCM'];
 
-    if (savedFcm != currentFcm) {
-      await logout();
+      if (savedFcm != currentFcm) {
+        await logout();
+      }
+    } catch (e) {
+      debugPrint('[MarketPage] FCM verification skipped (network error): $e');
     }
   }
 
@@ -213,16 +208,14 @@ class MarketPageState extends State<MarketPage> with TickerProviderStateMixin, W
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.paused || state == AppLifecycleState.inactive) {
-      // Cancel chart timers and banner timer when app goes to background
-      for (var timer in _chartTimers.values) {
-        timer.cancel();
-      }
-      _chartTimers.clear();
+      // Cancel chart timer and banner timer when app goes to background
+      _chartTimer?.cancel();
+      _chartTimer = null;
       _bannerTimer?.cancel();
       _bannerTimer = null;
     } else if (state == AppLifecycleState.resumed) {
-      // Restart chart timers and banner timer when app returns
-      _restartChartTimers();
+      // Restart chart timer and banner timer when app returns
+      _startChartTimer();
       _bannerTimer ??= Timer.periodic(const Duration(seconds: 4), (timer) {
         if (!_bannerController.hasClients) return;
         _currentBanner = (_currentBanner + 1) % _banners.length;
@@ -235,20 +228,20 @@ class MarketPageState extends State<MarketPage> with TickerProviderStateMixin, W
     }
   }
 
-  void _restartChartTimers() {
-    for (int i = 0; i < 4; i++) {
-      if (!_chartTimers.containsKey(i) || !_chartTimers[i]!.isActive) {
-        _chartTimers[i] =
-            Timer.periodic(Duration(milliseconds: _updateIntervalMs), (_) {
-              final currentData = List<FlSpot>.from(_chartDataNotifiers[i]!.value);
-              final lastX = currentData.isNotEmpty ? currentData.last.x : 0;
-              final newY = 10 + _random.nextDouble() * 5;
-              currentData.add(FlSpot(lastX + 1, newY));
-              if (currentData.length > _maxPoints) currentData.removeAt(0);
-              _chartDataNotifiers[i]!.value = currentData;
-            });
+  void _startChartTimer() {
+    if (_chartTimer != null && _chartTimer!.isActive) return;
+    _chartTimer = Timer.periodic(const Duration(milliseconds: 1000), (_) {
+      for (int i = 0; i < 4; i++) {
+        final notifier = _chartDataNotifiers[i];
+        if (notifier == null) continue;
+        final currentData = List<FlSpot>.from(notifier.value);
+        final lastX = currentData.isNotEmpty ? currentData.last.x : 0;
+        final newY = 10 + _random.nextDouble() * 5;
+        currentData.add(FlSpot(lastX + 1, newY));
+        if (currentData.length > _maxPoints) currentData.removeAt(0);
+        notifier.value = currentData;
       }
-    }
+    });
   }
 
   @override
@@ -256,9 +249,7 @@ class MarketPageState extends State<MarketPage> with TickerProviderStateMixin, W
     WidgetsBinding.instance.removeObserver(this);
     _pageSlideController.dispose();
     _iconsController.dispose();
-    for (var timer in _chartTimers.values) {
-      timer.cancel();
-    }
+    _chartTimer?.cancel();
     for (var notifier in _chartDataNotifiers.values) {
       notifier.dispose();
     }

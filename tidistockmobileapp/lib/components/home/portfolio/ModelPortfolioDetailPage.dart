@@ -1,8 +1,7 @@
-import 'dart:convert';
-
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:tidistockmobileapp/service/DataRepository.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:intl/intl.dart';
 import 'package:share_plus/share_plus.dart';
@@ -42,6 +41,11 @@ class _ModelPortfolioDetailPageState extends State<ModelPortfolioDetailPage>
   bool _loadingPerformance = true;
   String _selectedIndex = 'Nifty 50';
 
+  // Cached sorted stock composition (recomputed when portfolio changes)
+  List<PortfolioStock> _sortedStocks = [];
+  double _totalWeight = 0;
+  double _maxPct = 1;
+
   static const Map<String, String> _indexSymbols = {
     'Nifty 50': '^NSEI',
     'Midcap': 'NIFTY_MID_SELECT.NS',
@@ -52,6 +56,7 @@ class _ModelPortfolioDetailPageState extends State<ModelPortfolioDetailPage>
   void initState() {
     super.initState();
     portfolio = widget.portfolio;
+    _updateSortedStocks();
     _tabController = TabController(length: 3, vsync: this);
     _tabController.addListener(() {
       if (_tabController.indexIsChanging) return;
@@ -68,8 +73,17 @@ class _ModelPortfolioDetailPageState extends State<ModelPortfolioDetailPage>
     super.dispose();
   }
 
+  void _updateSortedStocks() {
+    _sortedStocks = List<PortfolioStock>.from(portfolio.stocks)
+      ..sort((a, b) => b.weight.compareTo(a.weight));
+    _totalWeight = _sortedStocks.fold(0.0, (sum, s) => sum + s.weight);
+    _maxPct = _totalWeight > 0 && _sortedStocks.isNotEmpty
+        ? (_sortedStocks.first.weight / _totalWeight * 100)
+        : 1.0;
+  }
+
   Future<void> _loadUserEmail() async {
-    final email = await const FlutterSecureStorage().read(key: 'email');
+    final email = await const FlutterSecureStorage().read(key: 'user_email');
     if (mounted) setState(() => userEmail = email);
   }
 
@@ -84,6 +98,7 @@ class _ModelPortfolioDetailPageState extends State<ModelPortfolioDetailPage>
             final strategyData = ModelPortfolio.fromJson(Map<String, dynamic>.from(raw));
             setState(() {
               portfolio = portfolio.mergeStrategyData(strategyData);
+              _updateSortedStocks();
               _loadingStrategy = false;
             });
           } else {
@@ -104,7 +119,7 @@ class _ModelPortfolioDetailPageState extends State<ModelPortfolioDetailPage>
         modelName: portfolio.modelName,
       );
       if (response.statusCode == 200) {
-        final body = jsonDecode(response.body);
+        final body = await DataRepository.parseJsonMap(response.body);
         final data = body['data'];
         if (data is List && data.isNotEmpty) {
           if (mounted) {
@@ -129,25 +144,31 @@ class _ModelPortfolioDetailPageState extends State<ModelPortfolioDetailPage>
     final endDate = _performancePoints.last['date']?.toString();
     if (startDate == null || endDate == null) return;
 
-    for (final entry in _indexSymbols.entries) {
-      try {
-        final response = await AqApiService.instance.getIndexData(
-          symbol: entry.value,
-          startDate: startDate,
-          endDate: endDate,
-        );
-        if (response.statusCode == 200) {
-          final body = jsonDecode(response.body);
-          final data = body['data'] ?? body;
-          if (data is List && data.isNotEmpty && mounted) {
-            setState(() {
-              _indexData[entry.key] = List<Map<String, dynamic>>.from(data);
-            });
+    final results = <String, List<Map<String, dynamic>>>{};
+    await Future.wait(
+      _indexSymbols.entries.map((entry) async {
+        try {
+          final response = await AqApiService.instance.getIndexData(
+            symbol: entry.value,
+            startDate: startDate,
+            endDate: endDate,
+          );
+          if (response.statusCode == 200) {
+            final body = await DataRepository.parseJsonMap(response.body);
+            final data = body['data'] ?? body;
+            if (data is List && data.isNotEmpty) {
+              results[entry.key] = List<Map<String, dynamic>>.from(data);
+            }
           }
+        } catch (e) {
+          debugPrint('[DetailPage] _fetchIndexData ${entry.key} error: $e');
         }
-      } catch (e) {
-        debugPrint('[DetailPage] _fetchIndexData ${entry.key} error: $e');
-      }
+      }),
+    );
+    if (mounted && results.isNotEmpty) {
+      setState(() {
+        _indexData.addAll(results);
+      });
     }
   }
 
@@ -223,6 +244,8 @@ class _ModelPortfolioDetailPageState extends State<ModelPortfolioDetailPage>
                 width: 60,
                 height: 60,
                 fit: BoxFit.cover,
+                cacheWidth: 120,
+                cacheHeight: 120,
                 errorBuilder: (_, __, ___) => _placeholderIcon(),
               ),
             )
@@ -390,12 +413,6 @@ class _ModelPortfolioDetailPageState extends State<ModelPortfolioDetailPage>
       return const SizedBox.shrink();
     }
 
-    final sorted = List<PortfolioStock>.from(portfolio.stocks)
-      ..sort((a, b) => b.weight.compareTo(a.weight));
-
-    final totalWeight = sorted.fold(0.0, (sum, s) => sum + s.weight);
-    final maxPct = totalWeight > 0 ? (sorted.first.weight / totalWeight * 100) : 1.0;
-
     return _section(
       "Stock Composition",
       Column(
@@ -416,9 +433,9 @@ class _ModelPortfolioDetailPageState extends State<ModelPortfolioDetailPage>
             ),
           ),
           const Divider(height: 1),
-          ...List.generate(sorted.length, (index) {
-            final stock = sorted[index];
-            final pct = totalWeight > 0 ? (stock.weight / totalWeight * 100) : 0.0;
+          ...List.generate(_sortedStocks.length, (index) {
+            final stock = _sortedStocks[index];
+            final pct = _totalWeight > 0 ? (stock.weight / _totalWeight * 100) : 0.0;
             final isEven = index % 2 == 0;
             return Container(
               color: isEven ? Colors.grey.shade50 : Colors.white,
@@ -451,7 +468,7 @@ class _ModelPortfolioDetailPageState extends State<ModelPortfolioDetailPage>
                   Align(
                     alignment: Alignment.centerLeft,
                     child: FractionallySizedBox(
-                      widthFactor: maxPct > 0 ? (pct / maxPct).clamp(0.0, 1.0) : 0,
+                      widthFactor: _maxPct > 0 ? (pct / _maxPct).clamp(0.0, 1.0) : 0,
                       child: Container(
                         height: 3,
                         decoration: BoxDecoration(

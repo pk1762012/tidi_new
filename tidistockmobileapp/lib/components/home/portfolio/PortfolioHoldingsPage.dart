@@ -1,9 +1,9 @@
-import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:tidistockmobileapp/models/model_portfolio.dart';
 import 'package:tidistockmobileapp/models/portfolio_holding.dart';
 import 'package:tidistockmobileapp/service/AqApiService.dart';
+import 'package:tidistockmobileapp/service/DataRepository.dart';
 import 'package:tidistockmobileapp/widgets/customScaffold.dart';
 
 import 'RebalanceReviewPage.dart';
@@ -50,7 +50,7 @@ class _PortfolioHoldingsPageState extends State<PortfolioHoldingsPage> {
       );
 
       if (brokersResp.statusCode == 200) {
-        final bData = jsonDecode(brokersResp.body);
+        final bData = await DataRepository.parseJsonMap(brokersResp.body);
         final brokerList = bData['data']?['brokers'] ?? [];
         if (brokerList is List && brokerList.isNotEmpty) {
           availableBrokers = ['ALL', ...brokerList.map((b) => b['broker'].toString())];
@@ -65,7 +65,7 @@ class _PortfolioHoldingsPageState extends State<PortfolioHoldingsPage> {
       );
 
       if (response.statusCode == 200 && mounted) {
-        final data = jsonDecode(response.body);
+        final data = await DataRepository.parseJsonMap(response.body);
         final subData = data['data'];
 
         if (subData != null) {

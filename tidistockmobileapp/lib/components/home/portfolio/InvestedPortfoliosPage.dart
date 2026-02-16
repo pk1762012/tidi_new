@@ -1,6 +1,7 @@
-import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:tidistockmobileapp/service/DataRepository.dart';
 import 'package:intl/intl.dart';
 import 'package:tidistockmobileapp/models/model_portfolio.dart';
 import 'package:tidistockmobileapp/service/AqApiService.dart';
@@ -45,10 +46,10 @@ class _InvestedPortfoliosPageState extends State<InvestedPortfoliosPage> {
             loading = false;
             error = null;
           });
-          // Fetch summaries for each portfolio
-          for (final p in subscribedPortfolios) {
-            _fetchPortfolioSummary(p.modelName);
-          }
+          // Fetch summaries for all portfolios in parallel
+          Future.wait(
+            subscribedPortfolios.map((p) => _fetchPortfolioSummary(p.modelName)),
+          );
         },
       );
     } catch (e) {
@@ -68,7 +69,7 @@ class _InvestedPortfoliosPageState extends State<InvestedPortfoliosPage> {
         modelName: modelName,
       );
       if (response.statusCode == 200 && mounted) {
-        final data = jsonDecode(response.body);
+        final data = await DataRepository.parseJsonMap(response.body);
         final subData = data['data'];
         if (subData != null) {
           double invested = 0;
@@ -103,7 +104,9 @@ class _InvestedPortfoliosPageState extends State<InvestedPortfoliosPage> {
           });
         }
       }
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('[InvestedPortfolios] Summary fetch failed for $modelName: $e');
+    }
   }
 
   @override
