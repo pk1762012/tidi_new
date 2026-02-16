@@ -1,4 +1,6 @@
-# Secrets & credentials
+
+
+#  flutter emulators --launch Pixel_API_34 && sleep 15 && flutter run                                                                                        Secrets & credentials
 **/firebase-key.json
 **/firebase-service-account.json
 **/*-key.json

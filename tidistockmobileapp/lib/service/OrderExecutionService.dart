@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:tidistockmobileapp/models/order_result.dart';
 import 'package:tidistockmobileapp/service/AqApiService.dart';
 
@@ -26,9 +27,18 @@ class OrderExecutionService {
       throw Exception('Failed to fetch broker credentials');
     }
 
-    final brokerData = jsonDecode(brokerResp.body);
+    dynamic brokerData;
+    try {
+      brokerData = jsonDecode(brokerResp.body);
+    } catch (e) {
+      debugPrint('[OrderExecution] Failed to parse broker response: $e');
+      throw Exception('Invalid broker response from server');
+    }
+    if (brokerData is! Map) {
+      throw Exception('Unexpected broker response format');
+    }
     final brokers = brokerData['data'] ?? brokerData['connected_brokers'] ?? [];
-    if ((brokers as List).isEmpty) {
+    if (brokers is! List || brokers.isEmpty) {
       throw Exception('No connected broker found');
     }
 

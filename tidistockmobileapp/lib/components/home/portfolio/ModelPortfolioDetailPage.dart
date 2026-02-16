@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -9,10 +11,14 @@ import 'package:tidistockmobileapp/models/model_portfolio.dart';
 import 'package:tidistockmobileapp/models/portfolio_stock.dart';
 import 'package:tidistockmobileapp/models/rebalance_entry.dart';
 import 'package:tidistockmobileapp/service/AqApiService.dart';
+import 'package:tidistockmobileapp/models/portfolio_holding.dart';
 import 'package:tidistockmobileapp/widgets/customScaffold.dart';
+import 'package:url_launcher/url_launcher.dart';
 
-import 'InvestedPortfoliosPage.dart';
-import 'PlanSelectionSheet.dart';
+import 'InvestInPlanSheet.dart';
+import 'InvestmentModal.dart';
+import 'PortfolioHoldingsPage.dart';
+import 'RebalanceReviewPage.dart';
 
 class ModelPortfolioDetailPage extends StatefulWidget {
   final ModelPortfolio portfolio;
@@ -41,10 +47,22 @@ class _ModelPortfolioDetailPageState extends State<ModelPortfolioDetailPage>
   bool _loadingPerformance = true;
   String _selectedIndex = 'Nifty 50';
 
+  // Subscription state
+  bool _isSubscribed = false;
+
   // Cached sorted stock composition (recomputed when portfolio changes)
   List<PortfolioStock> _sortedStocks = [];
   double _totalWeight = 0;
   double _maxPct = 1;
+
+  // Subscribed user data
+  List<PortfolioHolding> _holdings = [];
+  bool _loadingHoldings = true;
+  String? _selectedBroker;
+  List<String> _availableBrokers = ['ALL'];
+  double _totalInvested = 0;
+  double _totalCurrent = 0;
+  bool _hasPendingRebalance = false;
 
   static const Map<String, String> _indexSymbols = {
     'Nifty 50': '^NSEI',
@@ -84,7 +102,150 @@ class _ModelPortfolioDetailPageState extends State<ModelPortfolioDetailPage>
 
   Future<void> _loadUserEmail() async {
     final email = await const FlutterSecureStorage().read(key: 'user_email');
+    debugPrint('[DetailPage] loaded email: $email');
     if (mounted) setState(() => userEmail = email);
+    await _checkSubscriptionStatus();
+  }
+
+  Future<void> _checkSubscriptionStatus() async {
+    debugPrint('[DetailPage] _checkSubscriptionStatus called, email=$userEmail');
+    if (userEmail == null || userEmail!.isEmpty) {
+      debugPrint('[DetailPage] No email, skipping subscription check');
+      return;
+    }
+    try {
+      final response = await AqApiService.instance.getSubscribedStrategies(userEmail!);
+      debugPrint('[DetailPage] subscriptionCheck statusCode=${response.statusCode}');
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        final body = json.decode(response.body);
+        final List<dynamic> strategies = body is List
+            ? body
+            : (body is Map
+                ? (body['subscribedPortfolios'] ?? body['data'] ?? body['strategies'] ?? [])
+                : []);
+        debugPrint('[DetailPage] strategies count=${strategies.length}, portfolio.modelName=${portfolio.modelName}, portfolio.id=${portfolio.id}, portfolio.strategyId=${portfolio.strategyId}');
+        bool found = false;
+        for (final s in strategies) {
+          if (s is Map) {
+            final id = s['_id']?.toString();
+            final modelName = (s['model_name']?.toString() ?? '').toLowerCase().trim();
+            debugPrint('[DetailPage] checking strategy: id=$id, model_name=$modelName');
+            if (id == portfolio.strategyId ||
+                id == portfolio.id ||
+                modelName == portfolio.modelName.toLowerCase().trim()) {
+              found = true;
+              break;
+            }
+          }
+        }
+        debugPrint('[DetailPage] subscriptionCheck: found=$found for ${portfolio.modelName}');
+        if (mounted) setState(() => _isSubscribed = found);
+        if (found) _fetchSubscribedData();
+      }
+    } catch (e) {
+      debugPrint('[DetailPage] _checkSubscriptionStatus error: $e');
+    }
+  }
+
+  Future<void> _fetchSubscribedData() async {
+    await Future.wait([
+      _fetchHoldings(),
+      Future(() => _checkPendingRebalance()),
+    ]);
+  }
+
+  Future<void> _fetchHoldings() async {
+    if (userEmail == null) {
+      if (mounted) setState(() => _loadingHoldings = false);
+      return;
+    }
+    try {
+      final email = userEmail!;
+      final modelName = portfolio.modelName;
+
+      final brokersResp = await AqApiService.instance.getAvailableBrokers(
+        email: email,
+        modelName: modelName,
+      );
+      if (brokersResp.statusCode == 200) {
+        final bData = await DataRepository.parseJsonMap(brokersResp.body);
+        final brokerList = bData['data']?['brokers'] ?? [];
+        if (brokerList is List && brokerList.isNotEmpty) {
+          _availableBrokers = ['ALL', ...brokerList.map((b) => b['broker'].toString())];
+        }
+      }
+
+      final response = await AqApiService.instance.getSubscriptionRawAmount(
+        email: email,
+        modelName: modelName,
+        userBroker: _selectedBroker == 'ALL' ? null : _selectedBroker,
+      );
+
+      if (response.statusCode == 200 && mounted) {
+        final data = await DataRepository.parseJsonMap(response.body);
+        final subData = data['data'];
+        if (subData != null) {
+          _parseHoldings(subData);
+        }
+      }
+      if (mounted) setState(() => _loadingHoldings = false);
+    } catch (e) {
+      debugPrint('[DetailPage] _fetchHoldings error: $e');
+      if (mounted) setState(() => _loadingHoldings = false);
+    }
+  }
+
+  void _parseHoldings(Map<String, dynamic> subData) {
+    final userNetPf = subData['user_net_pf_model'] ?? [];
+    final List<PortfolioHolding> parsed = [];
+
+    if (userNetPf is List && userNetPf.isNotEmpty) {
+      final latest = userNetPf.last;
+      List<dynamic> stockList = [];
+      if (latest is List) {
+        stockList = latest;
+      } else if (latest is Map) {
+        stockList = latest['stocks'] ?? latest['holdings'] ?? [];
+      }
+      for (final stock in stockList) {
+        if (stock is Map<String, dynamic>) {
+          parsed.add(PortfolioHolding.fromJson(stock));
+        }
+      }
+    }
+
+    // Parse totals from subscription_amount_raw
+    double invested = 0;
+    double current = 0;
+    final rawAmounts = subData['subscription_amount_raw'] ?? [];
+    if (rawAmounts is List && rawAmounts.isNotEmpty) {
+      final latest = rawAmounts.last;
+      if (latest is Map) {
+        invested = (latest['totalInvestment'] ?? latest['invested'] ?? 0).toDouble();
+        current = (latest['currentValue'] ?? latest['current'] ?? invested).toDouble();
+      }
+    }
+
+    // Fallback: compute from holdings if raw amounts unavailable
+    if (invested == 0 && parsed.isNotEmpty) {
+      for (final h in parsed) {
+        invested += h.investedValue;
+        current += h.currentValue;
+      }
+    }
+
+    setState(() {
+      _holdings = parsed;
+      _totalInvested = invested;
+      _totalCurrent = current;
+    });
+  }
+
+  void _checkPendingRebalance() {
+    if (portfolio.rebalanceHistory.isNotEmpty && userEmail != null) {
+      final pending = portfolio.rebalanceHistory.last.hasPendingExecution(userEmail!);
+      if (mounted) setState(() => _hasPendingRebalance = pending);
+    }
   }
 
   Future<void> _refreshDetails() async {
@@ -186,19 +347,9 @@ class _ModelPortfolioDetailPageState extends State<ModelPortfolioDetailPage>
               onRefresh: _refreshDetails,
               child: ListView(
                 padding: const EdgeInsets.fromLTRB(16, 8, 16, 100),
-                children: [
-                  _header(),
-                  if (portfolio.overView != null && portfolio.overView!.isNotEmpty)
-                    _overviewSection(),
-                  const SizedBox(height: 16),
-                  _statsGrid(),
-                  const SizedBox(height: 16),
-                  _stockComposition(),
-                  const SizedBox(height: 16),
-                  _tabBar(),
-                  const SizedBox(height: 12),
-                  _tabContent(),
-                ],
+                children: _isSubscribed && userEmail != null
+                    ? _subscribedViewChildren()
+                    : _unsubscribedViewChildren(),
               ),
             ),
           ),
@@ -206,6 +357,36 @@ class _ModelPortfolioDetailPageState extends State<ModelPortfolioDetailPage>
         ],
       ),
     );
+  }
+
+  List<Widget> _unsubscribedViewChildren() {
+    return [
+      _header(),
+      if (portfolio.overView != null && portfolio.overView!.isNotEmpty)
+        _overviewSection(),
+      const SizedBox(height: 16),
+      _statsGrid(),
+      const SizedBox(height: 16),
+      _stockComposition(),
+      const SizedBox(height: 16),
+      _tabBar(),
+      const SizedBox(height: 12),
+      _tabContent(),
+    ];
+  }
+
+  List<Widget> _subscribedViewChildren() {
+    return [
+      _subscribedHeader(),
+      const SizedBox(height: 16),
+      _subscribedStatsGrid(),
+      const SizedBox(height: 16),
+      _rebalanceInfoSection(),
+      if (_hasPendingRebalance) _rebalanceBanner(),
+      _tabBar(),
+      const SizedBox(height: 12),
+      _tabContent(),
+    ];
   }
 
   Color _riskColor(String? risk) {
@@ -217,6 +398,238 @@ class _ModelPortfolioDetailPageState extends State<ModelPortfolioDetailPage>
       default:
         return Colors.green.shade400;
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Subscribed Header
+  // ---------------------------------------------------------------------------
+
+  Widget _subscribedHeader() {
+    final riskColor = _riskColor(portfolio.riskProfile);
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(16),
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            riskColor.withOpacity(0.08),
+            riskColor.withOpacity(0.03),
+          ],
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              if (portfolio.image != null && portfolio.image!.isNotEmpty)
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(14),
+                  child: Image.network(
+                    portfolio.image!,
+                    width: 60,
+                    height: 60,
+                    fit: BoxFit.cover,
+                    cacheWidth: 120,
+                    cacheHeight: 120,
+                    errorBuilder: (_, __, ___) => _placeholderIcon(),
+                  ),
+                )
+              else
+                _placeholderIcon(),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      portfolio.modelName,
+                      style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w700),
+                    ),
+                    const SizedBox(height: 6),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 6,
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+                          decoration: BoxDecoration(
+                            color: Colors.green.shade50,
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Text(
+                            "Subscribed",
+                            style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Colors.green.shade700),
+                          ),
+                        ),
+                        if (portfolio.riskProfile != null && portfolio.riskProfile!.trim().isNotEmpty)
+                          _riskBadge(portfolio.riskProfile!),
+                      ],
+                    ),
+                    if (portfolio.advisor.isNotEmpty)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 4),
+                        child: Text(
+                          "by ${portfolio.advisor}",
+                          style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+              IconButton(
+                onPressed: _sharePortfolio,
+                icon: const Icon(Icons.share_rounded),
+                style: IconButton.styleFrom(
+                  backgroundColor: Colors.grey.shade100,
+                  foregroundColor: Colors.grey.shade700,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => InvestmentModal(
+                          portfolio: portfolio,
+                          email: userEmail!,
+                        ),
+                      ),
+                    );
+                  },
+                  icon: const Icon(Icons.add_circle_outline, size: 18),
+                  label: const Text("Invest More"),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: const Color(0xFF1565C0),
+                    side: const BorderSide(color: Color(0xFF1565C0)),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                    padding: const EdgeInsets.symmetric(vertical: 10),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => PortfolioHoldingsPage(
+                          portfolio: portfolio,
+                          email: userEmail!,
+                        ),
+                      ),
+                    );
+                  },
+                  icon: const Icon(Icons.account_balance_wallet_outlined, size: 18),
+                  label: const Text("View Holdings"),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: const Color(0xFF2E7D32),
+                    side: const BorderSide(color: Color(0xFF2E7D32)),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                    padding: const EdgeInsets.symmetric(vertical: 10),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Subscribed Stats Grid
+  // ---------------------------------------------------------------------------
+
+  Widget _subscribedStatsGrid() {
+    final returns = _totalInvested > 0
+        ? ((_totalCurrent - _totalInvested) / _totalInvested * 100)
+        : 0.0;
+    final isPositive = returns >= 0;
+    final fmt = NumberFormat('#,##,###');
+
+    final perf = portfolio.performanceData;
+    final cagrStr = perf?.cagr != null ? '${perf!.cagr!.toStringAsFixed(1)}%' : 'N/A';
+    final sharpeStr = perf?.sharpeRatio != null ? perf!.sharpeRatio!.toStringAsFixed(2) : 'N/A';
+
+    return SizedBox(
+      height: 90,
+      child: ListView(
+        scrollDirection: Axis.horizontal,
+        children: [
+          _statCard("Invested", "\u20B9${fmt.format(_totalInvested.round())}",
+              Icons.account_balance_wallet, Colors.blue),
+          const SizedBox(width: 10),
+          _statCard("Current", "\u20B9${fmt.format(_totalCurrent.round())}",
+              Icons.trending_up, Colors.teal),
+          const SizedBox(width: 10),
+          _statCard("Returns", "${isPositive ? '+' : ''}${returns.toStringAsFixed(1)}%",
+              Icons.show_chart, isPositive ? Colors.green : Colors.red),
+          const SizedBox(width: 10),
+          _statCard("CAGR", cagrStr, Icons.timeline, Colors.purple),
+          const SizedBox(width: 10),
+          _statCard("Sharpe", sharpeStr, Icons.analytics, Colors.orange),
+        ],
+      ),
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Rebalance Banner (for subscribed view)
+  // ---------------------------------------------------------------------------
+
+  Widget _rebalanceBanner() {
+    return GestureDetector(
+      onTap: () {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => RebalanceReviewPage(
+              portfolio: portfolio,
+              email: userEmail!,
+            ),
+          ),
+        );
+      },
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 16),
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: Colors.orange.shade50,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: Colors.orange.shade200),
+        ),
+        child: Row(
+          children: [
+            Icon(Icons.sync, color: Colors.orange.shade700, size: 22),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text("Rebalance Available",
+                      style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700,
+                          color: Colors.orange.shade800)),
+                  Text("Review and execute the latest changes.",
+                      style: TextStyle(fontSize: 12, color: Colors.orange.shade600)),
+                ],
+              ),
+            ),
+            Icon(Icons.arrow_forward_ios_rounded,
+                size: 14, color: Colors.orange.shade400),
+          ],
+        ),
+      ),
+    );
   }
 
   Widget _header() {
@@ -517,16 +930,34 @@ class _ModelPortfolioDetailPageState extends State<ModelPortfolioDetailPage>
         labelStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
         unselectedLabelStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
         dividerColor: Colors.transparent,
-        tabs: const [
-          Tab(text: "Distribution"),
-          Tab(text: "Why this Strategy"),
-          Tab(text: "Methodology"),
-        ],
+        tabs: _isSubscribed
+            ? const [
+                Tab(text: "Distribution"),
+                Tab(text: "My Holdings"),
+                Tab(text: "Research"),
+              ]
+            : const [
+                Tab(text: "Distribution"),
+                Tab(text: "Why this Strategy"),
+                Tab(text: "Methodology"),
+              ],
       ),
     );
   }
 
   Widget _tabContent() {
+    if (_isSubscribed) {
+      switch (_selectedTabIndex) {
+        case 0:
+          return _subscribedDistributionTab();
+        case 1:
+          return _myHoldingsTab();
+        case 2:
+          return _researchReportsTab();
+        default:
+          return const SizedBox.shrink();
+      }
+    }
     switch (_selectedTabIndex) {
       case 0:
         return _distributionTab();
@@ -553,6 +984,463 @@ class _ModelPortfolioDetailPageState extends State<ModelPortfolioDetailPage>
         if (portfolio.performanceData != null)
           _performanceMetricsSection(),
       ],
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Subscribed Tab 0: Distribution (enhanced)
+  // ---------------------------------------------------------------------------
+
+  Widget _subscribedDistributionTab() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _performanceSummaryCards(),
+        const SizedBox(height: 16),
+        _pieChartSection(),
+        const SizedBox(height: 16),
+        _stockComposition(),
+        if (_performancePoints.isNotEmpty || _loadingPerformance)
+          _performanceChartSection(),
+        if (portfolio.performanceData != null)
+          _performanceMetricsSection(),
+      ],
+    );
+  }
+
+  Widget _performanceSummaryCards() {
+    final perf = portfolio.performanceData;
+    final cagrVal = perf?.cagr;
+    final sharpeVal = perf?.sharpeRatio;
+    final volVal = perf?.volatility;
+
+    return Row(
+      children: [
+        Expanded(
+          child: _gradientMetricCard(
+            "CAGR",
+            cagrVal != null ? "${cagrVal.toStringAsFixed(1)}%" : "N/A",
+            Icons.timeline,
+            [Colors.purple.shade400, Colors.purple.shade700],
+          ),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: _gradientMetricCard(
+            "Sharpe",
+            sharpeVal != null ? sharpeVal.toStringAsFixed(2) : "N/A",
+            Icons.analytics,
+            sharpeVal != null && sharpeVal >= 1.0
+                ? [Colors.green.shade400, Colors.green.shade700]
+                : sharpeVal != null && sharpeVal >= 0.5
+                    ? [Colors.orange.shade300, Colors.orange.shade600]
+                    : [Colors.red.shade300, Colors.red.shade600],
+          ),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: _gradientMetricCard(
+            "Volatility",
+            volVal != null ? "${volVal.toStringAsFixed(1)}%" : "N/A",
+            Icons.speed,
+            [Colors.amber.shade400, Colors.amber.shade700],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _gradientMetricCard(String label, String value, IconData icon, List<Color> colors) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: colors,
+        ),
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Column(
+        children: [
+          Icon(icon, size: 20, color: Colors.white.withOpacity(0.9)),
+          const SizedBox(height: 6),
+          Text(value,
+              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: Colors.white)),
+          const SizedBox(height: 2),
+          Text(label,
+              style: TextStyle(fontSize: 11, color: Colors.white.withOpacity(0.85))),
+        ],
+      ),
+    );
+  }
+
+  Widget _pieChartSection() {
+    if (_sortedStocks.isEmpty) return const SizedBox.shrink();
+
+    const pieColors = [
+      Color(0xFF1565C0), Color(0xFF2E7D32), Color(0xFFF57C00),
+      Color(0xFF7B1FA2), Color(0xFF00838F), Color(0xFFC62828),
+      Color(0xFF4527A0), Color(0xFF00695C), Color(0xFFEF6C00),
+      Color(0xFF283593), Color(0xFF558B2F), Color(0xFFAD1457),
+    ];
+
+    return _section(
+      "Portfolio Allocation",
+      Column(
+        children: [
+          SizedBox(
+            height: 200,
+            child: PieChart(
+              PieChartData(
+                sections: List.generate(_sortedStocks.length, (index) {
+                  final stock = _sortedStocks[index];
+                  final pct = _totalWeight > 0 ? (stock.weight / _totalWeight * 100) : 0.0;
+                  return PieChartSectionData(
+                    value: pct,
+                    title: pct >= 5 ? '${pct.toStringAsFixed(0)}%' : '',
+                    color: pieColors[index % pieColors.length],
+                    radius: 60,
+                    titleStyle: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: Colors.white),
+                  );
+                }),
+                centerSpaceRadius: 40,
+                sectionsSpace: 2,
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+          Wrap(
+            spacing: 12,
+            runSpacing: 8,
+            children: List.generate(_sortedStocks.length, (index) {
+              final stock = _sortedStocks[index];
+              final pct = _totalWeight > 0 ? (stock.weight / _totalWeight * 100) : 0.0;
+              return Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 10, height: 10,
+                    decoration: BoxDecoration(
+                      color: pieColors[index % pieColors.length],
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                  const SizedBox(width: 4),
+                  Text("${stock.symbol} (${pct.toStringAsFixed(1)}%)",
+                      style: TextStyle(fontSize: 11, color: Colors.grey.shade700)),
+                ],
+              );
+            }),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Subscribed Tab 1: My Holdings
+  // ---------------------------------------------------------------------------
+
+  Widget _myHoldingsTab() {
+    if (_loadingHoldings) {
+      return const Padding(
+        padding: EdgeInsets.all(32),
+        child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
+      );
+    }
+
+    if (_holdings.isEmpty) {
+      return _emptyTabContent("No holdings data available.");
+    }
+
+    final pnl = _totalCurrent - _totalInvested;
+    final pnlPct = _totalInvested > 0 ? (pnl / _totalInvested * 100) : 0.0;
+    final isProfit = pnl >= 0;
+    final fmt = NumberFormat('#,##,###');
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // P&L Summary Card
+        Container(
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              colors: isProfit
+                  ? [const Color(0xFF1B5E20), const Color(0xFF2E7D32)]
+                  : [Colors.red.shade700, Colors.red.shade500],
+            ),
+            borderRadius: BorderRadius.circular(18),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  _holdingsHeaderStat("Invested",
+                      "\u20B9${fmt.format(_totalInvested.round())}"),
+                  _holdingsHeaderStat("Current",
+                      "\u20B9${fmt.format(_totalCurrent.round())}"),
+                  _holdingsHeaderStat("P&L",
+                      "${isProfit ? '+' : ''}\u20B9${fmt.format(pnl.abs().round())}"),
+                ],
+              ),
+              const SizedBox(height: 10),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.15),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  "${isProfit ? '+' : ''}${pnlPct.toStringAsFixed(2)}% returns",
+                  style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w600),
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 12),
+
+        // Broker selector
+        if (_availableBrokers.length > 2)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: SizedBox(
+              height: 36,
+              child: ListView.separated(
+                scrollDirection: Axis.horizontal,
+                itemCount: _availableBrokers.length,
+                separatorBuilder: (_, __) => const SizedBox(width: 8),
+                itemBuilder: (context, index) {
+                  final broker = _availableBrokers[index];
+                  final isSelected = (_selectedBroker ?? 'ALL') == broker;
+                  return GestureDetector(
+                    onTap: () {
+                      setState(() {
+                        _selectedBroker = broker;
+                        _loadingHoldings = true;
+                      });
+                      _fetchHoldings();
+                    },
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 14),
+                      decoration: BoxDecoration(
+                        color: isSelected ? const Color(0xFF1A237E) : Colors.white,
+                        borderRadius: BorderRadius.circular(18),
+                        border: Border.all(
+                            color: isSelected ? const Color(0xFF1A237E) : Colors.grey.shade300),
+                      ),
+                      child: Center(
+                        child: Text(broker,
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                            color: isSelected ? Colors.white : Colors.grey.shade700,
+                          ),
+                        ),
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+          ),
+
+        // Holdings table
+        _holdingsTable(),
+      ],
+    );
+  }
+
+  Widget _holdingsHeaderStat(String label, String value) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label, style: const TextStyle(color: Colors.white60, fontSize: 11)),
+        const SizedBox(height: 2),
+        Text(value,
+            style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w700)),
+      ],
+    );
+  }
+
+  Widget _holdingsTable() {
+    final sorted = List<PortfolioHolding>.from(_holdings)
+      ..sort((a, b) => b.currentValue.compareTo(a.currentValue));
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(color: Colors.black.withOpacity(0.04),
+              blurRadius: 10, offset: const Offset(0, 4)),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text("Holdings (${_holdings.length})",
+              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+          const SizedBox(height: 12),
+          Row(
+            children: const [
+              Expanded(flex: 3, child: Text("Symbol",
+                  style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: Colors.grey))),
+              Expanded(flex: 1, child: Text("Qty",
+                  style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: Colors.grey),
+                  textAlign: TextAlign.center)),
+              Expanded(flex: 2, child: Text("Avg / LTP",
+                  style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: Colors.grey),
+                  textAlign: TextAlign.center)),
+              Expanded(flex: 2, child: Text("P&L",
+                  style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: Colors.grey),
+                  textAlign: TextAlign.right)),
+            ],
+          ),
+          const Divider(height: 16),
+          ...sorted.map((h) {
+            final isProfit = (h.pnl ?? 0) >= 0;
+            return Padding(
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              child: Row(
+                children: [
+                  Expanded(
+                    flex: 3,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(h.symbol,
+                            style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+                        if (h.exchange != null)
+                          Text(h.exchange!,
+                              style: TextStyle(fontSize: 10, color: Colors.grey.shade500)),
+                      ],
+                    ),
+                  ),
+                  Expanded(
+                    flex: 1,
+                    child: Text("${h.quantity}",
+                        style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                        textAlign: TextAlign.center),
+                  ),
+                  Expanded(
+                    flex: 2,
+                    child: Column(
+                      children: [
+                        Text("\u20B9${h.avgPrice.toStringAsFixed(1)}",
+                            style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+                            textAlign: TextAlign.center),
+                        if (h.ltp != null)
+                          Text("\u20B9${h.ltp!.toStringAsFixed(1)}",
+                              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                              textAlign: TextAlign.center),
+                      ],
+                    ),
+                  ),
+                  Expanded(
+                    flex: 2,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        Text(
+                          "${isProfit ? '+' : ''}\u20B9${(h.pnl ?? 0).abs().toStringAsFixed(0)}",
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w700,
+                            color: isProfit ? Colors.green : Colors.red,
+                          ),
+                        ),
+                        if (h.pnlPercent != null)
+                          Text(
+                            "${isProfit ? '+' : ''}${h.pnlPercent!.toStringAsFixed(1)}%",
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: isProfit ? Colors.green : Colors.red,
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            );
+          }),
+        ],
+      ),
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Subscribed Tab 2: Research Reports
+  // ---------------------------------------------------------------------------
+
+  Widget _researchReportsTab() {
+    final reports = portfolio.rebalanceHistory
+        .where((e) => e.researchReportLink != null && e.researchReportLink!.isNotEmpty)
+        .toList()
+        .reversed
+        .toList();
+
+    if (reports.isEmpty) {
+      return Container(
+        padding: const EdgeInsets.all(32),
+        alignment: Alignment.center,
+        child: Column(
+          children: [
+            Icon(Icons.description_outlined, size: 40, color: Colors.grey.shade300),
+            const SizedBox(height: 12),
+            Text("No research reports available yet.",
+                style: TextStyle(fontSize: 14, color: Colors.grey.shade500),
+                textAlign: TextAlign.center),
+          ],
+        ),
+      );
+    }
+
+    return Column(
+      children: reports.map((entry) {
+        final dateStr = entry.rebalanceDate != null
+            ? DateFormat("dd MMM yyyy").format(entry.rebalanceDate!)
+            : "Unknown date";
+        return Container(
+          margin: const EdgeInsets.only(bottom: 12),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(14),
+            boxShadow: [
+              BoxShadow(color: Colors.black.withOpacity(0.04),
+                  blurRadius: 10, offset: const Offset(0, 4)),
+            ],
+          ),
+          child: ListTile(
+            contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            leading: Container(
+              width: 44, height: 44,
+              decoration: BoxDecoration(
+                color: Colors.blue.shade50,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Icon(Icons.description_rounded, color: Colors.blue.shade700, size: 22),
+            ),
+            title: const Text("Research Report",
+                style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
+            subtitle: Text(dateStr,
+                style: TextStyle(fontSize: 12, color: Colors.grey.shade500)),
+            trailing: Icon(Icons.open_in_new_rounded, size: 20, color: Colors.blue.shade700),
+            onTap: () async {
+              final url = Uri.parse(entry.researchReportLink!);
+              if (await canLaunchUrl(url)) {
+                await launchUrl(url, mode: LaunchMode.externalApplication);
+              }
+            },
+          ),
+        );
+      }).toList(),
     );
   }
 
@@ -1126,36 +2014,56 @@ class _ModelPortfolioDetailPageState extends State<ModelPortfolioDetailPage>
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
+      useSafeArea: true,
       backgroundColor: Colors.transparent,
-      builder: (_) => PlanSelectionSheet(
-        portfolio: portfolio,
-        onSubscribed: () {
-          _refreshDetails();
-          if (mounted) setState(() {});
-        },
+      builder: (ctx) => Padding(
+        padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
+        child: InvestInPlanSheet(
+          portfolio: portfolio,
+          onSubscribed: () {
+            _refreshDetails();
+            if (mounted) setState(() => _isSubscribed = true);
+          },
+        ),
       ),
     );
   }
 
   Widget _bottomCta() {
-    final bool isSubscribed =
-        userEmail != null && portfolio.isSubscribedBy(userEmail!);
-
     String label;
     IconData icon;
     VoidCallback onPressed;
 
-    if (isSubscribed) {
-      label = "View Holdings";
-      icon = Icons.account_balance_wallet_rounded;
-      onPressed = () {
-        Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (_) => InvestedPortfoliosPage(email: userEmail!),
-          ),
-        );
-      };
+    if (_isSubscribed && userEmail != null) {
+      if (_hasPendingRebalance) {
+        label = "Execute Rebalance";
+        icon = Icons.sync_rounded;
+        onPressed = () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => RebalanceReviewPage(
+                portfolio: portfolio,
+                email: userEmail!,
+              ),
+            ),
+          );
+        };
+      } else {
+        label = "Invest More";
+        icon = Icons.add_circle_outline_rounded;
+        onPressed = () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => InvestmentModal(
+                portfolio: portfolio,
+                email: userEmail!,
+              ),
+            ),
+          );
+        };
+      }
     } else {
       label = "Subscribe & Invest";
       icon = Icons.arrow_forward_rounded;
@@ -1180,8 +2088,8 @@ class _ModelPortfolioDetailPageState extends State<ModelPortfolioDetailPage>
           child: ElevatedButton.icon(
             onPressed: onPressed,
             style: ElevatedButton.styleFrom(
-              backgroundColor: isSubscribed
-                  ? const Color(0xFF1565C0)
+              backgroundColor: _isSubscribed
+                  ? (_hasPendingRebalance ? Colors.orange.shade700 : const Color(0xFF1565C0))
                   : const Color(0xFF2E7D32),
               shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(14)),

@@ -696,15 +696,25 @@ class ApiService {
       fetcher: () => getIPO(),
       onData: onData,
       parseResponse: (r) {
+        debugPrint('[IPO] RAW status=${r.statusCode} bodyLen=${r.body.length}');
+        debugPrint('[IPO] RAW body (first 500): ${r.body.length > 500 ? r.body.substring(0, 500) : r.body}');
         final decoded = jsonDecode(r.body);
+        debugPrint('[IPO] Decoded type: ${decoded.runtimeType}');
         // Handle flat list [...] from Grails respond
         if (decoded is List) return decoded;
         // Handle wrapped response {"data": [...]} or similar
         if (decoded is Map) {
+          debugPrint('[IPO] Map keys: ${decoded.keys.toList()}');
           if (decoded['data'] is List) return decoded['data'];
           if (decoded['ipos'] is List) return decoded['ipos'];
+          if (decoded['result'] is List) return decoded['result'];
+          if (decoded['results'] is List) return decoded['results'];
+          if (decoded['items'] is List) return decoded['items'];
           // Grails might wrap as numbered/keyed map — extract values
-          return decoded.values.whereType<Map>().toList();
+          debugPrint('[IPO] WARN: Unknown Map wrapper, keys=${decoded.keys.toList()}');
+          final extracted = decoded.values.whereType<Map>().toList();
+          debugPrint('[IPO] Extracted ${extracted.length} items from Map values');
+          return extracted;
         }
         debugPrint('[IPO] Unexpected response type: ${decoded.runtimeType} body=${r.body.length > 300 ? r.body.substring(0, 300) : r.body}');
         return [];

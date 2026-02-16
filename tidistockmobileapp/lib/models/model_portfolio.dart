@@ -338,7 +338,7 @@ class ModelPortfolio {
       assetAllocationText: assetAllocationText ?? strategyData.assetAllocationText,
       planType: planType ?? strategyData.planType,
       pricing: pricing.isNotEmpty ? pricing : strategyData.pricing,
-      strategyId: strategyId ?? strategyData.strategyId,
+      strategyId: strategyId ?? strategyData.strategyId ?? strategyData.id,
       subscribedBy: subscribedBy.isNotEmpty ? subscribedBy : strategyData.subscribedBy,
       stocks: strategyData.stocks,
       rebalanceHistory: strategyData.rebalanceHistory,

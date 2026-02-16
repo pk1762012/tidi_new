@@ -10,6 +10,7 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:tidistockmobileapp/theme/theme.dart';
 import 'package:tidistockmobileapp/widgets/customScaffold.dart';
 import 'package:tidistockmobileapp/service/ApiService.dart';
+import 'package:tidistockmobileapp/service/CacheService.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../../widgets/SubscriptionPromptDialog.dart';
@@ -31,6 +32,7 @@ class _IpoListingPageState extends State<IpoListingPage> {
   List<dynamic> openIpos = [];
   List<dynamic> upcomingIpos = [];
   List<dynamic> recentlyClosedIpos = [];
+  int totalFromApi = -1; // -1 = not yet loaded, 0 = server returned empty
 
   @override
   void initState() {
@@ -47,6 +49,9 @@ class _IpoListingPageState extends State<IpoListingPage> {
   }
 
   Future<void> fetchIpos() async {
+    // Invalidate cached IPO data so we get a fresh network fetch
+    CacheService.instance.invalidate('api/ipo');
+
     if (loading == false && openIpos.isEmpty && upcomingIpos.isEmpty) {
       setState(() => loading = true);
     } else if (openIpos.isEmpty && upcomingIpos.isEmpty) {
@@ -132,6 +137,7 @@ class _IpoListingPageState extends State<IpoListingPage> {
 
           setState(() {
             errorMsg = null;
+            totalFromApi = list.length;
             openIpos = filteredOpen;
             upcomingIpos = filteredUpcoming;
             recentlyClosedIpos = filteredClosed;
@@ -219,6 +225,29 @@ class _IpoListingPageState extends State<IpoListingPage> {
   }
 
   Widget _buildIpoList() {
+    // API returned 0 items — server has no data at all
+    if (totalFromApi == 0) {
+      return ListView(
+        padding: const EdgeInsets.all(32),
+        children: [
+          const SizedBox(height: 80),
+          Icon(Icons.info_outline, size: 56, color: Colors.grey.shade400),
+          const SizedBox(height: 16),
+          Text(
+            "IPO data unavailable",
+            textAlign: TextAlign.center,
+            style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: Colors.grey.shade700),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            "Pull down to refresh",
+            textAlign: TextAlign.center,
+            style: TextStyle(fontSize: 14, color: Colors.grey.shade500),
+          ),
+        ],
+      );
+    }
+
     final sections = <Widget>[];
 
     // Open IPOs

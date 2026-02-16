@@ -148,7 +148,7 @@ class AqApiService {
         Uri.parse('${ccxtUrl}rebalance/v2/get-portfolio-performance'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({'advisor': advisor, 'modelName': modelName}),
-      ),
+      ).timeout(const Duration(seconds: 10)),
     );
   }
 
@@ -167,7 +167,8 @@ class AqApiService {
     );
     return CacheService.instance.cachedGet(
       key: 'aq/ccxt/index-data:$symbol:$startDate:$endDate',
-      fetcher: () => http.get(uri, headers: {'Content-Type': 'application/json'}),
+      fetcher: () => http.get(uri, headers: {'Content-Type': 'application/json'})
+          .timeout(const Duration(seconds: 10)),
     );
   }
 
@@ -403,6 +404,15 @@ class AqApiService {
         'amount': amount,
         'end_date': endDate,
       }),
+    );
+  }
+
+  /// Submit lead user data (called before plan selection/payment)
+  Future<http.Response> submitLeadUser(Map<String, dynamic> payload) async {
+    return http.post(
+      Uri.parse('${baseUrl}api/all-users/lead_user'),
+      headers: _headers(),
+      body: jsonEncode(payload),
     );
   }
 

@@ -37,9 +37,15 @@ class _InvestedPortfoliosPageState extends State<InvestedPortfoliosPage> {
         email: widget.email,
         onData: (data, {required fromCache}) {
           if (!mounted) return;
-          final List<dynamic> list = data is List
-              ? data
-              : (data is Map && data.containsKey('data') ? data['data'] : []);
+          List<dynamic> list;
+          if (data is List) {
+            list = data;
+          } else if (data is Map) {
+            list = data['subscribedPortfolios'] ?? data['data'] ?? data['strategies'] ?? [];
+          } else {
+            list = [];
+          }
+          debugPrint('[InvestedPortfolios] parsed ${list.length} subscribed portfolios (fromCache=$fromCache)');
           setState(() {
             subscribedPortfolios =
                 list.map((e) => ModelPortfolio.fromJson(e)).toList();

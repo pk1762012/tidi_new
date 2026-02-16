@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:tidistockmobileapp/models/model_portfolio.dart';
 
+import '../../../service/ApiService.dart';
+import '../../../service/CacheService.dart';
 import '../../../service/RazorPayService.dart';
 
 class PlanSelectionSheet extends StatefulWidget {
@@ -94,6 +96,63 @@ class _PlanSelectionSheetState extends State<PlanSelectionSheet> {
     }
   }
 
+  bool get _isFree => widget.portfolio.pricing.isEmpty;
+
+  Future<void> _handleFreeSubscribe() async {
+    if (_loading) return;
+    setState(() => _loading = true);
+
+    try {
+      final strategyId = widget.portfolio.strategyId ?? widget.portfolio.id;
+      debugPrint('[PlanSelectionSheet] _handleFreeSubscribe - strategyId: $strategyId, planId: ${widget.portfolio.id}');
+
+      final response = await ApiService().subscribeFreeModelPortfolio(
+        planId: widget.portfolio.id,
+        strategyId: strategyId,
+      );
+
+      debugPrint('[PlanSelectionSheet] subscribe-free response: ${response.statusCode} ${response.body}');
+
+      if (!mounted) return;
+
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        CacheService.instance.invalidateByPrefix('aq/admin/plan/portfolios');
+        CacheService.instance.invalidateByPrefix('aq/model-portfolio/subscribed');
+        CacheService.instance.invalidateByPrefix('aq/model-portfolio/strategy');
+        widget.onSubscribed();
+        Navigator.of(context).pop();
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Subscribed successfully!'),
+            backgroundColor: Color(0xFF2E7D32),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('Subscription failed. Please try again.'),
+            backgroundColor: Colors.red.shade700,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    } catch (e) {
+      debugPrint('[PlanSelectionSheet] _handleFreeSubscribe error: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('Something went wrong. Please try again.'),
+            backgroundColor: Colors.red.shade700,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final pricing = widget.portfolio.pricing;
@@ -153,167 +212,248 @@ class _PlanSelectionSheetState extends State<PlanSelectionSheet> {
 
                 const SizedBox(height: 20),
 
-                // Title
-                const Text(
-                  "Choose Your Plan",
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w600,
-                    color: Colors.black87,
-                  ),
-                ),
-
-                const SizedBox(height: 16),
-
-                // Pricing tier cards
-                ...pricing.entries.map((entry) {
-                  final tier = entry.key;
-                  final amount = entry.value;
-                  final isSelected = _selectedTier == tier;
-
-                  return GestureDetector(
-                    onTap: _loading
-                        ? null
-                        : () => setState(() => _selectedTier = tier),
-                    child: AnimatedContainer(
-                      duration: const Duration(milliseconds: 200),
-                      margin: const EdgeInsets.only(bottom: 12),
-                      padding: const EdgeInsets.symmetric(
-                          vertical: 16, horizontal: 20),
-                      decoration: BoxDecoration(
-                        color: isSelected
-                            ? const Color(0xFF2E7D32).withOpacity(0.08)
-                            : Colors.white,
-                        borderRadius: BorderRadius.circular(16),
-                        border: Border.all(
-                          color: isSelected
-                              ? const Color(0xFF2E7D32)
-                              : Colors.grey.shade300,
-                          width: isSelected ? 2 : 1,
-                        ),
-                        boxShadow: [
-                          BoxShadow(
-                            blurRadius: 6,
-                            spreadRadius: 1,
-                            offset: const Offset(0, 2),
-                            color: Colors.black.withOpacity(0.05),
-                          ),
-                        ],
+                if (_isFree) ...[
+                  // Free portfolio UI
+                  Container(
+                    padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 20),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF2E7D32).withOpacity(0.08),
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(
+                        color: const Color(0xFF2E7D32),
+                        width: 1.5,
                       ),
-                      child: Row(
-                        children: [
-                          // Radio indicator
-                          Container(
-                            width: 22,
-                            height: 22,
-                            decoration: BoxDecoration(
-                              shape: BoxShape.circle,
-                              border: Border.all(
-                                color: isSelected
-                                    ? const Color(0xFF2E7D32)
-                                    : Colors.grey.shade400,
-                                width: 2,
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.check_circle_outline,
+                            color: Color(0xFF2E7D32), size: 28),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text(
+                                "Free Portfolio",
+                                style: TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w700,
+                                  color: Color(0xFF2E7D32),
+                                ),
                               ),
-                            ),
-                            child: isSelected
-                                ? Center(
-                                    child: Container(
-                                      width: 12,
-                                      height: 12,
-                                      decoration: const BoxDecoration(
-                                        shape: BoxShape.circle,
-                                        color: Color(0xFF2E7D32),
-                                      ),
-                                    ),
-                                  )
-                                : null,
+                              const SizedBox(height: 2),
+                              Text(
+                                "No subscription fee required",
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  color: Colors.grey.shade600,
+                                ),
+                              ),
+                            ],
                           ),
-                          const SizedBox(width: 14),
-                          Expanded(
-                            child: Text(
-                              _formatTierLabel(tier),
+                        ),
+                      ],
+                    ),
+                  ),
+
+                  const SizedBox(height: 20),
+
+                  SizedBox(
+                    width: double.infinity,
+                    height: 52,
+                    child: ElevatedButton(
+                      onPressed: _loading ? null : _handleFreeSubscribe,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF2E7D32),
+                        disabledBackgroundColor: Colors.grey.shade300,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                        elevation: 0,
+                      ),
+                      child: _loading
+                          ? const SizedBox(
+                              width: 22,
+                              height: 22,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2.5,
+                                color: Colors.white,
+                              ),
+                            )
+                          : const Text(
+                              "Subscribe for Free",
                               style: TextStyle(
                                 fontSize: 16,
-                                fontWeight: FontWeight.w600,
+                                fontWeight: FontWeight.w700,
+                                color: Colors.white,
+                              ),
+                            ),
+                    ),
+                  ),
+                ] else ...[
+                  // Paid portfolio UI
+                  // Title
+                  const Text(
+                    "Choose Your Plan",
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.black87,
+                    ),
+                  ),
+
+                  const SizedBox(height: 16),
+
+                  // Pricing tier cards
+                  ...pricing.entries.map((entry) {
+                    final tier = entry.key;
+                    final amount = entry.value;
+                    final isSelected = _selectedTier == tier;
+
+                    return GestureDetector(
+                      onTap: _loading
+                          ? null
+                          : () => setState(() => _selectedTier = tier),
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 200),
+                        margin: const EdgeInsets.only(bottom: 12),
+                        padding: const EdgeInsets.symmetric(
+                            vertical: 16, horizontal: 20),
+                        decoration: BoxDecoration(
+                          color: isSelected
+                              ? const Color(0xFF2E7D32).withOpacity(0.08)
+                              : Colors.white,
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border.all(
+                            color: isSelected
+                                ? const Color(0xFF2E7D32)
+                                : Colors.grey.shade300,
+                            width: isSelected ? 2 : 1,
+                          ),
+                          boxShadow: [
+                            BoxShadow(
+                              blurRadius: 6,
+                              spreadRadius: 1,
+                              offset: const Offset(0, 2),
+                              color: Colors.black.withOpacity(0.05),
+                            ),
+                          ],
+                        ),
+                        child: Row(
+                          children: [
+                            // Radio indicator
+                            Container(
+                              width: 22,
+                              height: 22,
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                border: Border.all(
+                                  color: isSelected
+                                      ? const Color(0xFF2E7D32)
+                                      : Colors.grey.shade400,
+                                  width: 2,
+                                ),
+                              ),
+                              child: isSelected
+                                  ? Center(
+                                      child: Container(
+                                        width: 12,
+                                        height: 12,
+                                        decoration: const BoxDecoration(
+                                          shape: BoxShape.circle,
+                                          color: Color(0xFF2E7D32),
+                                        ),
+                                      ),
+                                    )
+                                  : null,
+                            ),
+                            const SizedBox(width: 14),
+                            Expanded(
+                              child: Text(
+                                _formatTierLabel(tier),
+                                style: TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w600,
+                                  color: isSelected
+                                      ? const Color(0xFF2E7D32)
+                                      : Colors.black87,
+                                ),
+                              ),
+                            ),
+                            Text(
+                              "\u20B9${formatter.format(amount)}",
+                              style: TextStyle(
+                                fontSize: 17,
+                                fontWeight: FontWeight.w700,
                                 color: isSelected
                                     ? const Color(0xFF2E7D32)
                                     : Colors.black87,
                               ),
                             ),
-                          ),
-                          Text(
-                            "\u20B9${formatter.format(amount)}",
-                            style: TextStyle(
-                              fontSize: 17,
-                              fontWeight: FontWeight.w700,
-                              color: isSelected
-                                  ? const Color(0xFF2E7D32)
-                                  : Colors.black87,
-                            ),
-                          ),
-                        ],
+                          ],
+                        ),
                       ),
-                    ),
-                  );
-                }),
+                    );
+                  }),
 
-                const SizedBox(height: 20),
+                  const SizedBox(height: 20),
 
-                // Pay button
-                SizedBox(
-                  width: double.infinity,
-                  height: 52,
-                  child: ElevatedButton(
-                    onPressed:
-                        (_loading || _selectedTier == null) ? null : _handlePay,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF2E7D32),
-                      disabledBackgroundColor: Colors.grey.shade300,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(14),
+                  // Pay button
+                  SizedBox(
+                    width: double.infinity,
+                    height: 52,
+                    child: ElevatedButton(
+                      onPressed:
+                          (_loading || _selectedTier == null) ? null : _handlePay,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF2E7D32),
+                        disabledBackgroundColor: Colors.grey.shade300,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                        elevation: 0,
                       ),
-                      elevation: 0,
+                      child: _loading
+                          ? const SizedBox(
+                              width: 22,
+                              height: 22,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2.5,
+                                color: Colors.white,
+                              ),
+                            )
+                          : Text(
+                              _selectedTier != null
+                                  ? "Pay \u20B9${formatter.format(_selectedAmount)}"
+                                  : "Select a plan",
+                              style: const TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.w700,
+                                color: Colors.white,
+                              ),
+                            ),
                     ),
-                    child: _loading
-                        ? const SizedBox(
-                            width: 22,
-                            height: 22,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2.5,
-                              color: Colors.white,
-                            ),
-                          )
-                        : Text(
-                            _selectedTier != null
-                                ? "Pay \u20B9${formatter.format(_selectedAmount)}"
-                                : "Select a plan",
-                            style: const TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w700,
-                              color: Colors.white,
-                            ),
-                          ),
                   ),
-                ),
 
-                const SizedBox(height: 12),
+                  const SizedBox(height: 12),
 
-                // Secured by Razorpay
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(Icons.lock_outline,
-                        size: 14, color: Colors.grey.shade500),
-                    const SizedBox(width: 4),
-                    Text(
-                      "Secured by Razorpay",
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: Colors.grey.shade500,
+                  // Secured by Razorpay
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(Icons.lock_outline,
+                          size: 14, color: Colors.grey.shade500),
+                      const SizedBox(width: 4),
+                      Text(
+                        "Secured by Razorpay",
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.grey.shade500,
+                        ),
                       ),
-                    ),
-                  ],
-                ),
+                    ],
+                  ),
+                ],
               ],
             ),
           ),

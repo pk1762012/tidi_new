@@ -382,7 +382,11 @@ class CacheService {
       final response = await fetcher();
       if (response.statusCode >= 200 && response.statusCode < 300) {
         final data = parser(response);
-        _putWithConfig(key, response.body, response.statusCode, config);
+        // Don't cache empty list responses — avoids persisting "no data" for hours
+        final shouldCache = data is! List || data.isNotEmpty;
+        if (shouldCache) {
+          _putWithConfig(key, response.body, response.statusCode, config);
+        }
         onData(data, fromCache: false);
       } else {
         debugPrint('[CacheService] HTTP ${response.statusCode} for key=$key body=${response.body.length > 200 ? response.body.substring(0, 200) : response.body}');
@@ -492,7 +496,11 @@ class CacheService {
         debugPrint('[CacheService] revalidate key=$key status=${response.statusCode} bodyLen=${response.body.length}');
         if (response.statusCode >= 200 && response.statusCode < 300) {
           final data = parser(response);
-          _putWithConfig(key, response.body, response.statusCode, config);
+          // Don't cache empty list responses — avoids persisting "no data" for hours
+          final shouldCache = data is! List || data.isNotEmpty;
+          if (shouldCache) {
+            _putWithConfig(key, response.body, response.statusCode, config);
+          }
           onData(data, fromCache: false);
         } else {
           debugPrint('[CacheService] revalidate FAILED key=$key body=${response.body.length > 300 ? response.body.substring(0, 300) : response.body}');

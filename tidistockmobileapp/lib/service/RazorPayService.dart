@@ -295,7 +295,13 @@ class RazorpayService {
         }
       } catch (e) {
         debugPrint('[RazorpayService] model_portfolio verify error: $e');
-        _showError('Payment received. Subscription will activate shortly.');
+        // Store failed verification for retry on next launch
+        _storeFailedVerification(
+          orderId: response.orderId ?? '',
+          paymentId: response.paymentId ?? '',
+          signature: response.signature ?? '',
+        );
+        _showError('Payment received but verification failed. Please contact support if not activated within 24 hours.');
         _onResultCallback?.call(false);
       }
       _currentCheckoutType = null;
@@ -341,6 +347,53 @@ class RazorpayService {
         behavior: SnackBarBehavior.floating,
       ),
     );
+  }
+
+  /// Store failed verification details for retry on next app launch.
+  void _storeFailedVerification({
+    required String orderId,
+    required String paymentId,
+    required String signature,
+  }) {
+    try {
+      secureStorage.write(
+        key: 'failed_verification',
+        value: jsonEncode({
+          'orderId': orderId,
+          'paymentId': paymentId,
+          'signature': signature,
+          'timestamp': DateTime.now().toIso8601String(),
+        }),
+      );
+    } catch (e) {
+      debugPrint('[RazorpayService] Failed to store verification details: $e');
+    }
+  }
+
+  /// Retry any previously failed payment verification. Call on app launch.
+  static Future<void> retryFailedVerifications() async {
+    const storage = FlutterSecureStorage();
+    try {
+      final raw = await storage.read(key: 'failed_verification');
+      if (raw == null) return;
+
+      final data = jsonDecode(raw) as Map<String, dynamic>;
+      final response = await ApiService().verifyModelPortfolioPayment(
+        razorpayOrderId: data['orderId'] ?? '',
+        razorpayPaymentId: data['paymentId'] ?? '',
+        razorpaySignature: data['signature'] ?? '',
+      );
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        await storage.delete(key: 'failed_verification');
+        CacheService.instance.invalidateByPrefix('aq/admin/plan/portfolios');
+        CacheService.instance.invalidateByPrefix('aq/model-portfolio/subscribed');
+        debugPrint('[RazorpayService] Retry verification succeeded');
+      } else {
+        debugPrint('[RazorpayService] Retry verification failed: ${response.statusCode}');
+      }
+    } catch (e) {
+      debugPrint('[RazorpayService] retryFailedVerifications error: $e');
+    }
   }
 
   void _navigateToSuccess() {

@@ -77,14 +77,15 @@ class _WelcomeScreenState extends State<WelcomeScreen>
     showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (_) {
+      builder: (dialogContext) {
         return StatefulBuilder(
-          builder: (context, setStatePopup) {
+          builder: (dialogCtx, setStatePopup) {
             return Dialog(
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
               child: Padding(
                 padding: const EdgeInsets.all(22),
-                child: Column(
+                child: SingleChildScrollView(
+                  child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Text("New User",
@@ -158,10 +159,10 @@ class _WelcomeScreenState extends State<WelcomeScreen>
                           ApiService apiService = ApiService();
                           final response = await apiService.createUser(fnameCtrl.text.trim(), lnameCtrl.text.trim(), phoneCtrl.text.trim());
                           if (response.statusCode == 201 || response.statusCode == 202) {
-                            Navigator.pop(context);   // Close name popup
+                            Navigator.pop(dialogCtx);   // Close name popup
                             showOtpPopup(phoneCtrl.text.trim());
                           } else {
-                            Navigator.pop(context);   // Close name popup
+                            Navigator.pop(dialogCtx);   // Close name popup
                             ScaffoldMessenger.of(context).showSnackBar(
                               SnackBar(content: Text("Failed to register. Please try again.")),
                             );
@@ -173,10 +174,11 @@ class _WelcomeScreenState extends State<WelcomeScreen>
                     ),
 
                     TextButton(
-                      onPressed: () => Navigator.pop(context),
+                      onPressed: () => Navigator.pop(dialogCtx),
                       child: Text("Cancel"),
                     )
                   ],
+                ),
                 ),
               ),
             );
@@ -223,9 +225,9 @@ class _WelcomeScreenState extends State<WelcomeScreen>
     showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (_) {
+      builder: (dialogContext) {
         return StatefulBuilder(
-          builder: (context, setStatePopup) {
+          builder: (dialogCtx, setStatePopup) {
             if (!timerStarted) {
               timerStarted = true;
               WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -237,7 +239,8 @@ class _WelcomeScreenState extends State<WelcomeScreen>
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
               child: Padding(
                 padding: const EdgeInsets.all(22),
-                child: Column(
+                child: SingleChildScrollView(
+                  child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Text("Verify OTP",
@@ -257,10 +260,10 @@ class _WelcomeScreenState extends State<WelcomeScreen>
                           controller: otpControllers[i],
                           onChanged: (value) {
                             if (value.length == 1 && i < 3) {
-                              FocusScope.of(context).nextFocus();
+                              FocusScope.of(dialogCtx).nextFocus();
                             }
                             if (value.isEmpty && i > 0) {
-                              FocusScope.of(context).previousFocus();
+                              FocusScope.of(dialogCtx).previousFocus();
                             }
                           },
                         );
@@ -306,18 +309,19 @@ class _WelcomeScreenState extends State<WelcomeScreen>
 
                             await secureStorage.deleteAll();
                             await secureStorage.write(key: 'access_token', value: accessToken);
+                            ApiService.invalidateTokenCache();
                             apiService.updateDeviceDetails();
 
                             setStatePopup(() => verifying = false);
                             timer?.cancel();
-                            Navigator.pop(context);
+                            Navigator.pop(dialogCtx);
 
                             /*ScaffoldMessenger.of(context).showSnackBar(
                               SnackBar(content: Text("OTP Verified Successfully!")),
                             );*/
 
                             Navigator.pushAndRemoveUntil(
-                              context,
+                              this.context,
                               MaterialPageRoute(
                                 builder: (context) => DisclaimerScreen(
                                   onAccept: () {
@@ -381,11 +385,12 @@ class _WelcomeScreenState extends State<WelcomeScreen>
                     TextButton(
                       onPressed: () {
                         timer?.cancel();
-                        Navigator.pop(context);
+                        Navigator.pop(dialogCtx);
                       },
                       child: Text("Cancel"),
                     ),
                   ],
+                ),
                 ),
               ),
             );

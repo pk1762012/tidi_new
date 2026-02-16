@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:tidistockmobileapp/models/model_portfolio.dart';
 import 'package:tidistockmobileapp/models/order_result.dart';
@@ -34,8 +35,9 @@ class _ExecutionStatusPageState extends State<ExecutionStatusPage> {
   }
 
   Future<void> _executeOrders() async {
+    List<OrderResult> orderResults;
     try {
-      final orderResults = await OrderExecutionService.instance.executeOrders(
+      orderResults = await OrderExecutionService.instance.executeOrders(
         orders: widget.orders,
         email: widget.email,
         onOrderUpdate: (completed, total, latest) {
@@ -52,8 +54,18 @@ class _ExecutionStatusPageState extends State<ExecutionStatusPage> {
           });
         },
       );
+    } catch (e) {
+      setState(() {
+        executing = false;
+        hasError = true;
+        errorMessage = e.toString();
+      });
+      return;
+    }
 
-      // Update portfolio database
+    // Update portfolio database — separate try/catch so order results are
+    // preserved even if the portfolio update fails.
+    try {
       if (widget.portfolio.rebalanceHistory.isNotEmpty) {
         final latestRebalance = widget.portfolio.rebalanceHistory.last;
         if (latestRebalance.modelId != null) {
@@ -65,16 +77,24 @@ class _ExecutionStatusPageState extends State<ExecutionStatusPage> {
           );
         }
       }
+    } catch (e) {
+      debugPrint('[ExecutionStatusPage] Portfolio update failed: $e');
+      // Show warning but don't treat as fatal — orders were placed successfully
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Orders placed but portfolio sync failed. It will sync automatically.'),
+            backgroundColor: Colors.orange,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    }
 
+    if (mounted) {
       setState(() {
         executing = false;
         results = orderResults;
-      });
-    } catch (e) {
-      setState(() {
-        executing = false;
-        hasError = true;
-        errorMessage = e.toString();
       });
     }
   }
