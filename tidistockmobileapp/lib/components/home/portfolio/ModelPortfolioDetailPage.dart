@@ -1108,7 +1108,48 @@ class _ModelPortfolioDetailPageState extends State<ModelPortfolioDetailPage>
         if (_performancePoints.isNotEmpty || _loadingPerformance)
           _performanceChartSection(),
         if (portfolio.performanceData != null)
-          _performanceMetricsSection(),
+          _performanceMetricsSectionFull(),
+      ],
+    );
+  }
+
+  Widget _performanceMetricsSectionFull() {
+    final perf = portfolio.performanceData!;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _metricsCardGrouped("Returns & Risk", [
+          [
+            _metricItem("CAGR", perf.cagr, isPercent: true),
+            _metricItem("Total Return", perf.totalReturn, isPercent: true),
+            _metricItem("YTD Return", perf.ytdReturn, isPercent: true),
+            _metricItem("1Y Return", perf.oneYearReturn, isPercent: true),
+          ],
+          [
+            _metricItem("Volatility", perf.volatility, isPercent: true),
+            _metricItem("Max Drawdown", perf.maxDrawdown, isPercent: true),
+            _metricItem("Value at Risk", perf.valueAtRisk, isPercent: true),
+            _metricItem("CVaR", perf.cvar, isPercent: true),
+          ],
+        ]),
+        _metricsCardGrouped("Ratios & Timing", [
+          [
+            _metricItem("Sharpe Ratio", perf.sharpeRatio),
+            _metricItem("Sortino Ratio", perf.sortinoRatio),
+            _metricItem("Profit Factor", perf.profitFactor),
+            _metricItem("Gain to Pain", perf.gainToPain),
+          ],
+          [
+            _metricItem("Win Rate", perf.winRate, isPercent: true),
+            _metricItem("Avg Drawdown", perf.avgDrawdown, isPercent: true),
+            if (perf.longestDdDays != null)
+              _metricItemRaw("Longest DD", "${perf.longestDdDays} days"),
+            _metricItem("Best Day", perf.bestDay, isPercent: true),
+            _metricItem("Worst Day", perf.worstDay, isPercent: true),
+            _metricItem("Time in Market", perf.timeInMarket, isPercent: true),
+            _metricItem("Ulcer Index", perf.ulcerIndex),
+          ],
+        ]),
       ],
     );
   }
@@ -1122,14 +1163,22 @@ class _ModelPortfolioDetailPageState extends State<ModelPortfolioDetailPage>
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         _performanceSummaryCards(),
+        if (portfolio.performanceData != null) ...[
+          const SizedBox(height: 20),
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Text("Detailed Metrics",
+              style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600,
+                color: Colors.grey.shade500, letterSpacing: 0.5)),
+          ),
+          _performanceMetricsSection(),
+        ],
+        if (_performancePoints.isNotEmpty || _loadingPerformance)
+          _performanceChartSection(),
         const SizedBox(height: 16),
         _pieChartSection(),
         const SizedBox(height: 16),
         _stockComposition(),
-        if (_performancePoints.isNotEmpty || _loadingPerformance)
-          _performanceChartSection(),
-        if (portfolio.performanceData != null)
-          _performanceMetricsSection(),
       ],
     );
   }
@@ -1139,6 +1188,25 @@ class _ModelPortfolioDetailPageState extends State<ModelPortfolioDetailPage>
     final cagrVal = perf?.cagr;
     final sharpeVal = perf?.sharpeRatio;
     final volVal = perf?.volatility;
+    final volLabel = portfolio.volatilityLabel;
+
+    // Determine volatility display and color
+    String volDisplay;
+    List<Color> volColors;
+    if (volVal != null) {
+      volDisplay = "${volVal.toStringAsFixed(1)}%";
+      volColors = [Colors.amber.shade400, Colors.amber.shade700];
+    } else if (volLabel != null && volLabel.isNotEmpty) {
+      volDisplay = volLabel;
+      volColors = volLabel == "High"
+          ? [Colors.red.shade300, Colors.red.shade600]
+          : volLabel == "Low"
+              ? [Colors.green.shade400, Colors.green.shade700]
+              : [Colors.amber.shade400, Colors.amber.shade700];
+    } else {
+      volDisplay = "N/A";
+      volColors = [Colors.amber.shade400, Colors.amber.shade700];
+    }
 
     return Row(
       children: [
@@ -1167,9 +1235,9 @@ class _ModelPortfolioDetailPageState extends State<ModelPortfolioDetailPage>
         Expanded(
           child: _gradientMetricCard(
             "Volatility",
-            volVal != null ? "${volVal.toStringAsFixed(1)}%" : "N/A",
+            volDisplay,
             Icons.speed,
-            [Colors.amber.shade400, Colors.amber.shade700],
+            volColors,
           ),
         ),
       ],
@@ -1788,35 +1856,34 @@ class _ModelPortfolioDetailPageState extends State<ModelPortfolioDetailPage>
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _metricsCard("Returns", [
-          _metricItem("CAGR", perf.cagr, isPercent: true),
-          _metricItem("Total Return", perf.totalReturn, isPercent: true),
-          _metricItem("YTD Return", perf.ytdReturn, isPercent: true),
-          _metricItem("1Y Return", perf.oneYearReturn, isPercent: true),
+        _metricsCardGrouped("Returns & Risk", [
+          [
+            _metricItem("Total Return", perf.totalReturn, isPercent: true),
+            _metricItem("YTD Return", perf.ytdReturn, isPercent: true),
+            _metricItem("1Y Return", perf.oneYearReturn, isPercent: true),
+          ],
+          [
+            _metricItem("Max Drawdown", perf.maxDrawdown, isPercent: true),
+            _metricItem("Value at Risk", perf.valueAtRisk, isPercent: true),
+            _metricItem("CVaR", perf.cvar, isPercent: true),
+          ],
         ]),
-        _metricsCard("Risk", [
-          _metricItem("Volatility", perf.volatility, isPercent: true),
-          _metricItem("Value at Risk", perf.valueAtRisk, isPercent: true),
-          _metricItem("CVaR", perf.cvar, isPercent: true),
-          _metricItem("Ulcer Index", perf.ulcerIndex),
-        ]),
-        _metricsCard("Drawdown", [
-          _metricItem("Max Drawdown", perf.maxDrawdown, isPercent: true),
-          _metricItem("Avg Drawdown", perf.avgDrawdown, isPercent: true),
-          if (perf.longestDdDays != null)
-            _metricItemRaw("Longest DD", "${perf.longestDdDays} days"),
-        ]),
-        _metricsCard("Ratios", [
-          _metricItem("Sharpe Ratio", perf.sharpeRatio),
-          _metricItem("Sortino Ratio", perf.sortinoRatio),
-          _metricItem("Profit Factor", perf.profitFactor),
-          _metricItem("Gain to Pain", perf.gainToPain),
-        ]),
-        _metricsCard("Timing", [
-          _metricItem("Win Rate", perf.winRate, isPercent: true),
-          _metricItem("Best Day", perf.bestDay, isPercent: true),
-          _metricItem("Worst Day", perf.worstDay, isPercent: true),
-          _metricItem("Time in Market", perf.timeInMarket, isPercent: true),
+        _metricsCardGrouped("Ratios & Timing", [
+          [
+            _metricItem("Sortino Ratio", perf.sortinoRatio),
+            _metricItem("Profit Factor", perf.profitFactor),
+            _metricItem("Gain to Pain", perf.gainToPain),
+            _metricItem("Win Rate", perf.winRate, isPercent: true),
+          ],
+          [
+            _metricItem("Avg Drawdown", perf.avgDrawdown, isPercent: true),
+            if (perf.longestDdDays != null)
+              _metricItemRaw("Longest DD", "${perf.longestDdDays} days"),
+            _metricItem("Best Day", perf.bestDay, isPercent: true),
+            _metricItem("Worst Day", perf.worstDay, isPercent: true),
+            _metricItem("Time in Market", perf.timeInMarket, isPercent: true),
+            _metricItem("Ulcer Index", perf.ulcerIndex),
+          ],
         ]),
       ],
     );
@@ -1826,14 +1893,7 @@ class _ModelPortfolioDetailPageState extends State<ModelPortfolioDetailPage>
     final validItems = items.whereType<Widget>().toList();
     if (validItems.isEmpty) return const SizedBox.shrink();
 
-    return _section(
-      title,
-      Wrap(
-        spacing: 12,
-        runSpacing: 12,
-        children: validItems,
-      ),
-    );
+    return _section(title, _metricsGrid(items));
   }
 
   Widget? _metricItem(String label, double? value, {bool isPercent = false}) {
@@ -1845,19 +1905,55 @@ class _ModelPortfolioDetailPageState extends State<ModelPortfolioDetailPage>
   }
 
   Widget _metricItemRaw(String label, String display, {Color? valueColor}) {
-    return SizedBox(
-      width: 140,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(label, style: TextStyle(fontSize: 11, color: Colors.grey.shade500)),
-          const SizedBox(height: 2),
-          Text(display,
-            style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700,
-                color: valueColor ?? Colors.grey.shade800)),
-        ],
-      ),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label, style: TextStyle(fontSize: 11, color: Colors.grey.shade500)),
+        const SizedBox(height: 2),
+        Text(display,
+          style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700,
+              color: valueColor ?? Colors.grey.shade800)),
+      ],
     );
+  }
+
+  Widget _metricsGrid(List<Widget?> items) {
+    final valid = items.whereType<Widget>().toList();
+    if (valid.isEmpty) return const SizedBox.shrink();
+    final rows = <Widget>[];
+    for (var i = 0; i < valid.length; i += 2) {
+      rows.add(
+        Padding(
+          padding: EdgeInsets.only(top: i == 0 ? 0 : 12),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(child: valid[i]),
+              const SizedBox(width: 16),
+              Expanded(child: i + 1 < valid.length ? valid[i + 1] : const SizedBox.shrink()),
+            ],
+          ),
+        ),
+      );
+    }
+    return Column(children: rows);
+  }
+
+  Widget _metricsCardGrouped(String title, List<List<Widget?>> groups) {
+    final groupWidgets = <Widget>[];
+    for (var i = 0; i < groups.length; i++) {
+      final valid = groups[i].whereType<Widget>().toList();
+      if (valid.isEmpty) continue;
+      if (groupWidgets.isNotEmpty) {
+        groupWidgets.add(Padding(
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          child: Divider(height: 1, color: Colors.grey.shade200),
+        ));
+      }
+      groupWidgets.add(_metricsGrid(valid));
+    }
+    if (groupWidgets.isEmpty) return const SizedBox.shrink();
+    return _section(title, Column(crossAxisAlignment: CrossAxisAlignment.start, children: groupWidgets));
   }
 
   // ---------------------------------------------------------------------------

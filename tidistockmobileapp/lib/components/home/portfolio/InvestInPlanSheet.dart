@@ -558,12 +558,14 @@ class _InvestInPlanSheetState extends State<InvestInPlanSheet>
 
       debugPrint('[InvestInPlanSheet] _handleFreeSubscribe - portfolioId: ${widget.portfolio.id}, strategyId: $strategyId, email: $email');
 
-      final response = await ApiService().subscribeFreeModelPortfolio(
-        planId: widget.portfolio.id,
-        strategyId: strategyId,
-      );
+      // PRIMARY: Use AQ backend subscribe-strategy API (same as web frontend)
+      final response = await AqApiService.instance.subscribeStrategy(
+        strategyId: widget.portfolio.id,
+        email: email,
+        action: 'subscribe',
+      ).timeout(const Duration(seconds: 15));
 
-      debugPrint('[InvestInPlanSheet] subscribe response: ${response.statusCode} ${response.body}');
+      debugPrint('[InvestInPlanSheet] AQ subscribe response: ${response.statusCode} ${response.body}');
 
       if (!mounted) return;
 
@@ -587,16 +589,14 @@ class _InvestInPlanSheetState extends State<InvestInPlanSheet>
           await _storage.write(key: 'pan', value: pan);
         }
 
-        // Fire-and-forget AQ subscribe with 10s timeout to sync both backends
-        // AQ endpoint expects the model_portfolio _id (widget.portfolio.id)
-        AqApiService.instance.subscribeStrategy(
-          strategyId: widget.portfolio.id,
-          email: email,
-          action: 'subscribe',
-        ).timeout(const Duration(seconds: 10)).then((aqResp) {
-          debugPrint('[InvestInPlanSheet] AQ subscribeStrategy response: ${aqResp.statusCode} ${aqResp.body}');
+        // Fire-and-forget: sync to TIDI backend (non-blocking, 15s timeout)
+        ApiService().subscribeFreeModelPortfolio(
+          planId: widget.portfolio.id,
+          strategyId: strategyId,
+        ).timeout(const Duration(seconds: 15)).then((tidiResp) {
+          debugPrint('[InvestInPlanSheet] TIDI subscribe sync: ${tidiResp.statusCode}');
         }).catchError((e) {
-          debugPrint('[InvestInPlanSheet] AQ subscribeStrategy error: $e');
+          debugPrint('[InvestInPlanSheet] TIDI subscribe sync error (non-blocking): $e');
         });
 
         // Save locally as defensive fallback for instant display on restart

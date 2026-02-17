@@ -57,28 +57,35 @@ class PerformanceData {
   });
 
   factory PerformanceData.fromJson(Map<String, dynamic> json) {
+    // API returns nested: {returns: {cagr}, ratios: {sharpe}, risk: {volatility}, ...}
+    final returns = json['returns'] is Map ? Map<String, dynamic>.from(json['returns']) : <String, dynamic>{};
+    final ratios  = json['ratios']  is Map ? Map<String, dynamic>.from(json['ratios'])  : <String, dynamic>{};
+    final risk    = json['risk']    is Map ? Map<String, dynamic>.from(json['risk'])    : <String, dynamic>{};
+    final timing  = json['timing']  is Map ? Map<String, dynamic>.from(json['timing'])  : <String, dynamic>{};
+    final general = json['general'] is Map ? Map<String, dynamic>.from(json['general']) : <String, dynamic>{};
+
     return PerformanceData(
-      cagr: _toDouble(json['cagr']),
-      totalReturn: _toDouble(json['total_return'] ?? json['totalReturn']),
-      ytdReturn: _toDouble(json['ytd_return'] ?? json['ytdReturn']),
-      oneYearReturn: _toDouble(json['one_year_return'] ?? json['oneYearReturn']),
-      volatility: _toDouble(json['volatility']),
-      valueAtRisk: _toDouble(json['value_at_risk'] ?? json['valueAtRisk']),
-      cvar: _toDouble(json['cvar']),
-      ulcerIndex: _toDouble(json['ulcer_index'] ?? json['ulcerIndex']),
-      maxDrawdown: _toDouble(json['max_drawdown'] ?? json['maxDrawdown']),
-      avgDrawdown: _toDouble(json['avg_drawdown'] ?? json['avgDrawdown']),
-      longestDdDays: _toInt(json['longest_dd_days'] ?? json['longestDdDays']),
-      sharpeRatio: _toDouble(json['sharpe_ratio'] ?? json['sharpeRatio']),
-      sortinoRatio: _toDouble(json['sortino_ratio'] ?? json['sortinoRatio']),
-      profitFactor: _toDouble(json['profit_factor'] ?? json['profitFactor']),
-      gainToPain: _toDouble(json['gain_to_pain'] ?? json['gainToPain']),
-      winRate: _toDouble(json['win_rate'] ?? json['winRate']),
-      bestDay: _toDouble(json['best_day'] ?? json['bestDay']),
-      worstDay: _toDouble(json['worst_day'] ?? json['worstDay']),
-      timeInMarket: _toDouble(json['time_in_market'] ?? json['timeInMarket']),
-      startDate: json['start_date']?.toString() ?? json['startDate']?.toString(),
-      endDate: json['end_date']?.toString() ?? json['endDate']?.toString(),
+      cagr:           _toDouble(returns['cagr']       ?? json['cagr']),
+      totalReturn:    _toDouble(returns['total']       ?? json['total_return'] ?? json['totalReturn']),
+      ytdReturn:      _toDouble(returns['ytd']         ?? json['ytd_return']   ?? json['ytdReturn']),
+      oneYearReturn:  _toDouble(returns['1y']          ?? returns['1yrReturn'] ?? json['one_year_return'] ?? json['oneYearReturn']),
+      volatility:     _toDoublePct(risk['volatility']    ?? json['volatility']),
+      valueAtRisk:    _toDoublePct(risk['var']           ?? json['value_at_risk'] ?? json['valueAtRisk']),
+      cvar:           _toDoublePct(risk['cvar']          ?? json['cvar']),
+      ulcerIndex:     _toDouble(risk['ulcer_index']    ?? json['ulcer_index']  ?? json['ulcerIndex']),
+      maxDrawdown:    _toDouble(json['drawdown']       ?? json['max_drawdown'] ?? json['maxDrawdown']),
+      avgDrawdown:    _toDouble(json['avg_drawdown']   ?? json['avgDrawdown']),
+      longestDdDays:  _toInt(json['longest_dd_days']   ?? json['longestDdDays']),
+      sharpeRatio:    _toDouble(ratios['sharpe']       ?? json['sharpe_ratio'] ?? json['sharpeRatio']),
+      sortinoRatio:   _toDouble(ratios['sortino']      ?? json['sortino_ratio'] ?? json['sortinoRatio']),
+      profitFactor:   _toDouble(ratios['profit_factor'] ?? json['profit_factor'] ?? json['profitFactor']),
+      gainToPain:     _toDouble(ratios['gain_to_pain'] ?? json['gain_to_pain']  ?? json['gainToPain']),
+      winRate:        _toDouble(timing['win_rate']     ?? json['win_rate']      ?? json['winRate']),
+      bestDay:        _toDouble(timing['best_day']     ?? json['best_day']      ?? json['bestDay']),
+      worstDay:       _toDouble(timing['worst_day']    ?? json['worst_day']     ?? json['worstDay']),
+      timeInMarket:   _toDouble(timing['time_in_market'] ?? json['time_in_market'] ?? json['timeInMarket']),
+      startDate:      (general['start_date'] ?? json['start_date'])?.toString() ?? json['startDate']?.toString(),
+      endDate:        (general['end_date']   ?? json['end_date'])?.toString()   ?? json['endDate']?.toString(),
     );
   }
 
@@ -95,6 +102,12 @@ class PerformanceData {
     if (value is String) return int.tryParse(value);
     return null;
   }
+
+  /// Parse a decimal-form value and convert to percentage (* 100).
+  static double? _toDoublePct(dynamic value) {
+    final v = _toDouble(value);
+    return v != null ? v * 100 : null;
+  }
 }
 
 class ModelPortfolio {
@@ -109,6 +122,7 @@ class ModelPortfolio {
   final String? frequency;
   final DateTime? nextRebalanceDate;
   final String? riskProfile;
+  final String? volatilityLabel;  // "High", "Medium", "Low" — set by RA
   final String? image;
   final String? blogLink;
   final String? researchReportLink;
@@ -140,6 +154,7 @@ class ModelPortfolio {
     this.frequency,
     this.nextRebalanceDate,
     this.riskProfile,
+    this.volatilityLabel,
     this.image,
     this.blogLink,
     this.researchReportLink,
@@ -263,6 +278,7 @@ class ModelPortfolio {
           ? DateTime.tryParse(json['nextRebalanceDate'].toString())
           : null,
       riskProfile: json['riskProfile'],
+      volatilityLabel: json['volatility']?.toString(),
       image: _resolveImageUrl(json['image']),
       blogLink: json['blogLink'],
       researchReportLink: json['researchReportLink'],
@@ -327,6 +343,7 @@ class ModelPortfolio {
       frequency: frequency ?? strategyData.frequency,
       nextRebalanceDate: nextRebalanceDate ?? strategyData.nextRebalanceDate,
       riskProfile: riskProfile ?? strategyData.riskProfile,
+      volatilityLabel: volatilityLabel ?? strategyData.volatilityLabel,
       image: image ?? strategyData.image,
       blogLink: blogLink ?? strategyData.blogLink,
       researchReportLink: researchReportLink ?? strategyData.researchReportLink,

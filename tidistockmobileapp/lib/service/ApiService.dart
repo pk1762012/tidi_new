@@ -461,7 +461,7 @@ class ApiService {
         'pricingTier': pricingTier,
         'amount': amount,
       }),
-    );
+    ).timeout(const Duration(seconds: 15));
   }
 
   Future<http.Response> verifyModelPortfolioPayment({
@@ -481,7 +481,7 @@ class ApiService {
         'razorpay_payment_id': razorpayPaymentId,
         'razorpay_signature': razorpaySignature,
       }),
-    );
+    ).timeout(const Duration(seconds: 15));
   }
 
   Future<http.Response> subscribeFreeModelPortfolio({
@@ -499,7 +499,7 @@ class ApiService {
         'planId': planId,
         'strategyId': strategyId,
       }),
-    );
+    ).timeout(const Duration(seconds: 15));
   }
 
   Future<http.Response> getModelPortfolioSubscriptionStatus(String planId) async {
@@ -510,7 +510,7 @@ class ApiService {
         'Authorization': 'Bearer $token',
         'Content-Type': 'application/json',
       },
-    );
+    ).timeout(const Duration(seconds: 15));
   }
 
   Future<http.Response> createSubscriptionOrder(String duration) async {
