@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -33,7 +32,6 @@ class MarketIndexBar extends StatefulWidget {
 class _MarketIndexBarState extends State<MarketIndexBar>
     with SingleTickerProviderStateMixin {
   late AnimationController _controller;
-  Timer? _pulseStopTimer;
 
   @override
   void initState() {
@@ -51,21 +49,16 @@ class _MarketIndexBarState extends State<MarketIndexBar>
   void didUpdateWidget(covariant MarketIndexBar oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.nifty != widget.nifty || oldWidget.bankNifty != widget.bankNifty) {
-      // Data changed — start pulse animation
       if (!_controller.isAnimating) {
-        _controller.repeat(reverse: true);
+        _controller.forward().then((_) {
+          if (mounted) _controller.reverse();
+        });
       }
-      // Auto-stop after 5 seconds of no new data
-      _pulseStopTimer?.cancel();
-      _pulseStopTimer = Timer(const Duration(seconds: 5), () {
-        if (mounted) _controller.stop();
-      });
     }
   }
 
   @override
   void dispose() {
-    _pulseStopTimer?.cancel();
     _controller.dispose();
     super.dispose();
   }

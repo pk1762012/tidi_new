@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:ui';
 import 'package:tidistockmobileapp/service/ApiService.dart';
 import 'package:tidistockmobileapp/service/CacheService.dart';
 import 'package:flutter/material.dart';
@@ -284,17 +283,13 @@ class MarketPageState extends State<MarketPage> with TickerProviderStateMixin, W
         builder: (_) => Dialog(
           backgroundColor: Colors.transparent,
           insetPadding: const EdgeInsets.all(16),
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(24),
-            child: BackdropFilter(
-              filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
-              child: Container(
+          child: Container(
                 padding: const EdgeInsets.all(20),
                 decoration: BoxDecoration(
                   gradient: LinearGradient(
                     colors: [
-                      Colors.black.withOpacity(0.75),
-                      Colors.black.withOpacity(0.55),
+                      Colors.black.withOpacity(0.88),
+                      Colors.black.withOpacity(0.78),
                     ],
                     begin: Alignment.topLeft,
                     end: Alignment.bottomRight,
@@ -432,9 +427,7 @@ class MarketPageState extends State<MarketPage> with TickerProviderStateMixin, W
                   ],
                 ),
               ),
-            ),
           ),
-        ),
       );
     } catch (e) {
       _showError("Error loading holidays: $e");

@@ -110,14 +110,10 @@ class _SplashScreenState extends State<SplashScreen> {
       canPop: false,
       child: Scaffold(
         backgroundColor: Colors.white, // or any theme color
-        body: Container(
-          width: double.infinity,
-          height: double.infinity,
-          decoration: BoxDecoration(
-            image: DecorationImage(
-              image: AssetImage("assets/images/tidi_intro.gif"),
-              fit: BoxFit.fill,   // 🔥 Forces full stretch to fill screen
-            ),
+        body: SizedBox.expand(
+          child: Image.asset(
+            'assets/images/tidi_intro_static.png',
+            fit: BoxFit.fill,
           ),
         ),
 
