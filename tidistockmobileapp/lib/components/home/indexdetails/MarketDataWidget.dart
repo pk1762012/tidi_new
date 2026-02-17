@@ -324,12 +324,18 @@ class MarketDataWidgetState extends State<MarketDataWidget>
         onDone: () {
           _isConnected = false;
           _isConnecting = false;
-          Future.delayed(const Duration(seconds: 5), connectWebSocket);
+          if (!mounted) return;
+          Future.delayed(const Duration(seconds: 5), () {
+            if (mounted) connectWebSocket();
+          });
         },
         onError: (error) {
           _isConnected = false;
           _isConnecting = false;
-          Future.delayed(const Duration(seconds: 5), connectWebSocket);
+          if (!mounted) return;
+          Future.delayed(const Duration(seconds: 5), () {
+            if (mounted) connectWebSocket();
+          });
         },
         cancelOnError: true,
       );
@@ -344,7 +350,9 @@ class MarketDataWidgetState extends State<MarketDataWidget>
           _isLoading = false;
         });
       }
-      Future.delayed(const Duration(seconds: 5), connectWebSocket);
+      Future.delayed(const Duration(seconds: 5), () {
+        if (mounted) connectWebSocket();
+      });
     } catch (e) {
       print("Connection error: $e");
       _isConnecting = false;
@@ -356,7 +364,9 @@ class MarketDataWidgetState extends State<MarketDataWidget>
           _isLoading = false;
         });
       }
-      Future.delayed(const Duration(seconds: 5), connectWebSocket);
+      Future.delayed(const Duration(seconds: 5), () {
+        if (mounted) connectWebSocket();
+      });
     }
   }
 

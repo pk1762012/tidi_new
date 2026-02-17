@@ -1,11 +1,9 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:math';
 import 'dart:ui';
 import 'package:tidistockmobileapp/service/ApiService.dart';
 import 'package:tidistockmobileapp/service/CacheService.dart';
 import 'package:flutter/material.dart';
-import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../../screens/welcomeScreen.dart';
 import 'indexdetails/MarketDataWidget.dart';
@@ -47,13 +45,8 @@ class MarketPageState extends State<MarketPage> with TickerProviderStateMixin, W
   late List<Animation<double>> _iconsFadeAnimations;
   late List<Animation<Offset>> _iconsSlideAnimations;
 
-  final Map<int, ValueNotifier<List<FlSpot>>> _chartDataNotifiers = {};
-  final Random _random = Random();
   final FlutterSecureStorage secureStorage = const FlutterSecureStorage();
   List<dynamic> stockData = [];
-
-  final int _maxPoints = 20;
-  Timer? _chartTimer;
 
   // Subscription
   bool isSubscribed = false;
@@ -116,16 +109,6 @@ class MarketPageState extends State<MarketPage> with TickerProviderStateMixin, W
       if (mounted) _iconsController.forward();
     });
 
-    // Init fake chart data for testing
-    for (int i = 0; i < 4; i++) {
-      final initialData = List<FlSpot>.generate(
-        _maxPoints,
-            (index) => FlSpot(index.toDouble(), 10 + _random.nextDouble() * 5),
-      );
-      _chartDataNotifiers[i] = ValueNotifier<List<FlSpot>>(initialData);
-    }
-    _startChartTimer();
-
     _bannerTimer = Timer.periodic(const Duration(seconds: 4), (timer) {
       if (!_bannerController.hasClients) return;
 
@@ -141,9 +124,7 @@ class MarketPageState extends State<MarketPage> with TickerProviderStateMixin, W
 
   Future<void> loadSubscriptionStatus() async {
     String? value = await secureStorage.read(key: 'is_subscribed');
-    setState(() {
-      isSubscribed = value == 'true';
-    });
+    isSubscribed = value == 'true';
   }
 
   Future<void> verifyDeviceFcmIfNeeded(BuildContext context) async {
@@ -208,14 +189,9 @@ class MarketPageState extends State<MarketPage> with TickerProviderStateMixin, W
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.paused || state == AppLifecycleState.inactive) {
-      // Cancel chart timer and banner timer when app goes to background
-      _chartTimer?.cancel();
-      _chartTimer = null;
       _bannerTimer?.cancel();
       _bannerTimer = null;
     } else if (state == AppLifecycleState.resumed) {
-      // Restart chart timer and banner timer when app returns
-      _startChartTimer();
       _bannerTimer ??= Timer.periodic(const Duration(seconds: 4), (timer) {
         if (!_bannerController.hasClients) return;
         _currentBanner = (_currentBanner + 1) % _banners.length;
@@ -228,32 +204,11 @@ class MarketPageState extends State<MarketPage> with TickerProviderStateMixin, W
     }
   }
 
-  void _startChartTimer() {
-    if (_chartTimer != null && _chartTimer!.isActive) return;
-    _chartTimer = Timer.periodic(const Duration(milliseconds: 1000), (_) {
-      for (int i = 0; i < 4; i++) {
-        final notifier = _chartDataNotifiers[i];
-        if (notifier == null) continue;
-        final currentData = List<FlSpot>.from(notifier.value);
-        final lastX = currentData.isNotEmpty ? currentData.last.x : 0;
-        final newY = 10 + _random.nextDouble() * 5;
-        currentData.add(FlSpot(lastX + 1, newY));
-        if (currentData.length > _maxPoints) currentData.removeAt(0);
-        notifier.value = currentData;
-      }
-    });
-  }
-
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _pageSlideController.dispose();
     _iconsController.dispose();
-    _chartTimer?.cancel();
-    for (var notifier in _chartDataNotifiers.values) {
-      notifier.dispose();
-    }
-
     _bannerTimer?.cancel();
     _bannerController.dispose();
 
@@ -545,7 +500,7 @@ class MarketPageState extends State<MarketPage> with TickerProviderStateMixin, W
                           _autoScrollingBanner(context),
                           Container(
                             margin: const EdgeInsets.only(bottom: 20),
-                            child: MarketDataWidget(),
+                            child: const MarketDataWidget(),
                           ),
                           //const SizedBox(height: 2),
                           GridView.builder(
