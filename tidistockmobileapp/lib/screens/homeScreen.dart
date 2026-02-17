@@ -1,4 +1,3 @@
-import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_feather_icons/flutter_feather_icons.dart';
@@ -71,27 +70,22 @@ class HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildBottomBar() {
-    return ClipRRect(
-      borderRadius: const BorderRadius.vertical(top: Radius.circular(22)),
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
-        child: Container(
-          height: 70,
-          decoration: BoxDecoration(
-            color: lightColorScheme.primary.withOpacity(0.1),
-            border: Border(
-              top: BorderSide(color: Colors.white.withOpacity(0.2)),
-            ),
-          ),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-            children: [
-              _navItem(FeatherIcons.activity, 'Market', 0),
-              _navItem(FeatherIcons.target, 'Advisory', 1),
-              _navItem(FeatherIcons.bookOpen, 'Academy', 2),
-            ],
-          ),
+    return Container(
+      height: 70,
+      decoration: BoxDecoration(
+        color: lightColorScheme.primary.withOpacity(0.06),
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(22)),
+        border: Border(
+          top: BorderSide(color: Colors.grey.shade300),
         ),
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+        children: [
+          _navItem(FeatherIcons.activity, 'Market', 0),
+          _navItem(FeatherIcons.target, 'Advisory', 1),
+          _navItem(FeatherIcons.bookOpen, 'Academy', 2),
+        ],
       ),
     );
   }

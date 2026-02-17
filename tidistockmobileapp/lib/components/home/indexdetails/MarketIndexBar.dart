@@ -1,8 +1,6 @@
 import 'dart:async';
-import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:tidistockmobileapp/theme/theme.dart';
 
 import '../market/StockChartPage.dart';
 
@@ -33,9 +31,8 @@ class MarketIndexBar extends StatefulWidget {
 }
 
 class _MarketIndexBarState extends State<MarketIndexBar>
-    with TickerProviderStateMixin {
+    with SingleTickerProviderStateMixin {
   late AnimationController _controller;
-  late Animation<double> _pulse;
   Timer? _pulseStopTimer;
 
   @override
@@ -45,10 +42,8 @@ class _MarketIndexBarState extends State<MarketIndexBar>
     _controller = AnimationController(
       vsync: this,
       duration: const Duration(seconds: 2),
-    );
-
-    _pulse = Tween<double>(begin: 4, end: 12).animate(
-      CurvedAnimation(parent: _controller, curve: Curves.easeInOut),
+      lowerBound: 0.3,
+      upperBound: 1.0,
     );
   }
 
@@ -354,24 +349,16 @@ class _MarketIndexBarState extends State<MarketIndexBar>
                   change: widget.niftyChange,
                 ),
               ),
-              AnimatedBuilder(
-                animation: _controller,
-                builder: (_, __) {
-                  return Container(
-                    width: _pulse.value,
-                    height: _pulse.value,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: Colors.black,
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withOpacity(0.5),
-                          blurRadius: _pulse.value * 2,
-                        ),
-                      ],
-                    ),
-                  );
-                },
+              FadeTransition(
+                opacity: _controller,
+                child: Container(
+                  width: 8,
+                  height: 8,
+                  decoration: const BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: Colors.black,
+                  ),
+                ),
               ),
               InkWell(
                 onTap: () => _openTradingView("BANKNIFTY"),

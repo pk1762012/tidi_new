@@ -498,9 +498,11 @@ class MarketPageState extends State<MarketPage> with TickerProviderStateMixin, W
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           _autoScrollingBanner(context),
-                          Container(
-                            margin: const EdgeInsets.only(bottom: 20),
-                            child: const MarketDataWidget(),
+                          RepaintBoundary(
+                            child: Container(
+                              margin: const EdgeInsets.only(bottom: 20),
+                              child: const MarketDataWidget(),
+                            ),
                           ),
                           //const SizedBox(height: 2),
                           GridView.builder(
