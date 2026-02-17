@@ -58,6 +58,8 @@ class _ModelPortfolioListPageState extends State<ModelPortfolioListPage>
   Future<void> _init() async {
     final email = await const FlutterSecureStorage().read(key: 'user_email');
     if (mounted) setState(() => userEmail = email);
+    // Load local subscriptions first for instant display
+    await _loadLocalSubscriptions();
     await Future.wait([
       _fetchPortfolios(),
       _fetchSubscribedStrategies(),
@@ -101,9 +103,73 @@ class _ModelPortfolioListPageState extends State<ModelPortfolioListPage>
             _subscribedModelNames = names;
           });
         }
+        // Prune local entries already confirmed by API, then merge remainder
+        await _pruneLocalSubscriptions(ids, names);
       }
     } catch (e) {
       debugPrint('[ModelPortfolio] fetchSubscribedStrategies error: $e');
+    }
+    // Merge any remaining local subscriptions not yet reflected by API
+    await _loadLocalSubscriptions();
+  }
+
+  Future<void> _loadLocalSubscriptions() async {
+    try {
+      final raw = await const FlutterSecureStorage().read(key: 'local_subscribed_portfolios');
+      if (raw == null || raw.isEmpty) return;
+      final List<dynamic> entries = json.decode(raw);
+      if (entries.isEmpty) return;
+      final localIds = <String>{};
+      final localNames = <String>{};
+      for (final e in entries) {
+        if (e is Map) {
+          final sid = e['strategyId']?.toString();
+          final pid = e['planId']?.toString();
+          final name = e['modelName']?.toString();
+          if (sid != null && sid.isNotEmpty) localIds.add(sid);
+          if (pid != null && pid.isNotEmpty) localIds.add(pid);
+          if (name != null && name.isNotEmpty) {
+            localNames.add(name.toLowerCase().trim());
+          }
+        }
+      }
+      if (localIds.isEmpty && localNames.isEmpty) return;
+      debugPrint('[ModelPortfolio] loaded local subscriptions: ids=$localIds, names=$localNames');
+      if (mounted) {
+        setState(() {
+          _subscribedStrategyIds = {..._subscribedStrategyIds, ...localIds};
+          _subscribedModelNames = {..._subscribedModelNames, ...localNames};
+        });
+      }
+    } catch (e) {
+      debugPrint('[ModelPortfolio] _loadLocalSubscriptions error: $e');
+    }
+  }
+
+  Future<void> _pruneLocalSubscriptions(Set<String> apiIds, Set<String> apiNames) async {
+    try {
+      final raw = await const FlutterSecureStorage().read(key: 'local_subscribed_portfolios');
+      if (raw == null || raw.isEmpty) return;
+      final List<dynamic> entries = json.decode(raw);
+      final remaining = entries.where((e) {
+        if (e is! Map) return false;
+        final sid = e['strategyId']?.toString() ?? '';
+        final pid = e['planId']?.toString() ?? '';
+        final name = (e['modelName']?.toString() ?? '').toLowerCase().trim();
+        // Remove if API already knows about this subscription
+        final confirmedById = apiIds.contains(sid) || apiIds.contains(pid);
+        final confirmedByName = name.isNotEmpty && apiNames.contains(name);
+        return !confirmedById && !confirmedByName;
+      }).toList();
+      await const FlutterSecureStorage().write(
+        key: 'local_subscribed_portfolios',
+        value: json.encode(remaining),
+      );
+      if (remaining.length < entries.length) {
+        debugPrint('[ModelPortfolio] pruned ${entries.length - remaining.length} local subscriptions');
+      }
+    } catch (e) {
+      debugPrint('[ModelPortfolio] _pruneLocalSubscriptions error: $e');
     }
   }
 

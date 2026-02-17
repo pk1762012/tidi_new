@@ -138,6 +138,10 @@ class _ModelPortfolioDetailPageState extends State<ModelPortfolioDetailPage>
             }
           }
         }
+        // Fallback: check local subscriptions if API didn't find it
+        if (!found) {
+          found = await _checkLocalSubscription();
+        }
         debugPrint('[DetailPage] subscriptionCheck: found=$found for ${portfolio.modelName}');
         if (mounted) setState(() => _isSubscribed = found);
         if (found) _fetchSubscribedData();
@@ -145,6 +149,30 @@ class _ModelPortfolioDetailPageState extends State<ModelPortfolioDetailPage>
     } catch (e) {
       debugPrint('[DetailPage] _checkSubscriptionStatus error: $e');
     }
+  }
+
+  Future<bool> _checkLocalSubscription() async {
+    try {
+      final raw = await const FlutterSecureStorage().read(key: 'local_subscribed_portfolios');
+      if (raw == null || raw.isEmpty) return false;
+      final List<dynamic> entries = json.decode(raw);
+      for (final e in entries) {
+        if (e is! Map) continue;
+        final sid = e['strategyId']?.toString() ?? '';
+        final pid = e['planId']?.toString() ?? '';
+        final name = (e['modelName']?.toString() ?? '').toLowerCase().trim();
+        if (sid == portfolio.strategyId ||
+            sid == portfolio.id ||
+            pid == portfolio.id ||
+            name == portfolio.modelName.toLowerCase().trim()) {
+          debugPrint('[DetailPage] found local subscription for ${portfolio.modelName}');
+          return true;
+        }
+      }
+    } catch (e) {
+      debugPrint('[DetailPage] _checkLocalSubscription error: $e');
+    }
+    return false;
   }
 
   Future<void> _fetchSubscribedData() async {

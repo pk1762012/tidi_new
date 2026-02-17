@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -555,12 +556,11 @@ class _InvestInPlanSheetState extends State<InvestInPlanSheet>
       final strategyId = widget.portfolio.strategyId ?? widget.portfolio.id;
       final email = _emailController.text.trim();
 
-      debugPrint('[InvestInPlanSheet] _handleFreeSubscribe - strategyId: $strategyId, email: $email');
+      debugPrint('[InvestInPlanSheet] _handleFreeSubscribe - portfolioId: ${widget.portfolio.id}, strategyId: $strategyId, email: $email');
 
-      final response = await AqApiService.instance.subscribeStrategy(
+      final response = await ApiService().subscribeFreeModelPortfolio(
+        planId: widget.portfolio.id,
         strategyId: strategyId,
-        email: email,
-        action: 'subscribe',
       );
 
       debugPrint('[InvestInPlanSheet] subscribe response: ${response.statusCode} ${response.body}');
@@ -586,6 +586,26 @@ class _InvestInPlanSheetState extends State<InvestInPlanSheet>
         if (pan.isNotEmpty) {
           await _storage.write(key: 'pan', value: pan);
         }
+
+        // Fire-and-forget AQ subscribe with 10s timeout to sync both backends
+        // AQ endpoint expects the model_portfolio _id (widget.portfolio.id)
+        AqApiService.instance.subscribeStrategy(
+          strategyId: widget.portfolio.id,
+          email: email,
+          action: 'subscribe',
+        ).timeout(const Duration(seconds: 10)).then((aqResp) {
+          debugPrint('[InvestInPlanSheet] AQ subscribeStrategy response: ${aqResp.statusCode} ${aqResp.body}');
+        }).catchError((e) {
+          debugPrint('[InvestInPlanSheet] AQ subscribeStrategy error: $e');
+        });
+
+        // Save locally as defensive fallback for instant display on restart
+        await _saveLocalSubscription(
+          strategyId: strategyId,
+          planId: widget.portfolio.id,
+          modelName: widget.portfolio.modelName,
+          email: email,
+        );
 
         CacheService.instance.invalidateByPrefix('aq/admin/plan/portfolios');
         CacheService.instance.invalidateByPrefix('aq/model-portfolio/subscribed');
@@ -621,6 +641,38 @@ class _InvestInPlanSheetState extends State<InvestInPlanSheet>
       }
     } finally {
       if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _saveLocalSubscription({
+    required String strategyId,
+    required String planId,
+    required String modelName,
+    required String email,
+  }) async {
+    try {
+      final raw = await _storage.read(key: 'local_subscribed_portfolios');
+      final List<dynamic> existing = raw != null ? json.decode(raw) : [];
+      // Avoid duplicates
+      final alreadyExists = existing.any((e) =>
+          e is Map &&
+          (e['strategyId'] == strategyId || e['planId'] == planId));
+      if (!alreadyExists) {
+        existing.add({
+          'strategyId': strategyId,
+          'planId': planId,
+          'modelName': modelName,
+          'email': email,
+          'subscribedAt': DateTime.now().toUtc().toIso8601String(),
+        });
+        await _storage.write(
+          key: 'local_subscribed_portfolios',
+          value: json.encode(existing),
+        );
+        debugPrint('[InvestInPlanSheet] Saved local subscription: $modelName');
+      }
+    } catch (e) {
+      debugPrint('[InvestInPlanSheet] _saveLocalSubscription error: $e');
     }
   }
 
