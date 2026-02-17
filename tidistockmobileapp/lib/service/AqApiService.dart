@@ -56,12 +56,31 @@ class AqApiService {
     final uri = Uri.parse(
       '${baseUrl}api/admin/plan/$advisorName/model%20portfolio/${Uri.encodeComponent(safeEmail)}',
     );
+    final hdrs = _headers();
     debugPrint('[AqApiService] getCachedPortfolios url=$uri');
+    debugPrint('[AqApiService] headers: subdomain=${hdrs['X-Advisor-Subdomain']}, key=${hdrs['aq-encrypted-key']?.substring(0, 20.clamp(0, hdrs['aq-encrypted-key']?.length ?? 0))}...');
     return CacheService.instance.fetchWithCache(
       key: 'aq/admin/plan/portfolios',
-      fetcher: () => http.get(uri, headers: _headers()),
+      fetcher: () => http.get(uri, headers: hdrs),
       onData: onData,
     );
+  }
+
+  /// Quick health check — GET portfolios with 'guest', 5s timeout.
+  /// Returns HTTP status code, or -1 on timeout/error.
+  Future<int> healthCheck() async {
+    try {
+      final uri = Uri.parse(
+        '${baseUrl}api/admin/plan/$advisorName/model%20portfolio/guest',
+      );
+      final response = await http.get(uri, headers: _headers())
+          .timeout(const Duration(seconds: 5));
+      debugPrint('[AqApiService] healthCheck status=${response.statusCode}');
+      return response.statusCode;
+    } catch (e) {
+      debugPrint('[AqApiService] healthCheck error: $e');
+      return -1;
+    }
   }
 
   /// Fetch strategy details for a specific model portfolio

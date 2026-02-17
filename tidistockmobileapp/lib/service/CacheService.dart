@@ -296,6 +296,7 @@ class CacheService {
   }) async {
     final config = _getConfig(key);
     final parser = parseResponse ?? (http.Response r) => jsonDecode(r.body);
+    debugPrint('[CacheService] fetchWithCache key=$key tier=${config.tier} online=$_isOnline');
 
     // ── CRITICAL tier: never cache, always fetch ──
     if (config.tier == CacheTier.critical) {
@@ -340,6 +341,7 @@ class CacheService {
 
     // ── 3. Fresh cache hit — return immediately, skip network ──
     if (cached != null && isFresh) {
+      debugPrint('[CacheService] FRESH_CACHE key=$key bodyLen=${cached.body.length}');
       final syntheticResponse = http.Response(cached.body, cached.statusCode, headers: _syntheticHeaders);
       onData(parser(syntheticResponse), fromCache: true);
       return;
@@ -347,6 +349,7 @@ class CacheService {
 
     // ── 4. Stale cache hit — return stale, revalidate in background ──
     if (cached != null) {
+      debugPrint('[CacheService] STALE_HIT key=$key bodyLen=${cached.body.length}');
       final syntheticResponse = http.Response(cached.body, cached.statusCode, headers: _syntheticHeaders);
       onData(parser(syntheticResponse), fromCache: true);
       _revalidateInBackground(
@@ -363,6 +366,7 @@ class CacheService {
     if (config.tier == CacheTier.nonCritical) {
       final staleDisk = _readFromDisk(key);
       if (staleDisk != null) {
+        debugPrint('[CacheService] STALE_DISK key=$key bodyLen=${staleDisk.body.length}');
         final syntheticResponse = http.Response(staleDisk.body, staleDisk.statusCode, headers: _syntheticHeaders);
         onData(parser(syntheticResponse), fromCache: true);
         _revalidateInBackground(
@@ -377,6 +381,7 @@ class CacheService {
     }
 
     // ── 5. No cache at all — must go to network ──
+    debugPrint('[CacheService] NETWORK key=$key');
     if (!_isOnline) {
       throw OfflineException();
     }
@@ -385,8 +390,8 @@ class CacheService {
       final response = await fetcher();
       if (response.statusCode >= 200 && response.statusCode < 300) {
         final data = parser(response);
-        // Don't cache empty list responses — avoids persisting "no data" for hours
-        final shouldCache = data is! List || data.isNotEmpty;
+        // Don't cache empty list or empty-data map responses
+        final shouldCache = _shouldCacheData(data);
         if (shouldCache) {
           _putWithConfig(key, response.body, response.statusCode, config);
         }
@@ -499,9 +504,7 @@ class CacheService {
         debugPrint('[CacheService] revalidate key=$key status=${response.statusCode} bodyLen=${response.body.length}');
         if (response.statusCode >= 200 && response.statusCode < 300) {
           final data = parser(response);
-          // Don't cache empty list responses — avoids persisting "no data" for hours
-          final shouldCache = data is! List || data.isNotEmpty;
-          if (shouldCache) {
+          if (_shouldCacheData(data)) {
             _putWithConfig(key, response.body, response.statusCode, config);
           }
           onData(data, fromCache: false);
@@ -529,6 +532,25 @@ class CacheService {
         }
       } catch (_) {}
     });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Cache guard — avoid persisting empty responses for hours
+  // ---------------------------------------------------------------------------
+
+  /// Returns false for empty lists and maps whose inner lists are all empty
+  /// (e.g. `{"data": []}`, `{"portfolios": []}`).
+  bool _shouldCacheData(dynamic data) {
+    if (data is List) return data.isNotEmpty;
+    if (data is Map) {
+      // Check if ALL list values inside the map are empty
+      final lists = data.values.whereType<List>();
+      if (lists.isNotEmpty && lists.every((l) => l.isEmpty)) {
+        debugPrint('[CacheService] skip caching empty-data Map keys=${data.keys}');
+        return false;
+      }
+    }
+    return true;
   }
 
   // ---------------------------------------------------------------------------

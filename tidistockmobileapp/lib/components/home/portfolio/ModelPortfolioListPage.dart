@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:tidistockmobileapp/models/model_portfolio.dart';
 import 'package:tidistockmobileapp/service/AqApiService.dart';
+import 'package:tidistockmobileapp/service/CacheService.dart';
 import 'package:tidistockmobileapp/widgets/customScaffold.dart';
 
 import 'ModelPortfolioDetailPage.dart';
@@ -57,6 +58,11 @@ class _ModelPortfolioListPageState extends State<ModelPortfolioListPage>
 
   Future<void> _init() async {
     final email = await const FlutterSecureStorage().read(key: 'user_email');
+    if (email == null || email.isEmpty) {
+      debugPrint('[ModelPortfolio] WARNING: user_email is null/empty — subscriptions will not load');
+    } else {
+      debugPrint('[ModelPortfolio] user_email=$email');
+    }
     if (mounted) setState(() => userEmail = email);
     // Load local subscriptions first for instant display
     await _loadLocalSubscriptions();
@@ -105,6 +111,16 @@ class _ModelPortfolioListPageState extends State<ModelPortfolioListPage>
         }
         // Prune local entries already confirmed by API, then merge remainder
         await _pruneLocalSubscriptions(ids, names);
+      }
+    } on HttpException catch (e) {
+      debugPrint('[ModelPortfolio] fetchSubscribedStrategies HTTP error: ${e.statusCode}');
+      if (mounted && (e.statusCode == 401 || e.statusCode == 403)) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Subscription check failed (${e.statusCode}). Auth may have expired.'),
+            duration: const Duration(seconds: 4),
+          ),
+        );
       }
     } catch (e) {
       debugPrint('[ModelPortfolio] fetchSubscribedStrategies error: $e');
@@ -180,23 +196,42 @@ class _ModelPortfolioListPageState extends State<ModelPortfolioListPage>
         onData: (data, {required fromCache}) {
           if (!mounted) return;
 
+          debugPrint('[ModelPortfolio] onData type=${data.runtimeType} fromCache=$fromCache${data is Map ? ' keys=${(data as Map).keys}' : ''}');
+
           List<dynamic> list;
+          String extractionPath;
           if (data is List) {
             list = data;
+            extractionPath = 'top-level List';
           } else if (data is Map) {
-            final d = data['data'] ?? data['portfolios'] ?? data['models'];
-            if (d is List) {
-              list = d;
+            if (data['data'] is List) {
+              list = data['data'];
+              extractionPath = 'data key';
+            } else if (data['portfolios'] is List) {
+              list = data['portfolios'];
+              extractionPath = 'portfolios key';
+            } else if (data['models'] is List) {
+              list = data['models'];
+              extractionPath = 'models key';
             } else {
               list = (data as Map).values.whereType<List>().firstOrNull ?? [];
+              extractionPath = 'fallback first List value';
             }
           } else {
             list = [];
+            extractionPath = 'empty (unknown type)';
           }
 
           list = list.where((e) => e is Map && e['draft'] != true).toList();
 
-          debugPrint('[ModelPortfolio] parsed ${list.length} portfolios, userEmail=$userEmail');
+          debugPrint('[ModelPortfolio] parsed ${list.length} portfolios via $extractionPath, userEmail=$userEmail');
+
+          // Don't overwrite existing data with empty cache results — wait for network
+          if (fromCache && list.isEmpty && portfolios.isNotEmpty) {
+            debugPrint('[ModelPortfolio] skipping empty cache update (already have ${portfolios.length} portfolios)');
+            return;
+          }
+
           setState(() {
             portfolios = list.map((e) => ModelPortfolio.fromJson(e)).toList();
             loading = false;
@@ -210,6 +245,24 @@ class _ModelPortfolioListPageState extends State<ModelPortfolioListPage>
           }
         },
       );
+    } on HttpException catch (e) {
+      debugPrint('[ModelPortfolio] fetch HTTP error: ${e.statusCode}');
+      if (mounted) {
+        setState(() {
+          loading = false;
+          error = e.statusCode == 401 || e.statusCode == 403
+              ? 'Authentication failed (${e.statusCode}). Please re-login.'
+              : 'Server error (${e.statusCode}). Pull to retry.';
+        });
+      }
+    } on OfflineException {
+      debugPrint('[ModelPortfolio] fetch offline');
+      if (mounted) {
+        setState(() {
+          loading = false;
+          error = 'No internet connection. Pull to retry when online.';
+        });
+      }
     } catch (e) {
       debugPrint('[ModelPortfolio] fetch error: $e');
       if (mounted) {
@@ -219,6 +272,15 @@ class _ModelPortfolioListPageState extends State<ModelPortfolioListPage>
         });
       }
     }
+  }
+
+  Future<void> _forceRefresh() async {
+    debugPrint('[ModelPortfolio] _forceRefresh: invalidating caches');
+    CacheService.instance.invalidate('aq/admin/plan/portfolios');
+    if (userEmail != null) {
+      CacheService.instance.invalidate('aq/model-portfolio/subscribed:$userEmail');
+    }
+    await _init();
   }
 
   @override
@@ -258,7 +320,7 @@ class _ModelPortfolioListPageState extends State<ModelPortfolioListPage>
               ElevatedButton(
                 onPressed: () {
                   setState(() { loading = true; error = null; });
-                  _fetchPortfolios();
+                  _forceRefresh();
                 },
                 child: const Text("Retry"),
               ),
@@ -271,7 +333,7 @@ class _ModelPortfolioListPageState extends State<ModelPortfolioListPage>
     // If user has no subscriptions, show flat explore list (no tabs needed)
     if (!_hasSubscribed) {
       return RefreshIndicator(
-        onRefresh: _init,
+        onRefresh: _forceRefresh,
         child: ListView.builder(
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
           itemCount: portfolios.isEmpty ? 1 : portfolios.length,
@@ -371,7 +433,7 @@ class _ModelPortfolioListPageState extends State<ModelPortfolioListPage>
     final subscribed = _subscribedPortfolios;
 
     return RefreshIndicator(
-      onRefresh: _init,
+      onRefresh: _forceRefresh,
       child: ListView(
         padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
         children: [
@@ -410,7 +472,7 @@ class _ModelPortfolioListPageState extends State<ModelPortfolioListPage>
     final explore = _explorePortfolios;
 
     return RefreshIndicator(
-      onRefresh: _init,
+      onRefresh: _forceRefresh,
       child: ListView(
         padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
         children: [

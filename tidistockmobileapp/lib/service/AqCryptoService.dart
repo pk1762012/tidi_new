@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:crypto/crypto.dart';
+import 'package:flutter/foundation.dart';
 
 /// Generates a JWT `aq-encrypted-key` header value matching the
 /// `encryptApiKey()` function from prod-alphaquark's cryptoUtils.js.
@@ -21,6 +22,8 @@ class AqCryptoService {
     final now = _nowIST();
     final iat = now.millisecondsSinceEpoch ~/ 1000;
     final exp = iat + _tokenExpirySeconds;
+    final utcNow = DateTime.now().toUtc();
+    debugPrint('[AqCrypto] JWT iat=$iat exp=$exp utcNow=${utcNow.toIso8601String()} istNow=${now.toIso8601String()} diff=${iat - (utcNow.millisecondsSinceEpoch ~/ 1000)}s');
 
     final header = {'alg': 'HS256', 'typ': 'JWT'};
     final payload = {

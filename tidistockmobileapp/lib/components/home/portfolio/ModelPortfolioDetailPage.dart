@@ -284,13 +284,19 @@ class _ModelPortfolioDetailPageState extends State<ModelPortfolioDetailPage>
           if (!mounted) return;
           final raw = data is Map ? data : (data is List && data.isNotEmpty ? data[0] : null);
           if (raw != null && raw is Map) {
-            final strategyData = ModelPortfolio.fromJson(Map<String, dynamic>.from(raw));
-            setState(() {
-              portfolio = portfolio.mergeStrategyData(strategyData);
-              _updateSortedStocks();
-              _loadingStrategy = false;
-            });
+            try {
+              final strategyData = ModelPortfolio.fromJson(Map<String, dynamic>.from(raw));
+              setState(() {
+                portfolio = portfolio.mergeStrategyData(strategyData);
+                _updateSortedStocks();
+                _loadingStrategy = false;
+              });
+            } catch (e) {
+              debugPrint('[DetailPage] ModelPortfolio.fromJson failed: $e');
+              if (mounted) setState(() => _loadingStrategy = false);
+            }
           } else {
+            debugPrint('[DetailPage] _refreshDetails: unexpected data shape: ${data.runtimeType}');
             if (mounted) setState(() => _loadingStrategy = false);
           }
         },
