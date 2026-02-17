@@ -163,7 +163,7 @@ class ApiService {
         'Authorization': 'Bearer $token',
         'Content-Type': 'application/json',
       },
-    );
+    ).timeout(const Duration(seconds: 15));
   }
 
   Future<http.Response> getSavedDeviceFcm() async {

@@ -5,6 +5,8 @@ import 'package:tidistockmobileapp/models/order_result.dart';
 import 'package:tidistockmobileapp/service/OrderExecutionService.dart';
 import 'package:tidistockmobileapp/widgets/customScaffold.dart';
 
+import 'BrokerSelectionPage.dart';
+
 class ExecutionStatusPage extends StatefulWidget {
   final ModelPortfolio portfolio;
   final String email;
@@ -26,6 +28,7 @@ class _ExecutionStatusPageState extends State<ExecutionStatusPage> {
   int completedCount = 0;
   bool executing = true;
   bool hasError = false;
+  bool isBrokerError = false;
   String? errorMessage;
 
   @override
@@ -55,10 +58,16 @@ class _ExecutionStatusPageState extends State<ExecutionStatusPage> {
         },
       );
     } catch (e) {
+      final errStr = e.toString();
+      final brokerErr = errStr.contains('No connected broker') ||
+          errStr.contains('broker credentials');
       setState(() {
         executing = false;
         hasError = true;
-        errorMessage = e.toString();
+        isBrokerError = brokerErr;
+        errorMessage = brokerErr
+            ? 'No broker connected. Please connect a broker first.'
+            : errStr;
       });
       return;
     }
@@ -73,7 +82,7 @@ class _ExecutionStatusPageState extends State<ExecutionStatusPage> {
             modelId: latestRebalance.modelId!,
             results: orderResults,
             email: widget.email,
-            broker: '', // Will be resolved server-side
+            broker: OrderExecutionService.instance.lastUsedBrokerName,
           );
         }
       }
@@ -175,8 +184,39 @@ class _ExecutionStatusPageState extends State<ExecutionStatusPage> {
                       borderRadius: BorderRadius.circular(12),
                       border: Border.all(color: Colors.red.shade100),
                     ),
-                    child: Text(errorMessage!,
-                      style: TextStyle(fontSize: 13, color: Colors.red.shade700)),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(errorMessage!,
+                          style: TextStyle(fontSize: 13, color: Colors.red.shade700)),
+                        if (isBrokerError) ...[
+                          const SizedBox(height: 10),
+                          SizedBox(
+                            width: double.infinity,
+                            child: ElevatedButton.icon(
+                              onPressed: () {
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (_) => BrokerSelectionPage(
+                                      email: widget.email,
+                                    ),
+                                  ),
+                                );
+                              },
+                              icon: const Icon(Icons.account_balance, size: 18),
+                              label: const Text("Connect Broker"),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: const Color(0xFF1565C0),
+                                foregroundColor: Colors.white,
+                                shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(10)),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
                   ),
 
                 // Order results

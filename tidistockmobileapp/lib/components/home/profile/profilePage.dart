@@ -17,6 +17,7 @@ import '../../../main.dart';
 import '../../../theme/theme.dart';
 import '../../../widgets/customScaffold.dart';
 import '../../login/splash.dart';
+import '../portfolio/BrokerSelectionPage.dart';
 import 'SubscriptionPlanScreen.dart';
 import 'SubscriptionTransactionsScreen.dart';
 
@@ -685,6 +686,61 @@ class ProfilePageState extends State<ProfilePage>
                                   ],
                                 ),
                               ),
+                            ),
+                            const SizedBox(height: 10),
+                            FutureBuilder<String?>(
+                              future: secureStorage.read(key: 'user_email'),
+                              builder: (context, snapshot) {
+                                final email = snapshot.data;
+                                if (email == null || email.isEmpty) return const SizedBox.shrink();
+                                return InkWell(
+                                  onTap: () {
+                                    Navigator.push(
+                                      context,
+                                      MaterialPageRoute(
+                                        builder: (_) => BrokerSelectionPage(
+                                          email: email,
+                                        ),
+                                      ),
+                                    );
+                                  },
+                                  borderRadius: BorderRadius.circular(12),
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 20),
+                                    decoration: BoxDecoration(
+                                      gradient: LinearGradient(
+                                        colors: [lightColorScheme.primary, lightColorScheme.secondary],
+                                        begin: Alignment.topLeft,
+                                        end: Alignment.bottomRight,
+                                      ),
+                                      borderRadius: BorderRadius.circular(12),
+                                      boxShadow: [
+                                        BoxShadow(
+                                          color: lightColorScheme.primary.withOpacity(0.3),
+                                          blurRadius: 8,
+                                          offset: const Offset(0, 4),
+                                        ),
+                                      ],
+                                    ),
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      mainAxisAlignment: MainAxisAlignment.center,
+                                      children: const [
+                                        Icon(Icons.account_balance, color: Colors.blue, size: 20),
+                                        SizedBox(width: 8),
+                                        Text(
+                                          "Connected Brokers",
+                                          style: TextStyle(
+                                            color: Colors.white,
+                                            fontSize: 14,
+                                            fontWeight: FontWeight.w700,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                );
+                              },
                             ),
                           ],
                         ),

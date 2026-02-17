@@ -1,13 +1,14 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:tidistockmobileapp/service/CacheService.dart';
 import 'package:tidistockmobileapp/service/DataRepository.dart';
 import 'package:intl/intl.dart';
 import 'package:tidistockmobileapp/models/model_portfolio.dart';
 import 'package:tidistockmobileapp/service/AqApiService.dart';
 import 'package:tidistockmobileapp/widgets/customScaffold.dart';
 
-import 'PortfolioHoldingsPage.dart';
+import 'ModelPortfolioDetailPage.dart';
 
 class InvestedPortfoliosPage extends StatefulWidget {
   final String email;
@@ -74,15 +75,23 @@ class _InvestedPortfoliosPageState extends State<InvestedPortfoliosPage> {
         email: widget.email,
         modelName: modelName,
       );
+      debugPrint('[InvestedPortfolios] $modelName raw response (${response.statusCode}): ${response.body.length > 300 ? response.body.substring(0, 300) : response.body}');
       if (response.statusCode == 200 && mounted) {
         final data = await DataRepository.parseJsonMap(response.body);
         final subData = data['data'];
         if (subData != null) {
+          final rawAmounts = subData['subscription_amount_raw']
+              ?? subData['subscriptionAmountRaw']
+              ?? [];
+          final userNetPf = subData['user_net_pf_model']
+              ?? subData['userNetPfModel']
+              ?? [];
+          debugPrint('[InvestedPortfolios] $modelName subData.keys=${(subData as Map).keys.toList()}, rawAmounts.length=${rawAmounts is List ? rawAmounts.length : 'N/A'}, userNetPf.length=${userNetPf is List ? userNetPf.length : 'N/A'}, user_broker=${subData['user_broker']}');
+
           double invested = 0;
           double current = 0;
 
           // Parse from subscription_amount_raw (latest)
-          final rawAmounts = subData['subscription_amount_raw'] ?? [];
           if (rawAmounts is List && rawAmounts.isNotEmpty) {
             final latest = rawAmounts.last;
             if (latest is Map) {
@@ -91,14 +100,21 @@ class _InvestedPortfoliosPageState extends State<InvestedPortfoliosPage> {
             }
           }
 
+          // Fallback: try top-level fields in subData
+          if (invested == 0 && subData.containsKey('totalInvestment')) {
+            invested = (subData['totalInvestment'] ?? 0).toDouble();
+            current = (subData['currentValue'] ?? subData['current'] ?? invested).toDouble();
+          }
+
           // Parse from user_net_pf_model for holdings count
-          final holdings = subData['user_net_pf_model'] ?? [];
           int holdingsCount = 0;
-          if (holdings is List && holdings.isNotEmpty) {
-            final latestH = holdings.last;
+          if (userNetPf is List && userNetPf.isNotEmpty) {
+            final latestH = userNetPf.last;
             if (latestH is List) holdingsCount = latestH.length;
             if (latestH is Map) holdingsCount = (latestH['stocks'] as List?)?.length ?? 0;
           }
+
+          debugPrint('[InvestedPortfolios] $modelName parsed: invested=$invested, current=$current, holdingsCount=$holdingsCount');
 
           setState(() {
             summaries[modelName] = _PortfolioSummary(
@@ -106,6 +122,7 @@ class _InvestedPortfoliosPageState extends State<InvestedPortfoliosPage> {
               currentValue: current,
               holdingsCount: holdingsCount,
               broker: subData['user_broker'] ?? '',
+              hasFinancialData: invested > 0 || current > 0,
             );
           });
         }
@@ -186,16 +203,20 @@ class _InvestedPortfoliosPageState extends State<InvestedPortfoliosPage> {
     final totalPnl = totalCurrent - totalInvested;
     final totalPnlPct = totalInvested > 0 ? (totalPnl / totalInvested * 100) : 0.0;
 
+    final hasAnyFinancialData = summaries.values.any((s) => s.hasFinancialData);
+
     return RefreshIndicator(
       onRefresh: () async {
+        CacheService.instance.invalidateByPrefix('aq/subscription-raw:${widget.email}');
+        CacheService.instance.invalidate('aq/model-portfolio/subscribed:${widget.email}');
         setState(() => loading = true);
         await _fetchSubscribedStrategies();
       },
       child: ListView(
         padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
         children: [
-          // Overall summary card
-          if (summaries.isNotEmpty) _overallSummary(totalInvested, totalCurrent, totalPnl, totalPnlPct),
+          // Overall summary card (only when real financial data exists)
+          if (summaries.isNotEmpty && hasAnyFinancialData) _overallSummary(totalInvested, totalCurrent, totalPnl, totalPnlPct),
           const SizedBox(height: 16),
 
           // Individual portfolio cards
@@ -282,9 +303,8 @@ class _InvestedPortfoliosPageState extends State<InvestedPortfoliosPage> {
         Navigator.push(
           context,
           MaterialPageRoute(
-            builder: (_) => PortfolioHoldingsPage(
+            builder: (_) => ModelPortfolioDetailPage(
               portfolio: portfolio,
-              email: widget.email,
             ),
           ),
         );
@@ -312,7 +332,7 @@ class _InvestedPortfoliosPageState extends State<InvestedPortfoliosPage> {
                   child: Text(portfolio.modelName,
                     style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
                 ),
-                if (summary != null)
+                if (summary != null && summary.hasFinancialData)
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                     decoration: BoxDecoration(
@@ -332,7 +352,7 @@ class _InvestedPortfoliosPageState extends State<InvestedPortfoliosPage> {
                 const Icon(Icons.chevron_right, size: 20, color: Colors.grey),
               ],
             ),
-            if (summary != null) ...[
+            if (summary != null && summary.hasFinancialData) ...[
               const SizedBox(height: 12),
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -345,6 +365,33 @@ class _InvestedPortfoliosPageState extends State<InvestedPortfoliosPage> {
                       "${isProfit ? '+' : ''}\u20B9${_currencyFormat.format(pnl.abs().round())}",
                       color: isProfit ? Colors.green : Colors.red),
                 ],
+              ),
+              if (summary.broker.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                Text("via ${summary.broker}",
+                  style: TextStyle(fontSize: 11, color: Colors.grey.shade500)),
+              ],
+            ] else if (summary != null && !summary.hasFinancialData) ...[
+              const SizedBox(height: 12),
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: Colors.orange.shade50,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: Colors.orange.shade200),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.hourglass_empty, size: 18, color: Colors.orange.shade700),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        "Awaiting trade data",
+                        style: TextStyle(fontSize: 13, color: Colors.orange.shade800),
+                      ),
+                    ),
+                  ],
+                ),
               ),
               if (summary.broker.isNotEmpty) ...[
                 const SizedBox(height: 8),
@@ -380,11 +427,13 @@ class _PortfolioSummary {
   final double currentValue;
   final int holdingsCount;
   final String broker;
+  final bool hasFinancialData;
 
   _PortfolioSummary({
     required this.investedValue,
     required this.currentValue,
     required this.holdingsCount,
     required this.broker,
+    required this.hasFinancialData,
   });
 }

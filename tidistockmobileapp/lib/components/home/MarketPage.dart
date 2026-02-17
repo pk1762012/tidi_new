@@ -219,9 +219,7 @@ class MarketPageState extends State<MarketPage> with TickerProviderStateMixin, W
       await ApiService().getCachedNifty50StockAnalysis(
         onData: (data, {required fromCache}) {
           if (!mounted) return;
-          setState(() {
-            stockData = data is List ? data : [];
-          });
+          stockData = data is List ? data : [];
         },
       );
     } catch (_) {}

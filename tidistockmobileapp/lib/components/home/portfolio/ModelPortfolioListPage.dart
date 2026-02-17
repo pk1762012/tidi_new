@@ -28,6 +28,9 @@ class _ModelPortfolioListPageState extends State<ModelPortfolioListPage>
   String? error;
   String? userEmail;
 
+  List<Map<String, dynamic>> _recentlyVisited = [];
+  bool _showingAllPortfolios = false;
+
   late TabController _tabController;
 
   List<ModelPortfolio> get _subscribedPortfolios =>
@@ -64,8 +67,11 @@ class _ModelPortfolioListPageState extends State<ModelPortfolioListPage>
       debugPrint('[ModelPortfolio] user_email=$email');
     }
     if (mounted) setState(() => userEmail = email);
-    // Load local subscriptions first for instant display
-    await _loadLocalSubscriptions();
+    // Load local subscriptions and recently visited first for instant display
+    await Future.wait([
+      _loadLocalSubscriptions(),
+      _loadRecentlyVisited(),
+    ]);
     await Future.wait([
       _fetchPortfolios(),
       _fetchSubscribedStrategies(),
@@ -159,6 +165,21 @@ class _ModelPortfolioListPageState extends State<ModelPortfolioListPage>
       }
     } catch (e) {
       debugPrint('[ModelPortfolio] _loadLocalSubscriptions error: $e');
+    }
+  }
+
+  Future<void> _loadRecentlyVisited() async {
+    try {
+      final raw = await const FlutterSecureStorage().read(key: 'recently_visited_portfolios');
+      if (raw == null || raw.isEmpty) return;
+      final List<dynamic> entries = json.decode(raw);
+      if (mounted) {
+        setState(() {
+          _recentlyVisited = entries.whereType<Map<String, dynamic>>().toList();
+        });
+      }
+    } catch (e) {
+      debugPrint('[ModelPortfolio] _loadRecentlyVisited error: $e');
     }
   }
 
@@ -330,32 +351,239 @@ class _ModelPortfolioListPageState extends State<ModelPortfolioListPage>
       );
     }
 
+    // Show recently visited landing if available and not toggled to full list
+    if (_recentlyVisited.isNotEmpty && !_showingAllPortfolios) {
+      return _buildRecentlyVisitedView();
+    }
+
     // If user has no subscriptions, show flat explore list (no tabs needed)
     if (!_hasSubscribed) {
-      return RefreshIndicator(
-        onRefresh: _forceRefresh,
-        child: ListView.builder(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
-          itemCount: portfolios.isEmpty ? 1 : portfolios.length,
-          itemBuilder: (context, index) {
-            if (portfolios.isEmpty) {
-              return const Padding(
-                padding: EdgeInsets.only(top: 60),
-                child: Center(
-                  child: Text("No model portfolios available yet.",
-                    style: TextStyle(fontSize: 16, color: Colors.grey)),
+      return Column(
+        children: [
+          if (_recentlyVisited.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: TextButton.icon(
+                  onPressed: () => setState(() => _showingAllPortfolios = false),
+                  icon: const Icon(Icons.arrow_back_rounded, size: 18),
+                  label: const Text("Recently Visited"),
+                  style: TextButton.styleFrom(
+                    foregroundColor: const Color(0xFF1565C0),
+                    padding: EdgeInsets.zero,
+                    visualDensity: VisualDensity.compact,
+                  ),
                 ),
-              );
-            }
-            return _portfolioCard(portfolios[index]);
-          },
-        ),
+              ),
+            ),
+          Expanded(
+            child: RefreshIndicator(
+              onRefresh: _forceRefresh,
+              child: ListView.builder(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
+                itemCount: portfolios.isEmpty ? 1 : portfolios.length,
+                itemBuilder: (context, index) {
+                  if (portfolios.isEmpty) {
+                    return const Padding(
+                      padding: EdgeInsets.only(top: 60),
+                      child: Center(
+                        child: Text("No model portfolios available yet.",
+                          style: TextStyle(fontSize: 16, color: Colors.grey)),
+                      ),
+                    );
+                  }
+                  return _portfolioCard(portfolios[index]);
+                },
+              ),
+            ),
+          ),
+        ],
       );
     }
 
     // User has subscriptions — show tab layout
+    return _buildFullListView();
+  }
+
+  Widget _buildRecentlyVisitedView() {
+    return RefreshIndicator(
+      onRefresh: _forceRefresh,
+      child: ListView(
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
+        children: [
+          // "My Investments" banner if user has subscriptions
+          if (_hasSubscribed && userEmail != null) _investedPortfoliosBanner(),
+
+          // Recently Visited header
+          Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: Row(
+              children: [
+                Icon(Icons.history_rounded, size: 20, color: Colors.grey.shade600),
+                const SizedBox(width: 8),
+                const Text("Recently Visited",
+                    style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700)),
+              ],
+            ),
+          ),
+
+          // Recently visited portfolio cards
+          ..._recentlyVisited.map((entry) {
+            final modelName = entry['modelName']?.toString() ?? '';
+            final entryId = entry['id']?.toString() ?? '';
+            // Look up full portfolio from loaded list
+            final fullPortfolio = portfolios.cast<ModelPortfolio?>().firstWhere(
+              (p) =>
+                  p!.modelName == modelName ||
+                  p.id == entryId,
+              orElse: () => null,
+            );
+
+            if (fullPortfolio != null) {
+              return _portfolioCard(fullPortfolio);
+            }
+
+            // Fallback: render a minimal card from stored data
+            return _recentVisitFallbackCard(entry);
+          }),
+
+          const SizedBox(height: 16),
+
+          // "Browse All Portfolios" button
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              onPressed: () {
+                setState(() => _showingAllPortfolios = true);
+              },
+              icon: const Icon(Icons.explore_rounded, size: 18),
+              label: const Text("Browse All Portfolios"),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: const Color(0xFF1565C0),
+                side: const BorderSide(color: Color(0xFF1565C0)),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                padding: const EdgeInsets.symmetric(vertical: 14),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _recentVisitFallbackCard(Map<String, dynamic> entry) {
+    final modelName = entry['modelName']?.toString() ?? 'Portfolio';
+    final image = entry['image']?.toString() ?? '';
+    final riskProfile = entry['riskProfile']?.toString() ?? '';
+    final advisor = entry['advisor']?.toString() ?? '';
+    final riskColor = _riskColor(riskProfile);
+
+    return GestureDetector(
+      onTap: () async {
+        HapticFeedback.mediumImpact();
+        // Build a minimal ModelPortfolio from stored data
+        final minimalPortfolio = ModelPortfolio.fromJson({
+          '_id': entry['id'] ?? '',
+          'model_name': modelName,
+          'image': image,
+          'risk_profile': riskProfile,
+          'advisor': advisor,
+        });
+        await Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => ModelPortfolioDetailPage(portfolio: minimalPortfolio),
+          ),
+        );
+        await _init();
+      },
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 12),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(20),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.06),
+              blurRadius: 16,
+              offset: const Offset(0, 6),
+            ),
+          ],
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(20),
+          child: Container(
+            decoration: BoxDecoration(
+              color: Colors.white,
+              border: Border(left: BorderSide(color: riskColor, width: 4)),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.all(14),
+              child: Row(
+                children: [
+                  if (image.isNotEmpty)
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(10),
+                      child: Image.network(
+                        image,
+                        width: 44,
+                        height: 44,
+                        fit: BoxFit.cover,
+                        cacheWidth: 88,
+                        cacheHeight: 88,
+                        errorBuilder: (_, __, ___) => _placeholderIcon(),
+                      ),
+                    )
+                  else
+                    _placeholderIcon(),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(modelName,
+                            style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700, color: Colors.black87)),
+                        if (advisor.isNotEmpty)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 4),
+                            child: Text("by $advisor",
+                                style: TextStyle(fontSize: 12, color: Colors.grey.shade500)),
+                          ),
+                      ],
+                    ),
+                  ),
+                  const Icon(Icons.chevron_right, size: 22, color: Colors.grey),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildFullListView() {
     return Column(
       children: [
+        // Back to recently visited (if available)
+        if (_recentlyVisited.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                onPressed: () => setState(() => _showingAllPortfolios = false),
+                icon: const Icon(Icons.arrow_back_rounded, size: 18),
+                label: const Text("Recently Visited"),
+                style: TextButton.styleFrom(
+                  foregroundColor: const Color(0xFF1565C0),
+                  padding: EdgeInsets.zero,
+                  visualDensity: VisualDensity.compact,
+                ),
+              ),
+            ),
+          ),
+
         // Tab bar
         Container(
           margin: const EdgeInsets.fromLTRB(16, 8, 16, 0),

@@ -11,10 +11,14 @@ import 'package:tidistockmobileapp/models/model_portfolio.dart';
 import 'package:tidistockmobileapp/models/portfolio_stock.dart';
 import 'package:tidistockmobileapp/models/rebalance_entry.dart';
 import 'package:tidistockmobileapp/service/AqApiService.dart';
+import 'package:tidistockmobileapp/service/CacheService.dart';
 import 'package:tidistockmobileapp/models/portfolio_holding.dart';
 import 'package:tidistockmobileapp/widgets/customScaffold.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import 'package:tidistockmobileapp/models/broker_connection.dart';
+
+import 'BrokerSelectionPage.dart';
 import 'InvestInPlanSheet.dart';
 import 'InvestmentModal.dart';
 import 'PortfolioHoldingsPage.dart';
@@ -80,6 +84,7 @@ class _ModelPortfolioDetailPageState extends State<ModelPortfolioDetailPage>
       if (_tabController.indexIsChanging) return;
       setState(() => _selectedTabIndex = _tabController.index);
     });
+    _recordRecentVisit();
     _loadUserEmail();
     _refreshDetails();
     _fetchPerformanceData();
@@ -98,6 +103,39 @@ class _ModelPortfolioDetailPageState extends State<ModelPortfolioDetailPage>
     _maxPct = _totalWeight > 0 && _sortedStocks.isNotEmpty
         ? (_sortedStocks.first.weight / _totalWeight * 100)
         : 1.0;
+  }
+
+  Future<void> _recordRecentVisit() async {
+    try {
+      const storage = FlutterSecureStorage();
+      final raw = await storage.read(key: 'recently_visited_portfolios');
+      List<dynamic> entries = [];
+      if (raw != null && raw.isNotEmpty) {
+        entries = json.decode(raw);
+      }
+      // Remove duplicate by modelName or id
+      entries.removeWhere((e) =>
+          e is Map &&
+          ((e['modelName']?.toString() ?? '') == portfolio.modelName ||
+              (e['id']?.toString() ?? '') == (portfolio.id)));
+      // Insert current portfolio at front
+      entries.insert(0, {
+        'modelName': portfolio.modelName,
+        'id': portfolio.id,
+        'image': portfolio.image ?? '',
+        'riskProfile': portfolio.riskProfile ?? '',
+        'advisor': portfolio.advisor,
+        'visitedAt': DateTime.now().toIso8601String(),
+      });
+      // Cap at 10
+      if (entries.length > 10) entries = entries.sublist(0, 10);
+      await storage.write(
+        key: 'recently_visited_portfolios',
+        value: json.encode(entries),
+      );
+    } catch (e) {
+      debugPrint('[DetailPage] _recordRecentVisit error: $e');
+    }
   }
 
   Future<void> _loadUserEmail() async {
@@ -208,6 +246,7 @@ class _ModelPortfolioDetailPageState extends State<ModelPortfolioDetailPage>
         modelName: modelName,
         userBroker: _selectedBroker == 'ALL' ? null : _selectedBroker,
       );
+      debugPrint('[DetailPage] _fetchHoldings $modelName raw response (${response.statusCode}): ${response.body.length > 500 ? response.body.substring(0, 500) : response.body}');
 
       if (response.statusCode == 200 && mounted) {
         final data = await DataRepository.parseJsonMap(response.body);
@@ -224,8 +263,12 @@ class _ModelPortfolioDetailPageState extends State<ModelPortfolioDetailPage>
   }
 
   void _parseHoldings(Map<String, dynamic> subData) {
-    final userNetPf = subData['user_net_pf_model'] ?? [];
+    final userNetPf = subData['user_net_pf_model']
+        ?? subData['userNetPfModel']
+        ?? [];
     final List<PortfolioHolding> parsed = [];
+
+    debugPrint('[DetailPage] _parseHoldings subData.keys=${subData.keys.toList()}, userNetPf.type=${userNetPf.runtimeType}, userNetPf.length=${userNetPf is List ? userNetPf.length : 'N/A'}');
 
     if (userNetPf is List && userNetPf.isNotEmpty) {
       final latest = userNetPf.last;
@@ -245,13 +288,23 @@ class _ModelPortfolioDetailPageState extends State<ModelPortfolioDetailPage>
     // Parse totals from subscription_amount_raw
     double invested = 0;
     double current = 0;
-    final rawAmounts = subData['subscription_amount_raw'] ?? [];
+    final rawAmounts = subData['subscription_amount_raw']
+        ?? subData['subscriptionAmountRaw']
+        ?? [];
+    debugPrint('[DetailPage] _parseHoldings rawAmounts.type=${rawAmounts.runtimeType}, rawAmounts.length=${rawAmounts is List ? rawAmounts.length : 'N/A'}');
+
     if (rawAmounts is List && rawAmounts.isNotEmpty) {
       final latest = rawAmounts.last;
       if (latest is Map) {
         invested = (latest['totalInvestment'] ?? latest['invested'] ?? 0).toDouble();
         current = (latest['currentValue'] ?? latest['current'] ?? invested).toDouble();
       }
+    }
+
+    // Fallback: try top-level fields in subData
+    if (invested == 0 && subData.containsKey('totalInvestment')) {
+      invested = (subData['totalInvestment'] ?? 0).toDouble();
+      current = (subData['currentValue'] ?? subData['current'] ?? invested).toDouble();
     }
 
     // Fallback: compute from holdings if raw amounts unavailable
@@ -261,6 +314,8 @@ class _ModelPortfolioDetailPageState extends State<ModelPortfolioDetailPage>
         current += h.currentValue;
       }
     }
+
+    debugPrint('[DetailPage] _parseHoldings final: invested=$invested, current=$current, holdings=${parsed.length}');
 
     setState(() {
       _holdings = parsed;
@@ -277,6 +332,11 @@ class _ModelPortfolioDetailPageState extends State<ModelPortfolioDetailPage>
   }
 
   Future<void> _refreshDetails() async {
+    // Invalidate cached subscription data so pull-to-refresh forces a real fetch
+    if (userEmail != null) {
+      CacheService.instance.invalidateByPrefix('aq/subscription-raw:$userEmail:${portfolio.modelName}');
+    }
+
     try {
       await AqApiService.instance.getCachedStrategyDetails(
         modelName: portfolio.modelName,
@@ -305,17 +365,25 @@ class _ModelPortfolioDetailPageState extends State<ModelPortfolioDetailPage>
       debugPrint('[DetailPage] _refreshDetails error: $e');
       if (mounted) setState(() => _loadingStrategy = false);
     }
+
+    // Re-fetch subscribed data after strategy refresh
+    if (_isSubscribed && userEmail != null) {
+      _fetchSubscribedData();
+    }
   }
 
   Future<void> _fetchPerformanceData() async {
     try {
+      debugPrint('[DetailPage] _fetchPerformanceData: advisor=${portfolio.advisor}, modelName=${portfolio.modelName}');
       final response = await AqApiService.instance.getPortfolioPerformance(
         advisor: portfolio.advisor,
         modelName: portfolio.modelName,
       );
+      debugPrint('[DetailPage] _fetchPerformanceData status=${response.statusCode}, bodyLen=${response.body.length}');
       if (response.statusCode == 200) {
         final body = await DataRepository.parseJsonMap(response.body);
         final data = body['data'];
+        debugPrint('[DetailPage] _fetchPerformanceData data is List=${data is List}, isEmpty=${data is List ? data.isEmpty : 'N/A'}');
         if (data is List && data.isNotEmpty) {
           if (mounted) {
             setState(() {
@@ -528,13 +596,16 @@ class _ModelPortfolioDetailPageState extends State<ModelPortfolioDetailPage>
             children: [
               Expanded(
                 child: OutlinedButton.icon(
-                  onPressed: () {
+                  onPressed: () async {
+                    final broker = await _ensureBrokerConnected();
+                    if (broker == null || !mounted) return;
                     Navigator.push(
                       context,
                       MaterialPageRoute(
                         builder: (_) => InvestmentModal(
                           portfolio: portfolio,
                           email: userEmail!,
+                          brokerName: broker.broker,
                         ),
                       ),
                     );
@@ -585,6 +656,26 @@ class _ModelPortfolioDetailPageState extends State<ModelPortfolioDetailPage>
   // ---------------------------------------------------------------------------
 
   Widget _subscribedStatsGrid() {
+    // Show informational message when no financial data is available yet
+    if (!_loadingHoldings && _totalInvested == 0 && _totalCurrent == 0 && _holdings.isEmpty) {
+      return Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: Colors.orange.shade50,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: Colors.orange.shade200),
+        ),
+        child: Row(children: [
+          Icon(Icons.info_outline, color: Colors.orange.shade700, size: 22),
+          const SizedBox(width: 12),
+          Expanded(child: Text(
+            "Investment data is being processed. This may take a few minutes after your first trade.",
+            style: TextStyle(fontSize: 13, color: Colors.orange.shade800),
+          )),
+        ]),
+      );
+    }
+
     final returns = _totalInvested > 0
         ? ((_totalCurrent - _totalInvested) / _totalInvested * 100)
         : 0.0;
@@ -596,7 +687,7 @@ class _ModelPortfolioDetailPageState extends State<ModelPortfolioDetailPage>
     final sharpeStr = perf?.sharpeRatio != null ? perf!.sharpeRatio!.toStringAsFixed(2) : 'N/A';
 
     return SizedBox(
-      height: 90,
+      height: 110,
       child: ListView(
         scrollDirection: Axis.horizontal,
         children: [
@@ -827,6 +918,7 @@ class _ModelPortfolioDetailPageState extends State<ModelPortfolioDetailPage>
         borderRadius: BorderRadius.circular(14),
       ),
       child: Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
           Icon(icon, size: 20, color: color),
           const SizedBox(height: 8),
@@ -2044,6 +2136,108 @@ class _ModelPortfolioDetailPageState extends State<ModelPortfolioDetailPage>
     );
   }
 
+  // ---------------------------------------------------------------------------
+  // Broker Connection Gate
+  // ---------------------------------------------------------------------------
+
+  Future<BrokerConnection?> _ensureBrokerConnected() async {
+    if (userEmail == null) return null;
+
+    // Invalidate cache to get fresh broker status
+    CacheService.instance.invalidate('aq/user/brokers:$userEmail');
+
+    try {
+      final response =
+          await AqApiService.instance.getConnectedBrokers(userEmail!);
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        final List<dynamic> brokerList =
+            data['data'] ?? data['connected_brokers'] ?? [];
+        final connected = brokerList
+            .map((e) => BrokerConnection.fromJson(e))
+            .where((b) => b.isConnected)
+            .toList();
+
+        if (connected.isNotEmpty) {
+          if (connected.length == 1) return connected.first;
+          // Multiple brokers — let user pick (no portfolio = picker mode)
+          if (!mounted) return null;
+          final result = await Navigator.push<BrokerConnection>(
+            context,
+            MaterialPageRoute(
+                builder: (_) => BrokerSelectionPage(email: userEmail!)),
+          );
+          return result;
+        }
+      }
+    } catch (e) {
+      debugPrint('[DetailPage] _ensureBrokerConnected error: $e');
+    }
+
+    // No connected broker — show dialog with options
+    if (!mounted) return null;
+    final choice = await _showBrokerChoiceDialog();
+
+    if (choice == 'connect') {
+      if (!mounted) return null;
+      final result = await Navigator.push<BrokerConnection>(
+        context,
+        MaterialPageRoute(
+            builder: (_) => BrokerSelectionPage(email: userEmail!)),
+      );
+      return result;
+    } else if (choice == 'dummy') {
+      return BrokerConnection(broker: 'DummyBroker', status: 'connected');
+    }
+    return null; // cancelled
+  }
+
+  /// Returns 'connect', 'dummy', or null (cancelled).
+  Future<String?> _showBrokerChoiceDialog() {
+    return showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text("No Broker Connected",
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
+        content: Text(
+          "You don't have a broker connected. You can either connect one now, "
+          "or continue without a broker and execute orders manually.",
+          style: TextStyle(fontSize: 14, color: Colors.grey.shade700, height: 1.4),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, null),
+            child: Text("Cancel",
+                style: TextStyle(color: Colors.grey.shade600)),
+          ),
+          OutlinedButton.icon(
+            onPressed: () => Navigator.pop(ctx, 'connect'),
+            icon: const Icon(Icons.account_balance, size: 18),
+            label: const Text("Connect Broker"),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: const Color(0xFF1565C0),
+              side: const BorderSide(color: Color(0xFF1565C0)),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10)),
+            ),
+          ),
+          ElevatedButton.icon(
+            onPressed: () => Navigator.pop(ctx, 'dummy'),
+            icon: const Icon(Icons.touch_app, size: 18),
+            label: const Text("Continue Without"),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF2E7D32),
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10)),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   void _showPlanSelectionSheet() {
     showModalBottomSheet(
       context: context,
@@ -2066,13 +2260,15 @@ class _ModelPortfolioDetailPageState extends State<ModelPortfolioDetailPage>
   Widget _bottomCta() {
     String label;
     IconData icon;
-    VoidCallback onPressed;
+    VoidCallback? onPressed;
 
     if (_isSubscribed && userEmail != null) {
       if (_hasPendingRebalance) {
         label = "Execute Rebalance";
         icon = Icons.sync_rounded;
-        onPressed = () {
+        onPressed = () async {
+          final broker = await _ensureBrokerConnected();
+          if (broker == null || !mounted) return;
           Navigator.push(
             context,
             MaterialPageRoute(
@@ -2086,13 +2282,16 @@ class _ModelPortfolioDetailPageState extends State<ModelPortfolioDetailPage>
       } else {
         label = "Invest More";
         icon = Icons.add_circle_outline_rounded;
-        onPressed = () {
+        onPressed = () async {
+          final broker = await _ensureBrokerConnected();
+          if (broker == null || !mounted) return;
           Navigator.push(
             context,
             MaterialPageRoute(
               builder: (_) => InvestmentModal(
                 portfolio: portfolio,
                 email: userEmail!,
+                brokerName: broker.broker,
               ),
             ),
           );

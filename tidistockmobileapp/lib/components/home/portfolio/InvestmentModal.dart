@@ -10,11 +10,13 @@ import 'OrderReviewPage.dart';
 class InvestmentModal extends StatefulWidget {
   final ModelPortfolio portfolio;
   final String email;
+  final String? brokerName;
 
   const InvestmentModal({
     super.key,
     required this.portfolio,
     required this.email,
+    this.brokerName,
   });
 
   @override
@@ -117,6 +119,7 @@ class _InvestmentModalState extends State<InvestmentModal> {
         builder: (_) => OrderReviewPage(
           portfolio: widget.portfolio,
           email: widget.email,
+          brokerName: widget.brokerName,
           allocations: validAllocations.map((a) => {
             'symbol': a.stock.symbol,
             'exchange': a.stock.exchange ?? 'NSE',

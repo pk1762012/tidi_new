@@ -35,6 +35,7 @@ class MarketDataWidgetState extends State<MarketDataWidget>
 
   bool _isLoading = true;
   bool _hasError = false;
+  bool _hasReceivedData = false;
 
   // Throttle: buffer WS updates & flush to UI at ~3fps
   Timer? _uiUpdateTimer;
@@ -212,19 +213,21 @@ class MarketDataWidgetState extends State<MarketDataWidget>
       }
 
       if (!mounted) return;
+      final gotAnyData = gotData || tempNifty > 0.0 || tempBankNifty > 0.0;
+      if (gotAnyData) _hasReceivedData = true;
       setState(() {
         nifty = tempNifty;
         niftyChange = tempNiftyChange;
         bankNifty = tempBankNifty;
         bankNiftyChange = tempBankNiftyChange;
         _isLoading = false;
-        _hasError = !gotData && tempNifty == 0.0 && tempBankNifty == 0.0;
+        _hasError = !gotAnyData && !_hasReceivedData;
       });
     } catch (e) {
       print("HTTP fetch error: $e");
       if (!mounted) return;
       setState(() {
-        if (_isLoading) {
+        if (_isLoading && !_hasReceivedData) {
           _hasError = true;
           _isLoading = false;
         }
@@ -315,6 +318,7 @@ class MarketDataWidgetState extends State<MarketDataWidget>
               otherIndices = tempOther;
               _isLoading = false;
               _hasError = false;
+              _hasReceivedData = true;
               _hasPendingUpdate = true;
             }
           } catch (e) {
@@ -344,7 +348,7 @@ class MarketDataWidgetState extends State<MarketDataWidget>
       _isConnecting = false;
       _isConnected = false;
       if (!mounted) return;
-      if (_isLoading) {
+      if (_isLoading && !_hasReceivedData) {
         setState(() {
           _hasError = true;
           _isLoading = false;
@@ -358,7 +362,7 @@ class MarketDataWidgetState extends State<MarketDataWidget>
       _isConnecting = false;
       _isConnected = false;
       if (!mounted) return;
-      if (_isLoading) {
+      if (_isLoading && !_hasReceivedData) {
         setState(() {
           _hasError = true;
           _isLoading = false;

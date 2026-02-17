@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:tidistockmobileapp/service/AqApiService.dart';
+import 'package:tidistockmobileapp/service/CacheService.dart';
 import 'package:tidistockmobileapp/widgets/customScaffold.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
@@ -131,7 +132,7 @@ class _BrokerAuthPageState extends State<BrokerAuthPage> {
         );
 
         if (response.statusCode == 200) {
-          // Invalidate broker cache
+          CacheService.instance.invalidate('aq/user/brokers:${widget.email}');
           setState(() => _status = 'success');
           await Future.delayed(const Duration(seconds: 1));
           if (mounted) Navigator.pop(context, true);

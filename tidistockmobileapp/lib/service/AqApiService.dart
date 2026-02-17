@@ -435,6 +435,70 @@ class AqApiService {
     );
   }
 
+  // ---------------------------------------------------------------------------
+  // DummyBroker / ccxt Direct APIs
+  // ---------------------------------------------------------------------------
+
+  /// Process trades for DummyBroker — calls ccxt-india directly.
+  /// Reference: prod_alphaquark_github DummyBrokerHoldingConfirmation.js
+  Future<http.Response> processDummyBrokerTrade({
+    required String email,
+    required String modelName,
+    required String modelId,
+    required String advisor,
+    required List<Map<String, dynamic>> trades,
+  }) async {
+    return http.post(
+      Uri.parse('${ccxtUrl}rebalance/process-trade'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({
+        'user_email': email,
+        'user_broker': 'DummyBroker',
+        'model_id': modelId,
+        'modelName': modelName,
+        'advisor': advisor,
+        'trades': trades,
+      }),
+    );
+  }
+
+  /// Update subscriber execution status after DummyBroker confirmation.
+  Future<http.Response> updateSubscriberExecution({
+    required String email,
+    required String modelName,
+    required String advisor,
+  }) async {
+    return http.put(
+      Uri.parse('${ccxtUrl}rebalance/update/subscriber-execution'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({
+        'user_email': email,
+        'user_broker': 'DummyBroker',
+        'modelName': modelName,
+        'advisor': advisor,
+        'executionStatus': 'executed',
+      }),
+    );
+  }
+
+  /// Add user to status-check queue for DummyBroker.
+  Future<http.Response> addToStatusCheckQueue({
+    required String email,
+    required String modelName,
+    required String advisor,
+  }) async {
+    return http.post(
+      Uri.parse('${ccxtUrl}rebalance/add-user/status-check-queue'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({
+        'user_email': email,
+        'broker': 'DummyBroker',
+        'modelName': modelName,
+        'advisor': advisor,
+      }),
+    );
+  }
+
   /// Convert pricing tier name to duration in days
   static int _tierToDays(String tier) {
     switch (tier.toLowerCase()) {

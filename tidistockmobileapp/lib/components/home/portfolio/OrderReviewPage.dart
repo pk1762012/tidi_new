@@ -3,11 +3,13 @@ import 'package:intl/intl.dart';
 import 'package:tidistockmobileapp/models/model_portfolio.dart';
 import 'package:tidistockmobileapp/widgets/customScaffold.dart';
 
+import 'DummyBrokerConfirmationPage.dart';
 import 'ExecutionStatusPage.dart';
 
 class OrderReviewPage extends StatefulWidget {
   final ModelPortfolio portfolio;
   final String email;
+  final String? brokerName;
   final List<Map<String, dynamic>> allocations;
   final double totalAmount;
 
@@ -15,6 +17,7 @@ class OrderReviewPage extends StatefulWidget {
     super.key,
     required this.portfolio,
     required this.email,
+    this.brokerName,
     required this.allocations,
     required this.totalAmount,
   });
@@ -35,14 +38,23 @@ class _OrderReviewPageState extends State<OrderReviewPage> {
       return;
     }
 
+    final isDummyBroker = widget.brokerName == 'DummyBroker';
+
     Navigator.pushReplacement(
       context,
       MaterialPageRoute(
-        builder: (_) => ExecutionStatusPage(
-          portfolio: widget.portfolio,
-          email: widget.email,
-          orders: widget.allocations,
-        ),
+        builder: (_) => isDummyBroker
+            ? DummyBrokerConfirmationPage(
+                portfolio: widget.portfolio,
+                email: widget.email,
+                orders: widget.allocations,
+                totalAmount: widget.totalAmount,
+              )
+            : ExecutionStatusPage(
+                portfolio: widget.portfolio,
+                email: widget.email,
+                orders: widget.allocations,
+              ),
       ),
     );
   }
@@ -215,9 +227,13 @@ class _OrderReviewPageState extends State<OrderReviewPage> {
                       ),
                       const SizedBox(height: 8),
                       Text(
-                        "Orders will be placed at MARKET price via your connected broker. "
-                        "Actual execution price may differ slightly from estimates. "
-                        "Investment in securities is subject to market risks.",
+                        widget.brokerName == 'DummyBroker'
+                            ? "Orders will be recorded in your portfolio. "
+                              "You will need to execute them manually in your broker app. "
+                              "Investment in securities is subject to market risks."
+                            : "Orders will be placed at MARKET price via your connected broker. "
+                              "Actual execution price may differ slightly from estimates. "
+                              "Investment in securities is subject to market risks.",
                         style: TextStyle(fontSize: 13, color: Colors.orange.shade800, height: 1.4),
                       ),
                     ],
@@ -241,9 +257,13 @@ class _OrderReviewPageState extends State<OrderReviewPage> {
                         child: Padding(
                           padding: const EdgeInsets.only(top: 10),
                           child: Text(
-                            "I understand and accept that these orders will be executed "
-                            "via my connected broker account. I have reviewed the allocation "
-                            "and order details above.",
+                            widget.brokerName == 'DummyBroker'
+                                ? "I understand that these orders will be recorded in my portfolio "
+                                  "and I will execute them manually in my broker app. "
+                                  "I have reviewed the allocation and order details above."
+                                : "I understand and accept that these orders will be executed "
+                                  "via my connected broker account. I have reviewed the allocation "
+                                  "and order details above.",
                             style: TextStyle(fontSize: 13, color: Colors.grey.shade700, height: 1.4),
                           ),
                         ),
@@ -275,7 +295,9 @@ class _OrderReviewPageState extends State<OrderReviewPage> {
                     elevation: 0,
                   ),
                   child: Text(
-                    "Place ${widget.allocations.length} Orders",
+                    widget.brokerName == 'DummyBroker'
+                        ? "Record ${widget.allocations.length} Orders"
+                        : "Place ${widget.allocations.length} Orders",
                     style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: Colors.white),
                   ),
                 ),

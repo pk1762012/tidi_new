@@ -16,7 +16,6 @@ class SplashScreen extends StatefulWidget {
 
 class _SplashScreenState extends State<SplashScreen> {
   final FlutterSecureStorage storage = const FlutterSecureStorage();
-  late Widget nextScreen;
 
   @override
   void initState() {
@@ -27,26 +26,35 @@ class _SplashScreenState extends State<SplashScreen> {
   void preloadNextScreen() async {
     String? accessToken = await storage.read(key: 'access_token');
 
-    if (accessToken != null && accessToken.isNotEmpty) {
-      // Fetch user details while splash is showing
-      final userData = await fetchUserData();
+    if (accessToken == null || accessToken.isEmpty) {
+      await Future.delayed(const Duration(seconds: 2));
       if (!mounted) return;
-
-      nextScreen = HomeScreen(
-        currentIndex: 0,
-        userData: userData,
-      );
-    } else {
-      nextScreen = WelcomeScreen();
+      _navigateTo(WelcomeScreen());
+      return;
     }
 
-    // Minimum splash duration
-    await Future.delayed(const Duration(seconds: 2));
+    // Run splash delay and API call concurrently
+    final splashDelay = Future.delayed(const Duration(seconds: 2));
+    final result = await fetchUserData();
+
+    // Wait for minimum splash duration (no-op if already elapsed)
+    await splashDelay;
     if (!mounted) return;
 
+    if (result == _FetchResult.unauthorized) {
+      _navigateTo(WelcomeScreen());
+    } else {
+      _navigateTo(HomeScreen(
+        currentIndex: 0,
+        userData: result is Map<String, dynamic> ? result : null,
+      ));
+    }
+  }
+
+  void _navigateTo(Widget screen) {
     Navigator.of(context).pushReplacement(
       PageRouteBuilder(
-        pageBuilder: (_, __, ___) => nextScreen,
+        pageBuilder: (_, __, ___) => screen,
         transitionsBuilder: (_, animation, __, child) {
           return FadeTransition(
             opacity: animation,
@@ -58,7 +66,7 @@ class _SplashScreenState extends State<SplashScreen> {
     );
   }
 
-  Future<Map<String, dynamic>?> fetchUserData() async {
+  Future<dynamic> fetchUserData() async {
     try {
       ApiService apiService = ApiService();
       final response = await apiService.getUserDetails();
@@ -86,16 +94,12 @@ class _SplashScreenState extends State<SplashScreen> {
           );
         }
 
-
         return data;
       } else if (response.statusCode == 401) {
         await CacheService.instance.clearAll();
         final FlutterSecureStorage secureStorage = FlutterSecureStorage();
         await secureStorage.deleteAll();
-        Navigator.of(context).pushAndRemoveUntil(
-          MaterialPageRoute(builder: (context) => WelcomeScreen()),
-              (Route<dynamic> route) => false,
-        );
+        return _FetchResult.unauthorized;
       }
     } catch (e) {
       debugPrint('SplashScreen fetchUserData error: $e');
@@ -123,3 +127,4 @@ class _SplashScreenState extends State<SplashScreen> {
 
 }
 
+enum _FetchResult { unauthorized }

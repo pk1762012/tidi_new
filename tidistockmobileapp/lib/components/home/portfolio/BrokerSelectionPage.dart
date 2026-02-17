@@ -124,6 +124,19 @@ class _BrokerSelectionPageState extends State<BrokerSelectionPage> {
             ),
           ),
         );
+      } else if (mounted) {
+        // Auto-pop with the connected broker (picker mode)
+        final connected = connectedBrokers.where((b) =>
+            b.broker.toLowerCase() == brokerName.toLowerCase() && b.isConnected).toList();
+        if (connected.isNotEmpty) {
+          Navigator.pop(context, connected.first);
+        } else {
+          // Fallback: pop with any connected broker
+          final anyConnected = connectedBrokers.where((b) => b.isConnected).toList();
+          if (anyConnected.isNotEmpty) {
+            Navigator.pop(context, anyConnected.first);
+          }
+        }
       }
     }
   }
