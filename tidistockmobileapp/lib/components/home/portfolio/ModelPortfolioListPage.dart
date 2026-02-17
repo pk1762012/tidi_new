@@ -407,68 +407,82 @@ class _ModelPortfolioListPageState extends State<ModelPortfolioListPage>
   }
 
   Widget _buildRecentlyVisitedView() {
-    return RefreshIndicator(
-      onRefresh: _forceRefresh,
-      child: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
-        children: [
-          // "My Investments" banner if user has subscriptions
-          if (_hasSubscribed && userEmail != null) _investedPortfoliosBanner(),
-
-          // Recently Visited header
-          Padding(
-            padding: const EdgeInsets.only(bottom: 12),
-            child: Row(
+    return Column(
+      children: [
+        Expanded(
+          child: RefreshIndicator(
+            onRefresh: _forceRefresh,
+            child: ListView(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
               children: [
-                Icon(Icons.history_rounded, size: 20, color: Colors.grey.shade600),
-                const SizedBox(width: 8),
-                const Text("Recently Visited",
-                    style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700)),
+                // "My Investments" banner if user has subscriptions
+                if (_hasSubscribed && userEmail != null) _investedPortfoliosBanner(),
+
+                // Recently Visited header
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 12),
+                  child: Row(
+                    children: [
+                      Icon(Icons.history_rounded, size: 20, color: Colors.grey.shade600),
+                      const SizedBox(width: 8),
+                      const Text("Recently Visited",
+                          style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700)),
+                    ],
+                  ),
+                ),
+
+                // Recently visited portfolio cards
+                ..._recentlyVisited.map((entry) {
+                  final modelName = entry['modelName']?.toString() ?? '';
+                  final entryId = entry['id']?.toString() ?? '';
+                  // Look up full portfolio from loaded list
+                  final fullPortfolio = portfolios.cast<ModelPortfolio?>().firstWhere(
+                    (p) =>
+                        p!.modelName == modelName ||
+                        p.id == entryId,
+                    orElse: () => null,
+                  );
+
+                  if (fullPortfolio != null) {
+                    return _portfolioCard(fullPortfolio);
+                  }
+
+                  // Fallback: render a minimal card from stored data
+                  return _recentVisitFallbackCard(entry);
+                }),
               ],
             ),
           ),
-
-          // Recently visited portfolio cards
-          ..._recentlyVisited.map((entry) {
-            final modelName = entry['modelName']?.toString() ?? '';
-            final entryId = entry['id']?.toString() ?? '';
-            // Look up full portfolio from loaded list
-            final fullPortfolio = portfolios.cast<ModelPortfolio?>().firstWhere(
-              (p) =>
-                  p!.modelName == modelName ||
-                  p.id == entryId,
-              orElse: () => null,
-            );
-
-            if (fullPortfolio != null) {
-              return _portfolioCard(fullPortfolio);
-            }
-
-            // Fallback: render a minimal card from stored data
-            return _recentVisitFallbackCard(entry);
-          }),
-
-          const SizedBox(height: 16),
-
-          // "Browse All Portfolios" button
-          SizedBox(
-            width: double.infinity,
-            child: OutlinedButton.icon(
-              onPressed: () {
-                setState(() => _showingAllPortfolios = true);
-              },
-              icon: const Icon(Icons.explore_rounded, size: 18),
-              label: const Text("Browse All Portfolios"),
-              style: OutlinedButton.styleFrom(
-                foregroundColor: const Color(0xFF1565C0),
-                side: const BorderSide(color: Color(0xFF1565C0)),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                padding: const EdgeInsets.symmetric(vertical: 14),
+        ),
+        // Floating bottom button
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.08),
+                blurRadius: 8,
+                offset: const Offset(0, -2),
               ),
+            ],
+          ),
+          child: OutlinedButton.icon(
+            onPressed: () {
+              setState(() => _showingAllPortfolios = true);
+            },
+            icon: const Icon(Icons.explore_rounded, size: 18),
+            label: const Text("Browse All Portfolios"),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: const Color(0xFF1565C0),
+              side: const BorderSide(color: Color(0xFF1565C0)),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              padding: const EdgeInsets.symmetric(vertical: 14),
             ),
           ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 
