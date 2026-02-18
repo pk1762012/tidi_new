@@ -103,6 +103,8 @@ class _ModelPortfolioListPageState extends State<ModelPortfolioListPage>
             ? body
             : (body['subscribedPortfolios'] ?? body['data'] ?? []);
 
+        debugPrint('[ModelPortfolio] subscriptions count: ${subscriptions.length}');
+
         final pending = <Map<String, dynamic>>[];
 
         for (final sub in subscriptions) {
@@ -113,25 +115,28 @@ class _ModelPortfolioListPageState extends State<ModelPortfolioListPage>
           if (model == null) continue;
 
           final rebalanceHistory = model['rebalanceHistory'] as List<dynamic>? ?? [];
+          debugPrint('[ModelPortfolio] $modelName has ${rebalanceHistory.length} rebalances');
 
           // Find the latest rebalance with execution status
           for (final rebalance in rebalanceHistory.reversed) {
-            final executions = rebalance['subscriberExecutions'] as List<dynamic>? ?? [];
-            for (final exec in executions) {
-              final status = exec['executionStatus']?.toString()?.toLowerCase() ?? '';
-              if (status == 'pending' || status == '') {
-                pending.add({
-                  'modelName': modelName,
-                  'modelId': sub['_id'] ?? sub['id'] ?? '',
-                  'rebalanceDate': rebalance['rebalanceDate'],
-                  'executionStatus': status,
-                  'broker': exec['user_broker'] ?? exec['broker'] ?? 'DummyBroker',
-                  'advisor': model['advisor'] ?? '',
-                });
-                break;
-              }
+            // Check for executionStatus at different levels
+            final execData = rebalance['execution'] ?? rebalance['subscriberExecutions'] ?? rebalance;
+            final status = (execData['executionStatus'] ?? execData['status'] ?? execData['userExecution']?['status'] ?? '').toString().toLowerCase();
+
+            debugPrint('[ModelPortfolio] $modelName rebalance status: $status');
+
+            // Check for pending/toExecute/partial statuses
+            if (status == 'toexecute' || status == 'pending' || status == 'partial' || status == '') {
+              pending.add({
+                'modelName': modelName,
+                'modelId': sub['_id'] ?? sub['id'] ?? sub['model_id'] ?? '',
+                'rebalanceDate': rebalance['rebalanceDate'] ?? rebalance['date'],
+                'executionStatus': status,
+                'broker': execData['user_broker'] ?? execData['broker'] ?? 'DummyBroker',
+                'advisor': model['advisor'] ?? '',
+              });
+              break;
             }
-            if (pending.isNotEmpty) break;
           }
         }
 
@@ -140,6 +145,7 @@ class _ModelPortfolioListPageState extends State<ModelPortfolioListPage>
             _pendingRebalances = pending;
             _loadingRebalances = false;
           });
+          debugPrint('[ModelPortfolio] pending rebalances: ${pending.length}');
         }
       }
     } catch (e) {
