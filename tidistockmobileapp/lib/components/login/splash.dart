@@ -85,6 +85,15 @@ class _SplashScreenState extends State<SplashScreen> {
         await storage.write(key: 'pan', value: data['pan']?.toString());
         await storage.write(key: 'is_stock_analysis_trial_active', value: data['isStockAnalysisTrialActive'].toString());
 
+        // Store user email for model portfolio API calls
+        final email = data['email'] ?? data['Email'] ?? data['userEmail'] ?? data['emailAddress'];
+        if (email != null && email.toString().isNotEmpty) {
+          await storage.write(key: 'user_email', value: email.toString());
+          debugPrint('[Splash] Stored user_email: ${email.toString()}');
+        } else {
+          debugPrint('[Splash] WARNING: user_email not available in API response');
+        }
+
         final List configs = data['config'] ?? [];
 
         for (final item in configs) {

@@ -10,6 +10,7 @@ import 'package:share_plus/share_plus.dart';
 import 'package:tidistockmobileapp/models/model_portfolio.dart';
 import 'package:tidistockmobileapp/models/portfolio_stock.dart';
 import 'package:tidistockmobileapp/models/rebalance_entry.dart';
+import 'package:tidistockmobileapp/service/ApiService.dart';
 import 'package:tidistockmobileapp/service/AqApiService.dart';
 import 'package:tidistockmobileapp/service/CacheService.dart';
 import 'package:tidistockmobileapp/models/portfolio_holding.dart';
@@ -147,27 +148,25 @@ class _ModelPortfolioDetailPageState extends State<ModelPortfolioDetailPage>
 
   Future<void> _checkSubscriptionStatus() async {
     debugPrint('[DetailPage] _checkSubscriptionStatus called, email=$userEmail');
-    if (userEmail == null || userEmail!.isEmpty) {
-      debugPrint('[DetailPage] No email, skipping subscription check');
-      return;
-    }
+
+    // Try tidi_Front_back API first (resolves master email internally)
+    bool found = false;
     try {
-      final response = await AqApiService.instance.getSubscribedStrategies(userEmail!);
-      debugPrint('[DetailPage] subscriptionCheck statusCode=${response.statusCode}');
+      final response = await ApiService().getUserModelPortfolioSubscriptions();
+      debugPrint('[DetailPage] tidi subscriptionCheck statusCode=${response.statusCode}');
       if (response.statusCode >= 200 && response.statusCode < 300) {
         final body = json.decode(response.body);
         final List<dynamic> strategies = body is List
             ? body
             : (body is Map
-                ? (body['subscribedPortfolios'] ?? body['data'] ?? body['strategies'] ?? [])
+                ? (body['subscriptions'] ?? body['subscribedPortfolios'] ?? body['data'] ?? body['strategies'] ?? [])
                 : []);
-        debugPrint('[DetailPage] strategies count=${strategies.length}, portfolio.modelName=${portfolio.modelName}, portfolio.id=${portfolio.id}, portfolio.strategyId=${portfolio.strategyId}');
-        bool found = false;
+        debugPrint('[DetailPage] tidi strategies count=${strategies.length}');
         for (final s in strategies) {
           if (s is Map) {
             final id = s['_id']?.toString();
-            final modelName = (s['model_name']?.toString() ?? '').toLowerCase().trim();
-            debugPrint('[DetailPage] checking strategy: id=$id, model_name=$modelName');
+            final modelName = (s['model_name']?.toString() ?? s['name']?.toString() ?? '').toLowerCase().trim();
+            debugPrint('[DetailPage] checking tidi strategy: id=$id, model_name=$modelName');
             if (id == portfolio.strategyId ||
                 id == portfolio.id ||
                 modelName == portfolio.modelName.toLowerCase().trim()) {
@@ -176,17 +175,49 @@ class _ModelPortfolioDetailPageState extends State<ModelPortfolioDetailPage>
             }
           }
         }
-        // Fallback: check local subscriptions if API didn't find it
-        if (!found) {
-          found = await _checkLocalSubscription();
-        }
-        debugPrint('[DetailPage] subscriptionCheck: found=$found for ${portfolio.modelName}');
-        if (mounted) setState(() => _isSubscribed = found);
-        if (found) _fetchSubscribedData();
       }
     } catch (e) {
-      debugPrint('[DetailPage] _checkSubscriptionStatus error: $e');
+      debugPrint('[DetailPage] tidi subscriptionCheck error (will fallback): $e');
     }
+
+    // Fallback: Try AlphaQuark API directly if tidi_Front_back fails
+    if (!found && userEmail != null && userEmail!.isNotEmpty) {
+      try {
+        final response = await AqApiService.instance.getSubscribedStrategies(userEmail!);
+        debugPrint('[DetailPage] AlphaQuark subscriptionCheck statusCode=${response.statusCode}');
+        if (response.statusCode >= 200 && response.statusCode < 300) {
+          final body = json.decode(response.body);
+          final List<dynamic> strategies = body is List
+              ? body
+              : (body is Map
+                  ? (body['subscribedPortfolios'] ?? body['data'] ?? body['strategies'] ?? [])
+                  : []);
+          for (final s in strategies) {
+            if (s is Map) {
+              final id = s['_id']?.toString();
+              final modelName = (s['model_name']?.toString() ?? '').toLowerCase().trim();
+              if (id == portfolio.strategyId ||
+                  id == portfolio.id ||
+                  modelName == portfolio.modelName.toLowerCase().trim()) {
+                found = true;
+                break;
+              }
+            }
+          }
+        }
+      } catch (e) {
+        debugPrint('[DetailPage] AlphaQuark fallback error: $e');
+      }
+    }
+
+    // Final fallback: check local subscriptions
+    if (!found) {
+      found = await _checkLocalSubscription();
+    }
+
+    debugPrint('[DetailPage] subscriptionCheck: found=$found for ${portfolio.modelName}');
+    if (mounted) setState(() => _isSubscribed = found);
+    if (found) _fetchSubscribedData();
   }
 
   Future<bool> _checkLocalSubscription() async {

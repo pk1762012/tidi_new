@@ -558,19 +558,20 @@ class _InvestInPlanSheetState extends State<InvestInPlanSheet>
 
       debugPrint('[InvestInPlanSheet] _handleFreeSubscribe - portfolioId: ${widget.portfolio.id}, strategyId: $strategyId, email: $email');
 
-      // PRIMARY: Use AQ backend subscribe-strategy API (same as web frontend)
-      final response = await AqApiService.instance.subscribeStrategy(
+      // PRIMARY: Use tidi_Front_back API (resolves master email internally from user_id in JWT)
+      // This ensures subscription is linked to the correct user regardless of email entered
+      final response = await ApiService().subscribeToModelPortfolio(
         strategyId: widget.portfolio.id,
-        email: email,
-        action: 'subscribe',
-      ).timeout(const Duration(seconds: 15));
+        planId: widget.portfolio.id,
+      ).timeout(const Duration(seconds: 30));
 
-      debugPrint('[InvestInPlanSheet] AQ subscribe response: ${response.statusCode} ${response.body}');
+      debugPrint('[InvestInPlanSheet] TIDI subscribe response: ${response.statusCode} ${response.body}');
 
       if (!mounted) return;
 
       if (response.statusCode >= 200 && response.statusCode < 300) {
-        // Save user details to secure storage so portfolio list fetches with correct email
+        // Save user details to secure storage for display and fallback purposes
+        // Note: Master email is now resolved by tidi_Front_back internally
         await _storage.write(key: 'user_email', value: email);
         final name = _nameController.text.trim();
         if (name.isNotEmpty) {
@@ -588,16 +589,6 @@ class _InvestInPlanSheetState extends State<InvestInPlanSheet>
         if (pan.isNotEmpty) {
           await _storage.write(key: 'pan', value: pan);
         }
-
-        // Fire-and-forget: sync to TIDI backend (non-blocking, 15s timeout)
-        ApiService().subscribeFreeModelPortfolio(
-          planId: widget.portfolio.id,
-          strategyId: strategyId,
-        ).timeout(const Duration(seconds: 15)).then((tidiResp) {
-          debugPrint('[InvestInPlanSheet] TIDI subscribe sync: ${tidiResp.statusCode}');
-        }).catchError((e) {
-          debugPrint('[InvestInPlanSheet] TIDI subscribe sync error (non-blocking): $e');
-        });
 
         // Save locally as defensive fallback for instant display on restart
         await _saveLocalSubscription(

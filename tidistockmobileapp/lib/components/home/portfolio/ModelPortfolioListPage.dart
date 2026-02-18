@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:tidistockmobileapp/models/model_portfolio.dart';
+import 'package:tidistockmobileapp/service/ApiService.dart';
 import 'package:tidistockmobileapp/service/AqApiService.dart';
 import 'package:tidistockmobileapp/service/CacheService.dart';
 import 'package:tidistockmobileapp/widgets/customScaffold.dart';
@@ -60,11 +61,13 @@ class _ModelPortfolioListPageState extends State<ModelPortfolioListPage>
   }
 
   Future<void> _init() async {
+    // Read email for display purposes and fallback API calls
+    // Note: tidi_Front_back API resolves email internally from user_id in JWT
     final email = await const FlutterSecureStorage().read(key: 'user_email');
     if (email == null || email.isEmpty) {
-      debugPrint('[ModelPortfolio] WARNING: user_email is null/empty — subscriptions will not load');
+      debugPrint('[ModelPortfolio] INFO: user_email is null - will use master email from tidi_Front_back');
     } else {
-      debugPrint('[ModelPortfolio] user_email=$email');
+      debugPrint('[ModelPortfolio] user_email=$email (for display/fallback)');
     }
     if (mounted) setState(() => userEmail = email);
     // Load local subscriptions and recently visited first for instant display
@@ -79,58 +82,97 @@ class _ModelPortfolioListPageState extends State<ModelPortfolioListPage>
   }
 
   Future<void> _fetchSubscribedStrategies() async {
-    if (userEmail == null || userEmail!.isEmpty) return;
+    // Try tidi_Front_back API first (resolves email internally from user_id)
+    // This ensures subscriptions work even if user has different email in AlphaQuark
+    bool tidiApiSuccess = false;
     try {
-      final response = await AqApiService.instance.getSubscribedStrategies(userEmail!);
-      debugPrint('[ModelPortfolio] subscribedStrategies status=${response.statusCode}');
-      debugPrint('[ModelPortfolio] subscribedStrategies body=${response.body.substring(0, response.body.length.clamp(0, 500))}');
+      final response = await ApiService().getUserModelPortfolioSubscriptions();
+      debugPrint('[ModelPortfolio] tidi_subscriptions status=${response.statusCode}');
       if (response.statusCode >= 200 && response.statusCode < 300) {
         final body = json.decode(response.body);
         final List<dynamic> strategies = body is List
             ? body
             : (body is Map
-                ? (body['subscribedPortfolios'] ?? body['data'] ?? body['strategies'] ?? [])
+                ? (body['subscriptions'] ?? body['subscribedPortfolios'] ?? body['data'] ?? body['strategies'] ?? [])
                 : []);
-        final ids = <String>{};
-        final names = <String>{};
-        for (final s in strategies) {
-          if (s is Map) {
-            final id = s['_id']?.toString() ?? s['strategyId']?.toString();
-            if (id != null && id.isNotEmpty) ids.add(id);
-            final modelId = s['model_id']?.toString() ?? s['modelId']?.toString();
-            if (modelId != null && modelId.isNotEmpty) ids.add(modelId);
-            // Capture model name for fallback matching
-            final modelName = s['model_name']?.toString() ?? s['name']?.toString();
-            if (modelName != null && modelName.isNotEmpty) {
-              names.add(modelName.toLowerCase().trim());
+        if (strategies.isNotEmpty) {
+          tidiApiSuccess = true;
+          final ids = <String>{};
+          final names = <String>{};
+          for (final s in strategies) {
+            if (s is Map) {
+              final id = s['_id']?.toString() ?? s['strategyId']?.toString();
+              if (id != null && id.isNotEmpty) ids.add(id);
+              final modelId = s['model_id']?.toString() ?? s['modelId']?.toString();
+              if (modelId != null && modelId.isNotEmpty) ids.add(modelId);
+              final modelName = s['model_name']?.toString() ?? s['name']?.toString();
+              if (modelName != null && modelName.isNotEmpty) {
+                names.add(modelName.toLowerCase().trim());
+              }
+            } else if (s is String && s.isNotEmpty) {
+              ids.add(s);
             }
-          } else if (s is String && s.isNotEmpty) {
-            ids.add(s);
           }
+          debugPrint('[ModelPortfolio] tidi_subscribedStrategyIds=$ids, names=$names');
+          if (mounted) {
+            setState(() {
+              _subscribedStrategyIds = ids;
+              _subscribedModelNames = names;
+            });
+          }
+          await _pruneLocalSubscriptions(ids, names);
+          return; // Success - no need to fall back
         }
-        debugPrint('[ModelPortfolio] subscribedStrategyIds=$ids, names=$names');
-        if (mounted) {
-          setState(() {
-            _subscribedStrategyIds = ids;
-            _subscribedModelNames = names;
-          });
-        }
-        // Prune local entries already confirmed by API, then merge remainder
-        await _pruneLocalSubscriptions(ids, names);
-      }
-    } on HttpException catch (e) {
-      debugPrint('[ModelPortfolio] fetchSubscribedStrategies HTTP error: ${e.statusCode}');
-      if (mounted && (e.statusCode == 401 || e.statusCode == 403)) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Subscription check failed (${e.statusCode}). Auth may have expired.'),
-            duration: const Duration(seconds: 4),
-          ),
-        );
       }
     } catch (e) {
-      debugPrint('[ModelPortfolio] fetchSubscribedStrategies error: $e');
+      debugPrint('[ModelPortfolio] tidi_subscriptions error (will fallback): $e');
     }
+
+    // Fallback: Try AlphaQuark API directly if tidi_Front_back fails or returns empty
+    // This maintains backward compatibility
+    if (!tidiApiSuccess && userEmail != null && userEmail!.isNotEmpty) {
+      debugPrint('[ModelPortfolio] Falling back to AlphaQuark API');
+      try {
+        final response = await AqApiService.instance.getSubscribedStrategies(userEmail!);
+        debugPrint('[ModelPortfolio] AlphaQuark subscribedStrategies status=${response.statusCode}');
+        if (response.statusCode >= 200 && response.statusCode < 300) {
+          final body = json.decode(response.body);
+          final List<dynamic> strategies = body is List
+              ? body
+              : (body is Map
+                  ? (body['subscribedPortfolios'] ?? body['data'] ?? body['strategies'] ?? [])
+                  : []);
+          final ids = <String>{};
+          final names = <String>{};
+          for (final s in strategies) {
+            if (s is Map) {
+              final id = s['_id']?.toString() ?? s['strategyId']?.toString();
+              if (id != null && id.isNotEmpty) ids.add(id);
+              final modelId = s['model_id']?.toString() ?? s['modelId']?.toString();
+              if (modelId != null && modelId.isNotEmpty) ids.add(modelId);
+              final modelName = s['model_name']?.toString() ?? s['name']?.toString();
+              if (modelName != null && modelName.isNotEmpty) {
+                names.add(modelName.toLowerCase().trim());
+              }
+            } else if (s is String && s.isNotEmpty) {
+              ids.add(s);
+            }
+          }
+          debugPrint('[ModelPortfolio] AlphaQuark subscribedStrategyIds=$ids, names=$names');
+          if (mounted) {
+            setState(() {
+              _subscribedStrategyIds = ids;
+              _subscribedModelNames = names;
+            });
+          }
+          await _pruneLocalSubscriptions(ids, names);
+          return;
+        }
+      } catch (e) {
+        debugPrint('[ModelPortfolio] AlphaQuark fallback error: $e');
+      }
+    }
+
     // Merge any remaining local subscriptions not yet reflected by API
     await _loadLocalSubscriptions();
   }

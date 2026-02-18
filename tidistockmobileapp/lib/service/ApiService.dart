@@ -513,6 +513,73 @@ class ApiService {
     ).timeout(const Duration(seconds: 15));
   }
 
+  // ---------------------------------------------------------------------------
+  // Model Portfolio - Master Email Gateway (resolves email internally)
+  // These endpoints use user_id from JWT to resolve email from tidi_Front_back DB
+  // ensuring subscriptions work even if user has different email in AlphaQuark
+  // ---------------------------------------------------------------------------
+
+  /// Get all model portfolio subscriptions for the logged-in user
+  /// Uses master email from tidi_Front_back database to fetch from AlphaQuark
+  Future<http.Response> getUserModelPortfolioSubscriptions() async {
+    String? token = await _getToken();
+    return http.get(
+      Uri.parse(apiUrl + 'api/user/model-portfolio/subscriptions'),
+      headers: {
+        'Authorization': 'Bearer $token',
+        'Content-Type': 'application/json',
+      },
+    ).timeout(const Duration(seconds: 30));
+  }
+
+  /// Subscribe to a model portfolio using master email from tidi_Front_back
+  /// Email is resolved internally from user_id in JWT - no need to pass email
+  Future<http.Response> subscribeToModelPortfolio({
+    required String strategyId,
+    required String planId,
+  }) async {
+    String? token = await _getToken();
+    return http.post(
+      Uri.parse(apiUrl + 'api/user/model-portfolio/subscribe'),
+      headers: {
+        'Authorization': 'Bearer $token',
+        'Content-Type': 'application/json',
+      },
+      body: jsonEncode({
+        'strategyId': strategyId,
+        'planId': planId,
+      }),
+    ).timeout(const Duration(seconds: 30));
+  }
+
+  /// Subscribe or unsubscribe from a strategy using master email
+  Future<http.Response> subscribeStrategy({
+    required String strategyId,
+    required String action, // 'subscribe' or 'unsubscribe'
+  }) async {
+    String? token = await _getToken();
+    return http.put(
+      Uri.parse(apiUrl + 'api/user/model-portfolio/subscribe-strategy/$strategyId'),
+      headers: {
+        'Authorization': 'Bearer $token',
+        'Content-Type': 'application/json',
+      },
+      body: jsonEncode({'action': action}),
+    ).timeout(const Duration(seconds: 30));
+  }
+
+  /// Check subscription status for a specific strategy using master email
+  Future<http.Response> getStrategySubscriptionStatus(String strategyId) async {
+    String? token = await _getToken();
+    return http.get(
+      Uri.parse(apiUrl + 'api/user/model-portfolio/strategy-status/$strategyId'),
+      headers: {
+        'Authorization': 'Bearer $token',
+        'Content-Type': 'application/json',
+      },
+    ).timeout(const Duration(seconds: 15));
+  }
+
   Future<http.Response> createSubscriptionOrder(String duration) async {
     String? token = await _getToken();
     return http.post(
