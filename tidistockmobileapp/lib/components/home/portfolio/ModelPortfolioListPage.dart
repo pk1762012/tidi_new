@@ -12,6 +12,7 @@ import 'package:tidistockmobileapp/widgets/customScaffold.dart';
 
 import 'ModelPortfolioDetailPage.dart';
 import 'InvestedPortfoliosPage.dart';
+import 'RebalanceReviewPage.dart';
 
 class ModelPortfolioListPage extends StatefulWidget {
   const ModelPortfolioListPage({super.key});
@@ -31,6 +32,10 @@ class _ModelPortfolioListPageState extends State<ModelPortfolioListPage>
 
   List<Map<String, dynamic>> _recentlyVisited = [];
   bool _showingAllPortfolios = false;
+
+  // Rebalance tracking
+  List<Map<String, dynamic>> _pendingRebalances = [];
+  bool _loadingRebalances = true;
 
   late TabController _tabController;
 
@@ -78,7 +83,69 @@ class _ModelPortfolioListPageState extends State<ModelPortfolioListPage>
     await Future.wait([
       _fetchPortfolios(),
       _fetchSubscribedStrategies(),
+      _fetchRebalanceStatus(),
     ]);
+  }
+
+  Future<void> _fetchRebalanceStatus() async {
+    if (userEmail == null || userEmail!.isEmpty) {
+      if (mounted) setState(() => _loadingRebalances = false);
+      return;
+    }
+
+    try {
+      final response = await AqApiService.instance.getSubscribedStrategies(userEmail!);
+      debugPrint('[ModelPortfolio] rebalanceStatus response: ${response.statusCode}');
+
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        final body = json.decode(response.body);
+        final List<dynamic> subscriptions = body is List
+            ? body
+            : (body['subscribedPortfolios'] ?? body['data'] ?? []);
+
+        final pending = <Map<String, dynamic>>[];
+
+        for (final sub in subscriptions) {
+          if (sub is! Map) continue;
+
+          final modelName = sub['model_name']?.toString() ?? sub['modelName']?.toString() ?? '';
+          final model = sub['model'] as Map<String, dynamic>?;
+          if (model == null) continue;
+
+          final rebalanceHistory = model['rebalanceHistory'] as List<dynamic>? ?? [];
+
+          // Find the latest rebalance with execution status
+          for (final rebalance in rebalanceHistory.reversed) {
+            final executions = rebalance['subscriberExecutions'] as List<dynamic>? ?? [];
+            for (final exec in executions) {
+              final status = exec['executionStatus']?.toString()?.toLowerCase() ?? '';
+              if (status == 'pending' || status == '') {
+                pending.add({
+                  'modelName': modelName,
+                  'modelId': sub['_id'] ?? sub['id'] ?? '',
+                  'rebalanceDate': rebalance['rebalanceDate'],
+                  'executionStatus': status,
+                  'broker': exec['user_broker'] ?? exec['broker'] ?? 'DummyBroker',
+                  'advisor': model['advisor'] ?? '',
+                });
+                break;
+              }
+            }
+            if (pending.isNotEmpty) break;
+          }
+        }
+
+        if (mounted) {
+          setState(() {
+            _pendingRebalances = pending;
+            _loadingRebalances = false;
+          });
+        }
+      }
+    } catch (e) {
+      debugPrint('[ModelPortfolio] _fetchRebalanceStatus error: $e');
+      if (mounted) setState(() => _loadingRebalances = false);
+    }
   }
 
   Future<void> _fetchSubscribedStrategies() async {
@@ -457,12 +524,15 @@ class _ModelPortfolioListPageState extends State<ModelPortfolioListPage>
             child: ListView(
               padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
               children: [
+                // Pending Rebalances section at the top
+                if (_hasSubscribed && userEmail != null) _buildPendingRebalancesSection(),
+
                 // "My Investments" banner if user has subscriptions
                 if (_hasSubscribed && userEmail != null) _investedPortfoliosBanner(),
 
                 // Recently Visited header
                 Padding(
-                  padding: const EdgeInsets.only(bottom: 12),
+                  padding: const EdgeInsets.only(bottom: 12, top: 8),
                   child: Row(
                     children: [
                       Icon(Icons.history_rounded, size: 20, color: Colors.grey.shade600),
@@ -785,6 +855,171 @@ class _ModelPortfolioListPageState extends State<ModelPortfolioListPage>
   // ---------------------------------------------------------------------------
   // Shared widgets
   // ---------------------------------------------------------------------------
+
+  Widget _buildPendingRebalancesSection() {
+    if (_loadingRebalances) {
+      return const Padding(
+        padding: EdgeInsets.only(bottom: 12),
+        child: Center(
+          child: Padding(
+            padding: EdgeInsets.all(16),
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
+        ),
+      );
+    }
+
+    if (_pendingRebalances.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            Colors.orange.shade600,
+            Colors.orange.shade800,
+          ],
+        ),
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(0.2),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: const Icon(Icons.sync_alt_rounded, color: Colors.white, size: 24),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        "Pending Rebalance",
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 16,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      Text(
+                        "${_pendingRebalances.length} portfolio(s) need attention",
+                        style: const TextStyle(
+                          color: Colors.white70,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          // List pending rebalances
+          ..._pendingRebalances.map((rebalance) {
+            final modelName = rebalance['modelName'] ?? 'Portfolio';
+            final broker = rebalance['broker'] ?? 'DummyBroker';
+            return InkWell(
+              onTap: () => _executeRebalance(rebalance),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.1),
+                  border: Border(
+                    top: BorderSide(color: Colors.white.withOpacity(0.1)),
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            modelName,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w600,
+                              fontSize: 14,
+                            ),
+                          ),
+                          Text(
+                            "Broker: $broker",
+                            style: const TextStyle(
+                              color: Colors.white60,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: Text(
+                        "Execute",
+                        style: TextStyle(
+                          color: Colors.orange.shade700,
+                          fontWeight: FontWeight.w600,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          }),
+        ],
+      ),
+    );
+  }
+
+  void _executeRebalance(Map<String, dynamic> rebalance) async {
+    final modelName = rebalance['modelName'];
+    final modelId = rebalance['modelId'];
+
+    // Find the portfolio from the list
+    final portfolio = portfolios.cast<ModelPortfolio?>().firstWhere(
+      (p) => p?.modelName == modelName || p?.id == modelId || p?.strategyId == modelId,
+      orElse: () => null,
+    );
+
+    if (portfolio == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Portfolio not found")),
+      );
+      return;
+    }
+
+    HapticFeedback.mediumImpact();
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => RebalanceReviewPage(
+          portfolio: portfolio,
+          email: userEmail!,
+        ),
+      ),
+    );
+    // Refresh after returning
+    await _init();
+  }
 
   Widget _investedPortfoliosBanner() {
     return GestureDetector(
