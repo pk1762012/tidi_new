@@ -553,11 +553,16 @@ class _InvestInPlanSheetState extends State<InvestInPlanSheet>
 
     // Check authentication before attempting subscription
     final token = await _storage.read(key: 'access_token');
+    final storedEmail = await _storage.read(key: 'user_email');
+    debugPrint('[InvestInPlanSheet] Auth check - token exists: ${token != null && token.isNotEmpty}, storedEmail: $storedEmail');
+
     if (token == null || token.isEmpty) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: const Text('Please log in to subscribe.'),
+            content: Text(storedEmail != null && storedEmail.isNotEmpty
+                ? 'Session expired. Please log in again.'
+                : 'Please log in to subscribe.'),
             backgroundColor: Colors.red.shade700,
             behavior: SnackBarBehavior.floating,
           ),
@@ -579,11 +584,16 @@ class _InvestInPlanSheetState extends State<InvestInPlanSheet>
       debugPrint('[InvestInPlanSheet] portfolioId: ${widget.portfolio.id}, strategyId: $strategyId');
       debugPrint('[InvestInPlanSheet] user input - email: $email, name: $name, phone: $phone, pan: ${pan.isNotEmpty ? "provided" : "not provided"}');
 
+      // Log portfolio details for debugging
+      debugPrint('[InvestInPlanSheet] portfolio - id: ${widget.portfolio.id}, strategyId: ${widget.portfolio.strategyId}, modelName: ${widget.portfolio.modelName}');
+
       // PRIMARY: Use tidi_Front_back API (resolves master email internally from user_id in JWT)
       // This ensures subscription is linked to the correct user regardless of email entered
+      final portfolioId = widget.portfolio.id ?? widget.portfolio.strategyId;
+      debugPrint('[InvestInPlanSheet] Using portfolioId for API: $portfolioId');
       final response = await ApiService().subscribeToModelPortfolio(
-        strategyId: widget.portfolio.id,
-        planId: widget.portfolio.id,
+        strategyId: portfolioId ?? '',
+        planId: portfolioId ?? '',
       ).timeout(const Duration(seconds: 30));
 
       debugPrint('[InvestInPlanSheet] TIDI subscribe response: ${response.statusCode} ${response.body}');
