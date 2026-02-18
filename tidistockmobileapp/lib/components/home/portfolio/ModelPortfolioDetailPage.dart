@@ -68,6 +68,7 @@ class _ModelPortfolioDetailPageState extends State<ModelPortfolioDetailPage>
   double _totalInvested = 0;
   double _totalCurrent = 0;
   bool _hasPendingRebalance = false;
+  bool _disclaimerAccepted = false;
 
   static const Map<String, String> _indexSymbols = {
     'Nifty 50': '^NSEI',
@@ -87,6 +88,7 @@ class _ModelPortfolioDetailPageState extends State<ModelPortfolioDetailPage>
     });
     _recordRecentVisit();
     _loadUserEmail();
+    _loadDisclaimerStatus();
     _refreshDetails();
     _fetchPerformanceData();
   }
@@ -144,6 +146,55 @@ class _ModelPortfolioDetailPageState extends State<ModelPortfolioDetailPage>
     debugPrint('[DetailPage] loaded email: $email');
     if (mounted) setState(() => userEmail = email);
     await _checkSubscriptionStatus();
+  }
+
+  Future<void> _loadDisclaimerStatus() async {
+    // Check if user has previously accepted disclaimer for this portfolio
+    final key = 'disclaimer_accepted_${portfolio.id ?? portfolio.modelName}';
+    final accepted = await const FlutterSecureStorage().read(key: key);
+    if (mounted) {
+      setState(() => _disclaimerAccepted = accepted == 'true');
+    }
+  }
+
+  Future<void> _acceptDisclaimer() async {
+    // Save that user has accepted disclaimer for this portfolio
+    final key = 'disclaimer_accepted_${portfolio.id ?? portfolio.modelName}';
+    await const FlutterSecureStorage().write(key: key, value: 'true');
+    if (mounted) {
+      setState(() => _disclaimerAccepted = true);
+    }
+  }
+
+  void _showPerformanceDisclaimer() {
+    if (_disclaimerAccepted || _isSubscribed) return;
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Row(
+          children: [
+            Icon(Icons.warning_amber_rounded, color: Colors.orange, size: 24),
+            SizedBox(width: 8),
+            Text("Disclaimer", style: TextStyle(fontSize: 18)),
+          ],
+        ),
+        content: const Text(
+          "Past performance is not a guarantee of future returns.\n\n"
+          "Investment in securities market is subject to market risks. "
+          "Please read all related documents carefully before investing.",
+          style: TextStyle(fontSize: 14, height: 1.5),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text("I Understand"),
+          ),
+        ],
+      ),
+    );
+    _acceptDisclaimer();
   }
 
   Future<void> _checkSubscriptionStatus() async {
@@ -498,9 +549,10 @@ class _ModelPortfolioDetailPageState extends State<ModelPortfolioDetailPage>
       if (portfolio.overView != null && portfolio.overView!.isNotEmpty)
         _overviewSection(),
       const SizedBox(height: 16),
-      _statsGrid(),
+      _statsGrid(showStockCount: false),
       const SizedBox(height: 16),
-      _stockComposition(),
+      // Hide stock composition from non-subscribers - show subscription prompt instead
+      _subscribeToViewHoldingsPrompt(),
       const SizedBox(height: 16),
       _tabBar(),
       const SizedBox(height: 12),
@@ -915,7 +967,7 @@ class _ModelPortfolioDetailPageState extends State<ModelPortfolioDetailPage>
     );
   }
 
-  Widget _statsGrid() {
+  Widget _statsGrid({bool showStockCount = true}) {
     final cards = <Widget>[
       _statCard("Min Investment", "\u20B9${NumberFormat('#,##,###').format(portfolio.minInvestment)}",
           Icons.currency_rupee, Colors.blue),
@@ -924,7 +976,8 @@ class _ModelPortfolioDetailPageState extends State<ModelPortfolioDetailPage>
       cards.add(_statCard("Frequency", portfolio.frequency!,
           Icons.calendar_today_rounded, Colors.purple));
     }
-    if (portfolio.stocks.isNotEmpty) {
+    // Only show stock count for subscribed users
+    if (showStockCount && portfolio.stocks.isNotEmpty) {
       cards.add(_statCard("Stocks", "${portfolio.stocks.length}",
           Icons.pie_chart_rounded, Colors.teal));
     }
@@ -961,6 +1014,46 @@ class _ModelPortfolioDetailPageState extends State<ModelPortfolioDetailPage>
           Text(label,
             style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
             textAlign: TextAlign.center,
+          ),
+        ],
+      ),
+    );
+  }
+
+  // Widget shown to non-subscribers instead of stock composition
+  Widget _subscribeToViewHoldingsPrompt() {
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF0F4FF),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFF1565C0).withOpacity(0.2)),
+      ),
+      child: Column(
+        children: [
+          const Icon(Icons.lock_outline_rounded, size: 40, color: Color(0xFF1565C0)),
+          const SizedBox(height: 12),
+          const Text(
+            "Subscribe to View Holdings",
+            style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: Color(0xFF1565C0)),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            "Stock composition and allocation details are available for subscribers only.",
+            style: TextStyle(fontSize: 13, color: Colors.grey.shade600),
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 16),
+          ElevatedButton.icon(
+            onPressed: _showPlanSelectionSheet,
+            icon: const Icon(Icons.subscriptions_rounded, size: 18),
+            label: const Text("Subscribe Now"),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF1565C0),
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            ),
           ),
         ],
       ),
@@ -1132,9 +1225,46 @@ class _ModelPortfolioDetailPageState extends State<ModelPortfolioDetailPage>
   // ---------------------------------------------------------------------------
 
   Widget _distributionTab() {
+    // Show disclaimer warning for non-subscribers viewing performance
+    if (!_isSubscribed && !_disclaimerAccepted) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _showPerformanceDisclaimer();
+      });
+    }
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        // Disclaimer warning banner for non-subscribers
+        if (!_isSubscribed && !_disclaimerAccepted)
+          Container(
+            margin: const EdgeInsets.only(bottom: 12),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              color: Colors.orange.shade50,
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: Colors.orange.shade200),
+            ),
+            child: Row(
+              children: [
+                Icon(Icons.info_outline, size: 18, color: Colors.orange.shade700),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    "Past performance is not guarantee of future returns",
+                    style: TextStyle(fontSize: 12, color: Colors.orange.shade800),
+                  ),
+                ),
+                GestureDetector(
+                  onTap: _showPerformanceDisclaimer,
+                  child: Text(
+                    "Read more",
+                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Colors.orange.shade700),
+                  ),
+                ),
+              ],
+            ),
+          ),
         _rebalanceInfoSection(),
         if (_performancePoints.isNotEmpty || _loadingPerformance)
           _performanceChartSection(),

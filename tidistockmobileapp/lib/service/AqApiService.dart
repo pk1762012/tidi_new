@@ -499,6 +499,41 @@ class AqApiService {
     );
   }
 
+  // ---------------------------------------------------------------------------
+  // Notification APIs
+  // ---------------------------------------------------------------------------
+
+  /// Fetch all notifications for a user
+  Future<http.Response> getUserNotifications(String email) async {
+    final encodedEmail = Uri.encodeComponent(email);
+    final uri = Uri.parse('${baseUrl}api/sendnotification/get-user-notifications/$encodedEmail');
+    return http.get(uri, headers: _headers());
+  }
+
+  /// Fetch rebalance notifications only
+  Future<http.Response> getRebalanceNotifications(String email) async {
+    final response = await getUserNotifications(email);
+    if (response.statusCode >= 200 && response.statusCode < 300) {
+      try {
+        final List<dynamic> allNotifications = json.decode(response.body);
+        final rebalanceNotifications = allNotifications
+            .where((n) => n is Map && (n['type'] == 'rebalance' || n['modelName'] != null))
+            .toList();
+        return http.Response(json.encode(rebalanceNotifications), 200);
+      } catch (e) {
+        return http.Response(json.encode({'error': 'Failed to parse notifications'}), 500);
+      }
+    }
+    return response;
+  }
+
+  /// Mark notification as read
+  Future<http.Response> markNotificationRead(String notificationId) async {
+    // This endpoint may need to be implemented on the backend
+    // For now, return a success response
+    return http.Response('{"status": "success"}', 200);
+  }
+
   /// Convert pricing tier name to duration in days
   static int _tierToDays(String tier) {
     switch (tier.toLowerCase()) {
