@@ -550,13 +550,34 @@ class _InvestInPlanSheetState extends State<InvestInPlanSheet>
 
   Future<void> _handleFreeSubscribe() async {
     if (_loading) return;
+
+    // Check authentication before attempting subscription
+    final token = await _storage.read(key: 'access_token');
+    if (token == null || token.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('Please log in to subscribe.'),
+            backgroundColor: Colors.red.shade700,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+      return;
+    }
+
     setState(() => _loading = true);
 
     try {
       final strategyId = widget.portfolio.strategyId ?? widget.portfolio.id;
       final email = _emailController.text.trim();
+      final name = _nameController.text.trim();
+      final phone = _phoneController.text.trim();
+      final pan = _panController.text.trim();
 
-      debugPrint('[InvestInPlanSheet] _handleFreeSubscribe - portfolioId: ${widget.portfolio.id}, strategyId: $strategyId, email: $email');
+      debugPrint('[InvestInPlanSheet] _handleFreeSubscribe START');
+      debugPrint('[InvestInPlanSheet] portfolioId: ${widget.portfolio.id}, strategyId: $strategyId');
+      debugPrint('[InvestInPlanSheet] user input - email: $email, name: $name, phone: $phone, pan: ${pan.isNotEmpty ? "provided" : "not provided"}');
 
       // PRIMARY: Use tidi_Front_back API (resolves master email internally from user_id in JWT)
       // This ensures subscription is linked to the correct user regardless of email entered
@@ -619,12 +640,27 @@ class _InvestInPlanSheetState extends State<InvestInPlanSheet>
           ),
         );
       }
-    } catch (e) {
-      debugPrint('[InvestInPlanSheet] _handleFreeSubscribe error: $e');
+    } catch (e, stackTrace) {
+      debugPrint('[InvestInPlanSheet] _handleFreeSubscribe FULL ERROR: $e');
+      debugPrint('[InvestInPlanSheet] Stack trace: $stackTrace');
+
       if (mounted) {
+        String message = 'Something went wrong. Please try again.';
+        final errorStr = e.toString();
+
+        if (errorStr.contains('SocketException') || errorStr.contains('HandshakeException')) {
+          message = 'No internet connection. Please check your network.';
+        } else if (errorStr.contains('TimeoutException')) {
+          message = 'Server took too long. Please try again.';
+        } else if (errorStr.contains('Unauthorized') || errorStr.contains('401') || errorStr.contains('403')) {
+          message = 'Session expired. Please log in again.';
+        } else if (errorStr.contains('FormatException') || errorStr.contains('JSON')) {
+          message = 'Invalid response from server. Please try again.';
+        }
+
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: const Text('Something went wrong. Please try again.'),
+            content: Text(message),
             backgroundColor: Colors.red.shade700,
             behavior: SnackBarBehavior.floating,
           ),
