@@ -30,7 +30,6 @@ class _BrokerSelectionPageState extends State<BrokerSelectionPage> {
   static const List<Map<String, String>> supportedBrokers = [
     {'name': 'Zerodha', 'icon': 'Z'},
     {'name': 'Angel One', 'icon': 'A'},
-    {'name': 'Angle One', 'icon': 'Ao'},
     {'name': 'Groww', 'icon': 'G'},
     {'name': 'Upstox', 'icon': 'U'},
     {'name': 'ICICI Direct', 'icon': 'I'},
