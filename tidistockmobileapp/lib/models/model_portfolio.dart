@@ -253,8 +253,11 @@ class ModelPortfolio {
     // Handle lastUpdated: Plans API uses 'updated_at', model_portfolio uses 'last_updated'
     final lastUpdatedRaw = json['last_updated'] ?? json['updated_at'];
 
-    // Parse pricing tiers from Plans API
-    final pricing = _parsePricing(json['pricing']);
+    // Parse pricing tiers from Plans API - try multiple field names
+    var pricing = _parsePricing(json['pricing']);
+    if (pricing.isEmpty) pricing = _parsePricing(json['price']);
+    if (pricing.isEmpty) pricing = _parsePricing(json['cost']);
+    if (pricing.isEmpty) pricing = _parsePricing(json['subscriptionCost']);
 
     // Parse performance data if available
     final perfRaw = json['performance_data'] ?? json['performanceData'];
