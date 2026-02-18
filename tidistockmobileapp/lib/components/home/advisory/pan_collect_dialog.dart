@@ -50,6 +50,12 @@ class _PanCollectDialogState extends State<PanCollectDialog> {
           value: _panController.text.trim(),
         );
 
+        // Save email to secure storage for portfolio subscription fallbacks
+        final email = _emailController.text.trim();
+        if (email.isNotEmpty) {
+          await storage.write(key: 'user_email', value: email);
+        }
+
         Navigator.pop(context);
       } else {
         throw Exception("API failed");

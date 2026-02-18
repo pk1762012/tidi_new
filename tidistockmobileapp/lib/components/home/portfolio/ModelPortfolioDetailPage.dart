@@ -180,8 +180,14 @@ class _ModelPortfolioDetailPageState extends State<ModelPortfolioDetailPage>
       debugPrint('[DetailPage] tidi subscriptionCheck error (will fallback): $e');
     }
 
+    // Log master email gateway status if no subscriptions found
+    if (!found) {
+      debugPrint('[DetailPage] Master email gateway: no subscription found for ${portfolio.modelName}, will try fallbacks');
+    }
+
     // Fallback: Try AlphaQuark API directly if tidi_Front_back fails
     if (!found && userEmail != null && userEmail!.isNotEmpty) {
+      debugPrint('[DetailPage] AlphaQuark fallback: using stored email=$userEmail');
       try {
         final response = await AqApiService.instance.getSubscribedStrategies(userEmail!);
         debugPrint('[DetailPage] AlphaQuark subscriptionCheck statusCode=${response.statusCode}');
@@ -208,6 +214,8 @@ class _ModelPortfolioDetailPageState extends State<ModelPortfolioDetailPage>
       } catch (e) {
         debugPrint('[DetailPage] AlphaQuark fallback error: $e');
       }
+    } else if (!found) {
+      debugPrint('[DetailPage] AlphaQuark fallback SKIPPED: no user_email in secure storage');
     }
 
     // Final fallback: check local subscriptions
