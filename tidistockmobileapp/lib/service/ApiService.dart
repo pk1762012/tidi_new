@@ -539,7 +539,10 @@ class ApiService {
     required String planId,
   }) async {
     String? token = await _getToken();
-    return http.post(
+    debugPrint('[ApiService] subscribeToModelPortfolio - token exists: ${token != null && token.isNotEmpty}');
+    debugPrint('[ApiService] subscribeToModelPortfolio - strategyId: $strategyId, planId: $planId');
+
+    final response = await http.post(
       Uri.parse(apiUrl + 'api/user/model-portfolio/subscribe'),
       headers: {
         'Authorization': 'Bearer $token',
@@ -550,6 +553,9 @@ class ApiService {
         'planId': planId,
       }),
     ).timeout(const Duration(seconds: 30));
+
+    debugPrint('[ApiService] subscribeToModelPortfolio response: ${response.statusCode} ${response.body}');
+    return response;
   }
 
   /// Subscribe or unsubscribe from a strategy using master email
