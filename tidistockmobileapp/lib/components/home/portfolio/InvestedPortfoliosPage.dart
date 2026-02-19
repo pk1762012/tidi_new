@@ -74,6 +74,13 @@ class _InvestedPortfoliosPageState extends State<InvestedPortfoliosPage> {
     'rejected', 'cancelled', 'failed', 'error', 'canceled',
   };
 
+  double _safeDouble(dynamic value, [double fallback = 0.0]) {
+    if (value == null) return fallback;
+    if (value is num) return value.toDouble();
+    if (value is String) return double.tryParse(value) ?? fallback;
+    return fallback;
+  }
+
   Future<void> _fetchPortfolioSummary(String modelName) async {
     try {
       final response = await AqApiService.instance.getSubscriptionRawAmount(
@@ -120,9 +127,9 @@ class _InvestedPortfoliosPageState extends State<InvestedPortfoliosPage> {
               final orderStatus = (stock['status'] ?? stock['order_status'] ?? '').toString().toLowerCase();
               if (_rejectedStatuses.contains(orderStatus)) continue;
 
-              final qty = (stock['quantity'] ?? stock['qty'] ?? 0).toDouble();
-              final avgPrice = (stock['averagePrice'] ?? stock['avgPrice'] ?? stock['avg_price'] ?? 0).toDouble();
-              final ltp = (stock['ltp'] ?? stock['lastPrice'] ?? stock['close'] ?? avgPrice).toDouble();
+              final qty = _safeDouble(stock['quantity'] ?? stock['qty']);
+              final avgPrice = _safeDouble(stock['averagePrice'] ?? stock['avgPrice'] ?? stock['avg_price']);
+              final ltp = _safeDouble(stock['ltp'] ?? stock['lastPrice'] ?? stock['close'], avgPrice);
 
               if (qty > 0 && avgPrice > 0) {
                 holdingsInvested += avgPrice * qty;
@@ -144,15 +151,15 @@ class _InvestedPortfoliosPageState extends State<InvestedPortfoliosPage> {
           if (!computedFromHoldings && rawAmounts is List && rawAmounts.isNotEmpty) {
             final latest = rawAmounts.last;
             if (latest is Map) {
-              invested = (latest['totalInvestment'] ?? latest['invested'] ?? 0).toDouble();
-              current = (latest['currentValue'] ?? latest['current'] ?? invested).toDouble();
+              invested = _safeDouble(latest['totalInvestment'] ?? latest['invested']);
+              current = _safeDouble(latest['currentValue'] ?? latest['current'], invested);
             }
           }
 
           // Fallback: try top-level fields in subData
           if (invested == 0 && subData.containsKey('totalInvestment')) {
-            invested = (subData['totalInvestment'] ?? 0).toDouble();
-            current = (subData['currentValue'] ?? subData['current'] ?? invested).toDouble();
+            invested = _safeDouble(subData['totalInvestment']);
+            current = _safeDouble(subData['currentValue'] ?? subData['current'], invested);
           }
 
           debugPrint('[InvestedPortfolios] $modelName parsed: invested=$invested, current=$current, holdingsCount=$holdingsCount, fromHoldings=$computedFromHoldings');

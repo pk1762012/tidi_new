@@ -63,9 +63,31 @@ class RebalanceStatusService {
 
         // Find the latest rebalance with execution status
         for (final rebalance in rebalanceHistory.reversed) {
-          final execData = rebalance['execution'] ??
+          final rawExec = rebalance['execution'] ??
               rebalance['subscriberExecutions'] ??
               rebalance;
+
+          Map<String, dynamic>? execData;
+          if (rawExec is List) {
+            // subscriberExecutions is a List of per-user entries — find ours
+            for (final item in rawExec) {
+              if (item is Map) {
+                final execEmail = (item['user_email'] ?? '').toString().toLowerCase();
+                if (execEmail == email.toLowerCase()) {
+                  execData = Map<String, dynamic>.from(item);
+                  break;
+                }
+              }
+            }
+            // Fallback: use first entry if no email match
+            if (execData == null && rawExec.isNotEmpty && rawExec.first is Map) {
+              execData = Map<String, dynamic>.from(rawExec.first);
+            }
+          } else if (rawExec is Map) {
+            execData = Map<String, dynamic>.from(rawExec);
+          }
+          if (execData == null) continue;
+
           final status = (execData['executionStatus'] ??
                   execData['status'] ??
                   execData['userExecution']?['status'] ??

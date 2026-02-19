@@ -13,6 +13,7 @@ import 'package:tidistockmobileapp/models/rebalance_entry.dart';
 import 'package:tidistockmobileapp/service/ApiService.dart';
 import 'package:tidistockmobileapp/service/AqApiService.dart';
 import 'package:tidistockmobileapp/service/CacheService.dart';
+import 'package:tidistockmobileapp/service/RebalanceStatusService.dart';
 import 'package:tidistockmobileapp/models/portfolio_holding.dart';
 import 'package:tidistockmobileapp/widgets/customScaffold.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -406,10 +407,28 @@ class _ModelPortfolioDetailPageState extends State<ModelPortfolioDetailPage>
     });
   }
 
-  void _checkPendingRebalance() {
-    if (portfolio.rebalanceHistory.isNotEmpty && userEmail != null) {
+  void _checkPendingRebalance() async {
+    if (userEmail == null) return;
+
+    // First: try from local portfolio data (fast, works if data is present)
+    if (portfolio.rebalanceHistory.isNotEmpty) {
       final pending = portfolio.rebalanceHistory.last.hasPendingExecution(userEmail!);
-      if (mounted) setState(() => _hasPendingRebalance = pending);
+      if (pending) {
+        if (mounted) setState(() => _hasPendingRebalance = true);
+        return;
+      }
+    }
+
+    // Fallback: use RebalanceStatusService (proven, uses subscribed-strategies endpoint)
+    try {
+      final pending = await RebalanceStatusService.fetchPendingRebalances(userEmail!);
+      final hasPending = pending.any((p) =>
+          p.modelName.toLowerCase().trim() == portfolio.modelName.toLowerCase().trim() ||
+          p.modelId == portfolio.id ||
+          p.modelId == portfolio.strategyId);
+      if (mounted) setState(() => _hasPendingRebalance = hasPending);
+    } catch (e) {
+      debugPrint('[DetailPage] _checkPendingRebalance fallback error: $e');
     }
   }
 
@@ -2408,8 +2427,15 @@ class _ModelPortfolioDetailPageState extends State<ModelPortfolioDetailPage>
           await AqApiService.instance.getConnectedBrokers(userEmail!);
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
-        final List<dynamic> brokerList =
-            data['data'] ?? data['connected_brokers'] ?? [];
+        final rawData = data['data'];
+        final List<dynamic> brokerList;
+        if (rawData is List) {
+          brokerList = rawData;
+        } else if (rawData is Map) {
+          brokerList = rawData['connected_brokers'] ?? [];
+        } else {
+          brokerList = data['connected_brokers'] ?? [];
+        }
         final connected = brokerList
             .map((e) => BrokerConnection.fromJson(e))
             .where((b) => b.isConnected)

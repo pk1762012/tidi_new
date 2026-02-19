@@ -53,7 +53,15 @@ class _BrokerSelectionPageState extends State<BrokerSelectionPage> {
       final response = await AqApiService.instance.getConnectedBrokers(widget.email);
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
-        final List<dynamic> brokerList = data['data'] ?? data['connected_brokers'] ?? [];
+        final rawData = data['data'];
+        final List<dynamic> brokerList;
+        if (rawData is List) {
+          brokerList = rawData;
+        } else if (rawData is Map) {
+          brokerList = rawData['connected_brokers'] ?? [];
+        } else {
+          brokerList = data['connected_brokers'] ?? [];
+        }
         setState(() {
           connectedBrokers = brokerList
               .map((e) => BrokerConnection.fromJson(e))
