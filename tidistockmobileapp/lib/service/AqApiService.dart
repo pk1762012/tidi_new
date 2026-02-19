@@ -537,6 +537,78 @@ class AqApiService {
   }
 
   // ---------------------------------------------------------------------------
+  // User Registration & Email Management APIs
+  // ---------------------------------------------------------------------------
+
+  /// Register or update a user on AQ backend (upserts into users + clientlistdatas)
+  Future<http.Response> registerOrUpdateUser({
+    required String email,
+    String? phone,
+    String? name,
+  }) async {
+    return http.put(
+      Uri.parse('${baseUrl}api/user/update/user-details'),
+      headers: _headers(),
+      body: jsonEncode({
+        'email': email,
+        'phoneNumber': phone,
+        'userName': name ?? email.split('@')[0],
+        'advisorName': advisorName,
+      }),
+    );
+  }
+
+  /// Create a model_portfolio_user document on ccxt-india
+  /// (replicates what rgx_app does via POST /rebalance/insert-user-doc)
+  Future<http.Response> insertUserDoc({
+    required String email,
+    required String model,
+    required String advisor,
+    required String broker,
+    List<Map<String, dynamic>>? subscriptionAmountRaw,
+  }) async {
+    return http.post(
+      Uri.parse('${ccxtUrl}rebalance/insert-user-doc'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({
+        'userEmail': email,
+        'model': model,
+        'advisor': advisor,
+        'userBroker': broker,
+        'subscriptionAmountRaw': subscriptionAmountRaw ?? [],
+      }),
+    );
+  }
+
+  /// Admin email migration — updates all 6 collections without OTP
+  Future<http.Response> adminUpdateEmail({
+    required String oldEmail,
+    required String newEmail,
+  }) async {
+    return http.post(
+      Uri.parse('${baseUrl}api/user/admin-update-email'),
+      headers: _headers(),
+      body: jsonEncode({'oldEmail': oldEmail, 'newEmail': newEmail}),
+    );
+  }
+
+  /// Look up existing user email by phone number on AQ backend
+  Future<String?> findEmailByPhone(String phone) async {
+    try {
+      final cleanPhone = phone.replaceAll(RegExp(r'\D'), '');
+      final resp = await http.get(
+        Uri.parse('${baseUrl}api/user/find-by-phone/$cleanPhone'),
+        headers: _headers(),
+      );
+      if (resp.statusCode == 200) {
+        final data = jsonDecode(resp.body);
+        return data['email'] as String?;
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  // ---------------------------------------------------------------------------
   // Email resolution helper
   // ---------------------------------------------------------------------------
 

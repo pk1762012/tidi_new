@@ -5,6 +5,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../../screens/homeScreen.dart';
 import '../../screens/welcomeScreen.dart';
 import '../../service/ApiService.dart';
+import '../../service/AqApiService.dart';
 import '../../service/CacheService.dart';
 import '../../service/UserIdentityService.dart';
 
@@ -87,17 +88,40 @@ class _SplashScreenState extends State<SplashScreen> {
         await storage.write(key: 'is_stock_analysis_trial_active', value: data['isStockAnalysisTrialActive'].toString());
 
         // Store user email for model portfolio API calls
+        debugPrint('[Splash] API user data keys: ${data.keys.toList()}');
+        debugPrint('[Splash] API user data raw: ${data.toString().substring(0, (data.toString().length).clamp(0, 500))}');
         final email = data['email'] ?? data['Email'] ?? data['userEmail'] ?? data['emailAddress'];
         if (email != null && email.toString().isNotEmpty) {
           await storage.write(key: 'user_email', value: email.toString());
           debugPrint('[Splash] Stored user_email: ${email.toString()}');
         } else {
-          // Generate synthetic email from phone so AQ API calls don't fail
+          // No email from TIDI API — try to find existing AQ user by phone
           final phone = await storage.read(key: 'phone_number');
           if (phone != null && phone.isNotEmpty) {
-            final syntheticEmail = UserIdentityService.generateSyntheticEmail(phone);
-            await storage.write(key: 'user_email', value: syntheticEmail);
-            debugPrint('[Splash] Generated synthetic email: $syntheticEmail');
+            final existingEmail = await AqApiService.instance.findEmailByPhone(phone);
+            if (existingEmail != null && existingEmail.isNotEmpty) {
+              await storage.write(key: 'user_email', value: existingEmail);
+              debugPrint('[Splash] Found AQ email by phone: $existingEmail');
+            } else {
+              // No AQ user found — generate synthetic and register on AQ
+              final syntheticEmail = UserIdentityService.generateSyntheticEmail(phone);
+              await storage.write(key: 'user_email', value: syntheticEmail);
+              debugPrint('[Splash] Generated synthetic email: $syntheticEmail');
+              // Register synthetic user on AQ so subscriptions/lookups work
+              final firstName = await storage.read(key: 'first_name') ?? '';
+              final lastName = await storage.read(key: 'last_name') ?? '';
+              final userName = '$firstName $lastName'.trim();
+              try {
+                await AqApiService.instance.registerOrUpdateUser(
+                  email: syntheticEmail,
+                  phone: phone,
+                  name: userName.isNotEmpty ? userName : null,
+                );
+                debugPrint('[Splash] Registered synthetic user on AQ');
+              } catch (e) {
+                debugPrint('[Splash] Failed to register synthetic user on AQ: $e');
+              }
+            }
           } else {
             debugPrint('[Splash] WARNING: user_email not available and no phone_number for fallback');
           }

@@ -157,7 +157,20 @@ class _InvestInPlanSheetState extends State<InvestInPlanSheet>
     super.initState();
     _razorpayService = RazorpayService(
       onResult: (success) {
-        if (success) widget.onSubscribed();
+        if (success) {
+          // Create model_portfolio_user doc on ccxt-india after paid subscription
+          final email = _emailController.text.trim();
+          if (email.isNotEmpty) {
+            AqApiService.instance.insertUserDoc(
+              email: email,
+              model: widget.portfolio.modelName,
+              advisor: widget.portfolio.advisor,
+              broker: 'DummyBroker',
+            ).then((_) => debugPrint('[InvestInPlanSheet] insertUserDoc (paid) success'))
+             .catchError((e) => debugPrint('[InvestInPlanSheet] insertUserDoc (paid) error: $e'));
+          }
+          widget.onSubscribed();
+        }
       },
     );
     if (widget.portfolio.pricing.isNotEmpty) {
@@ -628,6 +641,19 @@ class _InvestInPlanSheetState extends State<InvestInPlanSheet>
           modelName: widget.portfolio.modelName,
           email: email,
         );
+
+        // Create model_portfolio_user doc on ccxt-india (same as rgx_app)
+        try {
+          await AqApiService.instance.insertUserDoc(
+            email: email,
+            model: widget.portfolio.modelName,
+            advisor: widget.portfolio.advisor,
+            broker: 'DummyBroker',
+          );
+          debugPrint('[InvestInPlanSheet] insertUserDoc success');
+        } catch (e) {
+          debugPrint('[InvestInPlanSheet] insertUserDoc error (non-fatal): $e');
+        }
 
         CacheService.instance.invalidateByPrefix('aq/admin/plan/portfolios');
         CacheService.instance.invalidateByPrefix('aq/model-portfolio/subscribed');
