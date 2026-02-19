@@ -69,6 +69,11 @@ class _InvestedPortfoliosPageState extends State<InvestedPortfoliosPage> {
     }
   }
 
+  /// Rejection statuses to filter out (same as PortfolioHoldingsPage)
+  static const _rejectedStatuses = {
+    'rejected', 'cancelled', 'failed', 'error', 'canceled',
+  };
+
   Future<void> _fetchPortfolioSummary(String modelName) async {
     try {
       final response = await AqApiService.instance.getSubscriptionRawAmount(
@@ -90,9 +95,53 @@ class _InvestedPortfoliosPageState extends State<InvestedPortfoliosPage> {
 
           double invested = 0;
           double current = 0;
+          int holdingsCount = 0;
 
-          // Parse from subscription_amount_raw (latest)
-          if (rawAmounts is List && rawAmounts.isNotEmpty) {
+          // Try to compute from user_net_pf_model order_results (most accurate)
+          bool computedFromHoldings = false;
+          if (userNetPf is List && userNetPf.isNotEmpty) {
+            final latestH = userNetPf.last;
+            List<dynamic> stockList = [];
+            if (latestH is List) {
+              stockList = latestH;
+            } else if (latestH is Map) {
+              stockList = latestH['stocks'] ?? latestH['holdings'] ?? latestH['order_results'] ?? [];
+            }
+
+            // Compute invested/current from individual holdings
+            double holdingsInvested = 0;
+            double holdingsCurrent = 0;
+            int validHoldings = 0;
+
+            for (final stock in stockList) {
+              if (stock is! Map<String, dynamic>) continue;
+
+              // Filter out rejected/failed orders
+              final orderStatus = (stock['status'] ?? stock['order_status'] ?? '').toString().toLowerCase();
+              if (_rejectedStatuses.contains(orderStatus)) continue;
+
+              final qty = (stock['quantity'] ?? stock['qty'] ?? 0).toDouble();
+              final avgPrice = (stock['averagePrice'] ?? stock['avgPrice'] ?? stock['avg_price'] ?? 0).toDouble();
+              final ltp = (stock['ltp'] ?? stock['lastPrice'] ?? stock['close'] ?? avgPrice).toDouble();
+
+              if (qty > 0 && avgPrice > 0) {
+                holdingsInvested += avgPrice * qty;
+                holdingsCurrent += ltp * qty;
+                validHoldings++;
+              }
+            }
+
+            holdingsCount = validHoldings;
+
+            if (holdingsInvested > 0) {
+              invested = holdingsInvested;
+              current = holdingsCurrent;
+              computedFromHoldings = true;
+            }
+          }
+
+          // Fallback: Parse from subscription_amount_raw (static snapshot)
+          if (!computedFromHoldings && rawAmounts is List && rawAmounts.isNotEmpty) {
             final latest = rawAmounts.last;
             if (latest is Map) {
               invested = (latest['totalInvestment'] ?? latest['invested'] ?? 0).toDouble();
@@ -106,15 +155,7 @@ class _InvestedPortfoliosPageState extends State<InvestedPortfoliosPage> {
             current = (subData['currentValue'] ?? subData['current'] ?? invested).toDouble();
           }
 
-          // Parse from user_net_pf_model for holdings count
-          int holdingsCount = 0;
-          if (userNetPf is List && userNetPf.isNotEmpty) {
-            final latestH = userNetPf.last;
-            if (latestH is List) holdingsCount = latestH.length;
-            if (latestH is Map) holdingsCount = (latestH['stocks'] as List?)?.length ?? 0;
-          }
-
-          debugPrint('[InvestedPortfolios] $modelName parsed: invested=$invested, current=$current, holdingsCount=$holdingsCount');
+          debugPrint('[InvestedPortfolios] $modelName parsed: invested=$invested, current=$current, holdingsCount=$holdingsCount, fromHoldings=$computedFromHoldings');
 
           setState(() {
             summaries[modelName] = _PortfolioSummary(

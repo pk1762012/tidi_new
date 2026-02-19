@@ -6,6 +6,7 @@ import '../../screens/homeScreen.dart';
 import '../../screens/welcomeScreen.dart';
 import '../../service/ApiService.dart';
 import '../../service/CacheService.dart';
+import '../../service/UserIdentityService.dart';
 
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
@@ -91,7 +92,15 @@ class _SplashScreenState extends State<SplashScreen> {
           await storage.write(key: 'user_email', value: email.toString());
           debugPrint('[Splash] Stored user_email: ${email.toString()}');
         } else {
-          debugPrint('[Splash] WARNING: user_email not available in API response');
+          // Generate synthetic email from phone so AQ API calls don't fail
+          final phone = await storage.read(key: 'phone_number');
+          if (phone != null && phone.isNotEmpty) {
+            final syntheticEmail = UserIdentityService.generateSyntheticEmail(phone);
+            await storage.write(key: 'user_email', value: syntheticEmail);
+            debugPrint('[Splash] Generated synthetic email: $syntheticEmail');
+          } else {
+            debugPrint('[Splash] WARNING: user_email not available and no phone_number for fallback');
+          }
         }
 
         final List configs = data['config'] ?? [];

@@ -30,6 +30,11 @@ class _RebalanceReviewPageState extends State<RebalanceReviewPage> {
   RebalanceHistoryEntry? latestRebalance;
   RebalanceHistoryEntry? previousRebalance;
 
+  // Execution status tracking
+  bool _alreadyExecuted = false;
+  bool _partiallyExecuted = false;
+  String? _researchReportLink;
+
   @override
   void initState() {
     super.initState();
@@ -45,6 +50,19 @@ class _RebalanceReviewPageState extends State<RebalanceReviewPage> {
 
     latestRebalance = history.last;
     previousRebalance = history.length > 1 ? history[history.length - 2] : null;
+
+    // Check execution status for the latest rebalance
+    final execForUser = latestRebalance!.getExecutionForUser(widget.email);
+    if (execForUser != null) {
+      if (execForUser.isExecuted) {
+        _alreadyExecuted = true;
+      } else if (execForUser.status.toLowerCase() == 'partial') {
+        _partiallyExecuted = true;
+      }
+    }
+
+    // Check for research report link
+    _researchReportLink = latestRebalance!.researchReportLink;
 
     // Build map of previous holdings
     final Map<String, PortfolioStock> previousStocks = {};
@@ -222,6 +240,88 @@ class _RebalanceReviewPageState extends State<RebalanceReviewPage> {
                     children: [
                       // Rebalance header
                       _rebalanceHeader(),
+
+                      // Execution status badges
+                      if (_alreadyExecuted)
+                        Container(
+                          margin: const EdgeInsets.only(top: 10),
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: Colors.green.shade50,
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: Colors.green.shade200),
+                          ),
+                          child: Row(
+                            children: [
+                              Icon(Icons.check_circle, color: Colors.green.shade700, size: 20),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: Text(
+                                  "This rebalance has already been executed.",
+                                  style: TextStyle(fontSize: 13, color: Colors.green.shade700, fontWeight: FontWeight.w600),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+
+                      if (_partiallyExecuted)
+                        Container(
+                          margin: const EdgeInsets.only(top: 10),
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: Colors.amber.shade50,
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: Colors.amber.shade200),
+                          ),
+                          child: Row(
+                            children: [
+                              Icon(Icons.warning_rounded, color: Colors.amber.shade700, size: 20),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: Text(
+                                  "Partially executed. You can resume execution below.",
+                                  style: TextStyle(fontSize: 13, color: Colors.amber.shade800, fontWeight: FontWeight.w600),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+
+                      // Research report link
+                      if (_researchReportLink != null && _researchReportLink!.isNotEmpty)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 10),
+                          child: InkWell(
+                            onTap: () {
+                              // Open research report — could use url_launcher
+                              debugPrint('[RebalanceReview] Research report: $_researchReportLink');
+                            },
+                            borderRadius: BorderRadius.circular(10),
+                            child: Container(
+                              padding: const EdgeInsets.all(12),
+                              decoration: BoxDecoration(
+                                color: Colors.blue.shade50,
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(color: Colors.blue.shade200),
+                              ),
+                              child: Row(
+                                children: [
+                                  Icon(Icons.description_outlined, color: Colors.blue.shade700, size: 18),
+                                  const SizedBox(width: 10),
+                                  Expanded(
+                                    child: Text(
+                                      "View Research Report",
+                                      style: TextStyle(fontSize: 13, color: Colors.blue.shade700, fontWeight: FontWeight.w600),
+                                    ),
+                                  ),
+                                  Icon(Icons.open_in_new, color: Colors.blue.shade400, size: 16),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+
                       const SizedBox(height: 16),
 
                       // Summary
@@ -284,8 +384,13 @@ class _RebalanceReviewPageState extends State<RebalanceReviewPage> {
                           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
                           elevation: 0,
                         ),
-                        child: const Text("Accept & Execute Rebalance",
-                          style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: Colors.white)),
+                        child: Text(
+                          _alreadyExecuted
+                              ? "Already Executed"
+                              : _partiallyExecuted
+                                  ? "Resume Execution"
+                                  : "Accept & Execute Rebalance",
+                          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: Colors.white)),
                       ),
                     ),
                   ),

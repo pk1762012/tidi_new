@@ -309,6 +309,9 @@ class _WelcomeScreenState extends State<WelcomeScreen>
 
                             await secureStorage.deleteAll();
                             await secureStorage.write(key: 'access_token', value: accessToken);
+                            // Store phone early so SplashScreen can generate
+                            // a synthetic email if the backend doesn't return one.
+                            await secureStorage.write(key: 'phone_number', value: phone);
                             ApiService.invalidateTokenCache();
                             apiService.updateDeviceDetails();
 

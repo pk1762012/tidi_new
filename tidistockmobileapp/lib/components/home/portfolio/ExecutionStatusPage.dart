@@ -2,10 +2,12 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:tidistockmobileapp/models/model_portfolio.dart';
 import 'package:tidistockmobileapp/models/order_result.dart';
+import 'package:tidistockmobileapp/service/CacheService.dart';
 import 'package:tidistockmobileapp/service/OrderExecutionService.dart';
 import 'package:tidistockmobileapp/widgets/customScaffold.dart';
 
 import 'BrokerSelectionPage.dart';
+import 'PortfolioHoldingsPage.dart';
 
 class ExecutionStatusPage extends StatefulWidget {
   final ModelPortfolio portfolio;
@@ -99,6 +101,12 @@ class _ExecutionStatusPageState extends State<ExecutionStatusPage> {
         );
       }
     }
+
+    // Invalidate portfolio caches so next views show fresh data
+    CacheService.instance.invalidatePortfolioData(
+      widget.email,
+      widget.portfolio.modelName,
+    );
 
     if (mounted) {
       setState(() {
@@ -451,21 +459,48 @@ class _ExecutionStatusPageState extends State<ExecutionStatusPage> {
                   ),
                 ),
               ),
+            // View Updated Portfolio button
             SizedBox(
               width: double.infinity,
               height: 50,
-              child: ElevatedButton(
+              child: ElevatedButton.icon(
                 onPressed: () {
-                  // Navigate to invested portfolios, clearing the stack
-                  Navigator.of(context).popUntil((route) => route.isFirst);
+                  Navigator.pushReplacement(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => PortfolioHoldingsPage(
+                        portfolio: widget.portfolio,
+                        email: widget.email,
+                      ),
+                    ),
+                  );
                 },
+                icon: const Icon(Icons.visibility_rounded, size: 18),
+                label: const Text("View Updated Portfolio",
+                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF1A237E),
+                  backgroundColor: const Color(0xFF2E7D32),
+                  foregroundColor: Colors.white,
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
                   elevation: 0,
                 ),
-                child: const Text("Done",
-                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: Colors.white)),
+              ),
+            ),
+            const SizedBox(height: 8),
+            // Back to Portfolios button
+            SizedBox(
+              width: double.infinity,
+              height: 46,
+              child: OutlinedButton(
+                onPressed: () {
+                  Navigator.of(context).popUntil((route) => route.isFirst);
+                },
+                style: OutlinedButton.styleFrom(
+                  side: const BorderSide(color: Color(0xFF1A237E)),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                ),
+                child: const Text("Back to Portfolios",
+                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: Color(0xFF1A237E))),
               ),
             ),
           ],

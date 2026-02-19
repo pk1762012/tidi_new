@@ -2,10 +2,12 @@ import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
 
 import 'AqCryptoService.dart';
 import 'CacheService.dart';
+import 'UserIdentityService.dart';
 
 class AqApiService {
   AqApiService._();
@@ -532,6 +534,28 @@ class AqApiService {
     // This endpoint may need to be implemented on the backend
     // For now, return a success response
     return http.Response('{"status": "success"}', 200);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Email resolution helper
+  // ---------------------------------------------------------------------------
+
+  /// Resolve the user email from secure storage, generating a synthetic email
+  /// from the stored phone number if necessary.  Returns `null` only when
+  /// neither email nor phone is stored (should not happen after login).
+  static Future<String?> resolveUserEmail() async {
+    const storage = FlutterSecureStorage();
+    String? email = await storage.read(key: 'user_email');
+    if (email != null && email.isNotEmpty) return email;
+
+    final phone = await storage.read(key: 'phone_number');
+    if (phone != null && phone.isNotEmpty) {
+      email = UserIdentityService.generateSyntheticEmail(phone);
+      await storage.write(key: 'user_email', value: email);
+      debugPrint('[AqApiService] resolveUserEmail: generated synthetic $email');
+      return email;
+    }
+    return null;
   }
 
   /// Convert pricing tier name to duration in days

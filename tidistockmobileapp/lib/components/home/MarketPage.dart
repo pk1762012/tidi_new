@@ -14,6 +14,8 @@ import 'market/calculators/FinancialCalculatorsPage.dart';
 import 'market/OptionPulsePage.dart';
 import 'market/StockScanner.dart';
 import 'news/NewsScreen.dart';
+import '../../widgets/PortfolioSummaryCard.dart';
+import '../../service/AqApiService.dart';
 
 
 class MarketPage extends StatefulWidget {
@@ -50,6 +52,9 @@ class MarketPageState extends State<MarketPage> with TickerProviderStateMixin, W
   // Subscription
   bool isSubscribed = false;
 
+  // User email for portfolio card
+  String? _userEmail;
+
   @override
   void initState() {
     super.initState();
@@ -59,6 +64,7 @@ class MarketPageState extends State<MarketPage> with TickerProviderStateMixin, W
     });
     loadSubscriptionStatus();
     preloadStockData();
+    _loadUserEmail();
 
     // Slide + fade animation for page content
     _pageSlideController = AnimationController(
@@ -119,6 +125,11 @@ class MarketPageState extends State<MarketPage> with TickerProviderStateMixin, W
       );
     });
 
+  }
+
+  Future<void> _loadUserEmail() async {
+    final email = await AqApiService.resolveUserEmail();
+    if (mounted && email != null) setState(() => _userEmail = email);
   }
 
   Future<void> loadSubscriptionStatus() async {
@@ -495,7 +506,9 @@ class MarketPageState extends State<MarketPage> with TickerProviderStateMixin, W
                               child: const MarketDataWidget(),
                             ),
                           ),
-                          //const SizedBox(height: 2),
+                          // Portfolio summary card
+                          if (_userEmail != null)
+                            PortfolioSummaryCard(email: _userEmail!),
                           GridView.builder(
                             shrinkWrap: true,
                             physics: const NeverScrollableScrollPhysics(),

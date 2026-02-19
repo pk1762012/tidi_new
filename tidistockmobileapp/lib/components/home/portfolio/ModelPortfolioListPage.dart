@@ -10,6 +10,7 @@ import 'package:tidistockmobileapp/service/AqApiService.dart';
 import 'package:tidistockmobileapp/service/CacheService.dart';
 import 'package:tidistockmobileapp/widgets/customScaffold.dart';
 
+import '../../../service/RebalanceStatusService.dart';
 import 'ModelPortfolioDetailPage.dart';
 import 'InvestedPortfoliosPage.dart';
 import 'RebalanceReviewPage.dart';
@@ -94,59 +95,19 @@ class _ModelPortfolioListPageState extends State<ModelPortfolioListPage>
     }
 
     try {
-      final response = await AqApiService.instance.getSubscribedStrategies(userEmail!);
-      debugPrint('[ModelPortfolio] rebalanceStatus response: ${response.statusCode}');
-
-      if (response.statusCode >= 200 && response.statusCode < 300) {
-        final body = json.decode(response.body);
-        final List<dynamic> subscriptions = body is List
-            ? body
-            : (body['subscribedPortfolios'] ?? body['data'] ?? []);
-
-        debugPrint('[ModelPortfolio] subscriptions count: ${subscriptions.length}');
-
-        final pending = <Map<String, dynamic>>[];
-
-        for (final sub in subscriptions) {
-          if (sub is! Map) continue;
-
-          final modelName = sub['model_name']?.toString() ?? sub['modelName']?.toString() ?? '';
-          final model = sub['model'] as Map<String, dynamic>?;
-          if (model == null) continue;
-
-          final rebalanceHistory = model['rebalanceHistory'] as List<dynamic>? ?? [];
-          debugPrint('[ModelPortfolio] $modelName has ${rebalanceHistory.length} rebalances');
-
-          // Find the latest rebalance with execution status
-          for (final rebalance in rebalanceHistory.reversed) {
-            // Check for executionStatus at different levels
-            final execData = rebalance['execution'] ?? rebalance['subscriberExecutions'] ?? rebalance;
-            final status = (execData['executionStatus'] ?? execData['status'] ?? execData['userExecution']?['status'] ?? '').toString().toLowerCase();
-
-            debugPrint('[ModelPortfolio] $modelName rebalance status: $status');
-
-            // Check for pending/toExecute/partial statuses
-            if (status == 'toexecute' || status == 'pending' || status == 'partial' || status == '') {
-              pending.add({
-                'modelName': modelName,
-                'modelId': sub['_id'] ?? sub['id'] ?? sub['model_id'] ?? '',
-                'rebalanceDate': rebalance['rebalanceDate'] ?? rebalance['date'],
-                'executionStatus': status,
-                'broker': execData['user_broker'] ?? execData['broker'] ?? 'DummyBroker',
-                'advisor': model['advisor'] ?? '',
-              });
-              break;
-            }
-          }
-        }
-
-        if (mounted) {
-          setState(() {
-            _pendingRebalances = pending;
-            _loadingRebalances = false;
-          });
-          debugPrint('[ModelPortfolio] pending rebalances: ${pending.length}');
-        }
+      final pending = await RebalanceStatusService.fetchPendingRebalances(userEmail!);
+      if (mounted) {
+        setState(() {
+          _pendingRebalances = pending.map((p) => <String, dynamic>{
+            'modelName': p.modelName,
+            'modelId': p.modelId,
+            'rebalanceDate': p.rebalanceDate,
+            'executionStatus': p.executionStatus,
+            'broker': p.broker,
+            'advisor': p.advisor,
+          }).toList();
+          _loadingRebalances = false;
+        });
       }
     } catch (e) {
       debugPrint('[ModelPortfolio] _fetchRebalanceStatus error: $e');
@@ -332,7 +293,7 @@ class _ModelPortfolioListPageState extends State<ModelPortfolioListPage>
         onData: (data, {required fromCache}) {
           if (!mounted) return;
 
-          debugPrint('[ModelPortfolio] onData type=${data.runtimeType} fromCache=$fromCache${data is Map ? ' keys=${(data as Map).keys}' : ''}');
+          debugPrint('[ModelPortfolio] onData type=${data.runtimeType} fromCache=$fromCache${data is Map ? ' keys=${data.keys}' : ''}');
 
           List<dynamic> list;
           String extractionPath;
@@ -350,7 +311,7 @@ class _ModelPortfolioListPageState extends State<ModelPortfolioListPage>
               list = data['models'];
               extractionPath = 'models key';
             } else {
-              list = (data as Map).values.whereType<List>().firstOrNull ?? [];
+              list = data.values.whereType<List>().firstOrNull ?? [];
               extractionPath = 'fallback first List value';
             }
           } else {

@@ -6,6 +6,7 @@ import 'package:tidistockmobileapp/service/AqApiService.dart';
 import 'package:tidistockmobileapp/service/DataRepository.dart';
 import 'package:tidistockmobileapp/widgets/customScaffold.dart';
 
+import 'RebalanceHistoryPage.dart';
 import 'RebalanceReviewPage.dart';
 
 class PortfolioHoldingsPage extends StatefulWidget {
@@ -148,6 +149,10 @@ class _PortfolioHoldingsPageState extends State<PortfolioHoldingsPage> {
                   _headerCard(),
                   const SizedBox(height: 12),
 
+                  // Last rebalance summary
+                  if (widget.portfolio.rebalanceHistory.isNotEmpty)
+                    _lastRebalanceSummary(),
+
                   // Rebalance notification
                   if (hasPendingRebalance) _rebalanceBanner(),
 
@@ -170,6 +175,107 @@ class _PortfolioHoldingsPageState extends State<PortfolioHoldingsPage> {
                 ],
               ),
             ),
+    );
+  }
+
+  Widget _lastRebalanceSummary() {
+    final history = widget.portfolio.rebalanceHistory;
+    if (history.isEmpty) return const SizedBox.shrink();
+
+    final latest = history.last;
+    final exec = latest.getExecutionForUser(widget.email);
+    final dateStr = latest.rebalanceDate != null
+        ? DateFormat("dd MMM yyyy").format(latest.rebalanceDate!)
+        : "Unknown";
+    final stockCount = latest.adviceEntries.length;
+    final statusLabel = exec?.isExecuted == true ? "Executed" : (exec?.status ?? "Pending");
+    final statusColor = exec?.isExecuted == true ? Colors.green : Colors.orange;
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.04),
+            blurRadius: 8,
+            offset: const Offset(0, 3),
+          ),
+        ],
+      ),
+      child: Theme(
+        data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+        child: ExpansionTile(
+          tilePadding: const EdgeInsets.symmetric(horizontal: 16),
+          childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+          initiallyExpanded: false,
+          title: Row(
+            children: [
+              Icon(Icons.history_rounded, size: 18, color: Colors.grey.shade600),
+              const SizedBox(width: 8),
+              const Text("Last Rebalance",
+                style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+              const Spacer(),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                  color: statusColor.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Text(statusLabel,
+                  style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: statusColor)),
+              ),
+            ],
+          ),
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                _rebalStat("Date", dateStr),
+                _rebalStat("Stocks", "$stockCount"),
+                _rebalStat("History", "${history.length} total"),
+              ],
+            ),
+            const SizedBox(height: 10),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => RebalanceHistoryPage(
+                        portfolio: widget.portfolio,
+                        email: widget.email,
+                      ),
+                    ),
+                  );
+                },
+                icon: const Icon(Icons.timeline_rounded, size: 16),
+                label: const Text("View Full History"),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: const Color(0xFF1565C0),
+                  side: const BorderSide(color: Color(0xFF1565C0)),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _rebalStat(String label, String value) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label, style: TextStyle(fontSize: 11, color: Colors.grey.shade500)),
+        const SizedBox(height: 2),
+        Text(value, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+      ],
     );
   }
 

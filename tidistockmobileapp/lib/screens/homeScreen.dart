@@ -8,6 +8,9 @@ import 'package:tidistockmobileapp/widgets/customScaffold.dart';
 
 import '../components/home/AcademyPage.dart';
 import '../components/home/advisory/StockRecommendationScreen.dart';
+import '../components/home/portfolio/ModelPortfolioListPage.dart';
+import '../service/AqApiService.dart';
+import '../service/RebalanceStatusService.dart';
 
 class HomeScreen extends StatefulWidget {
   final int currentIndex;
@@ -42,12 +45,26 @@ class HomeScreenState extends State<HomeScreen> {
     3: 'Profile',
   };
 
+  // Floating rebalance alert state
+  List<PendingRebalance> _pendingRebalances = [];
+  bool _alertDismissed = false;
+
   @override
   void initState() {
     super.initState();
     currentIndex = widget.currentIndex;
     imageUrl = widget.userData?['profilePicture'];
     currentMenu = _menuMap[currentIndex];
+    _loadRebalanceAlerts();
+  }
+
+  Future<void> _loadRebalanceAlerts() async {
+    final email = await AqApiService.resolveUserEmail();
+    if (email == null || !mounted) return;
+    try {
+      final pending = await RebalanceStatusService.fetchPendingRebalances(email);
+      if (mounted) setState(() => _pendingRebalances = pending);
+    } catch (_) {}
   }
 
   @override
@@ -63,8 +80,107 @@ class HomeScreenState extends State<HomeScreen> {
       }),
       child: Scaffold(
         backgroundColor: Colors.transparent,
-        body: pages[currentIndex],
+        body: Stack(
+          children: [
+            pages[currentIndex],
+            // Floating rebalance alert — visible on Market (0) and Advisory (1) tabs
+            if (_pendingRebalances.isNotEmpty &&
+                !_alertDismissed &&
+                (currentIndex == 0 || currentIndex == 1))
+              Positioned(
+                left: 12,
+                right: 12,
+                bottom: 8,
+                child: _buildFloatingRebalanceAlert(),
+              ),
+          ],
+        ),
         bottomNavigationBar: _buildBottomBar(),
+      ),
+    );
+  }
+
+  Widget _buildFloatingRebalanceAlert() {
+    final first = _pendingRebalances.first;
+    final label = _pendingRebalances.length == 1
+        ? "Rebalance: ${first.modelName}"
+        : "${_pendingRebalances.length} Rebalances Pending";
+
+    return Dismissible(
+      key: const Key('rebalance_alert'),
+      direction: DismissDirection.horizontal,
+      onDismissed: (_) => setState(() => _alertDismissed = true),
+      child: GestureDetector(
+        onTap: () {
+          HapticFeedback.mediumImpact();
+          if (_pendingRebalances.length == 1) {
+            // Navigate directly to ModelPortfolioListPage which handles rebalance
+            Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const ModelPortfolioListPage()),
+            );
+          } else {
+            Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const ModelPortfolioListPage()),
+            );
+          }
+        },
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 300),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              colors: [Colors.orange.shade600, Colors.orange.shade800],
+            ),
+            borderRadius: BorderRadius.circular(14),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.orange.withOpacity(0.35),
+                blurRadius: 12,
+                offset: const Offset(0, 4),
+              ),
+            ],
+          ),
+          child: Row(
+            children: [
+              const Icon(Icons.sync_alt_rounded, color: Colors.white, size: 22),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  label,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Text(
+                  "Review",
+                  style: TextStyle(
+                    color: Colors.orange.shade700,
+                    fontWeight: FontWeight.w700,
+                    fontSize: 12,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              GestureDetector(
+                onTap: () => setState(() => _alertDismissed = true),
+                child: const Icon(Icons.close, color: Colors.white70, size: 18),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

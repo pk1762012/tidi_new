@@ -635,6 +635,16 @@ class CacheService {
     }
   }
 
+  /// Invalidate all portfolio-related caches for a specific user and model.
+  ///
+  /// Call this after successful order execution so the next portfolio view
+  /// shows fresh data.
+  void invalidatePortfolioData(String email, String modelName) {
+    invalidateByPrefix('aq/subscription-raw:$email:$modelName');
+    invalidate('aq/model-portfolio/subscribed:$email');
+    invalidate('aq/admin/plan/portfolios');
+  }
+
   /// Clear all cached data (memory + disk + offline queue).
   Future<void> clearAll() async {
     _memoryCache.clear();
