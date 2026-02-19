@@ -1,6 +1,9 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:tidistockmobileapp/models/broker_config.dart';
 import 'package:tidistockmobileapp/service/AqApiService.dart';
+import 'package:tidistockmobileapp/service/BrokerSessionService.dart';
 import 'package:tidistockmobileapp/service/CacheService.dart';
 import 'package:tidistockmobileapp/widgets/customScaffold.dart';
 import 'package:webview_flutter/webview_flutter.dart';
@@ -23,6 +26,10 @@ class _BrokerAuthPageState extends State<BrokerAuthPage> {
   String _status = 'loading'; // loading, webview, success, error
   String? _errorMessage;
   late WebViewController _webViewController;
+  bool _callbackHandled = false;
+
+  bool get _isZerodha =>
+      widget.brokerName.toLowerCase() == 'zerodha';
 
   @override
   void initState() {
@@ -32,45 +39,75 @@ class _BrokerAuthPageState extends State<BrokerAuthPage> {
 
   Future<void> _initiateBrokerAuth() async {
     try {
-      // Request login URL from aq_backend
-      final response = await AqApiService.instance.getBrokerLoginUrl(
-        broker: widget.brokerName,
-        uid: widget.email,
-        apiKey: '', // Broker API keys are managed server-side for TIDI
-        secretKey: '',
-        redirectUrl: 'https://tidiwealth.app/broker-callback',
-      );
+      String? loginUrl;
 
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        final url = data['response']?['loginUrl'] ??
-            data['response']?['login_url'] ??
-            data['loginUrl'] ??
-            data['response'];
+      if (_isZerodha) {
+        // Zerodha publisher login: get login URL from CCXT server
+        loginUrl = await _getZerodhaLoginUrl();
+      } else {
+        // Other OAuth brokers: use aq_backend generic flow
+        loginUrl = await _getGenericLoginUrl();
+      }
 
-        if (url != null && url is String && url.startsWith('http')) {
-          setState(() {
-            _status = 'webview';
-          });
-          _setupWebView(url);
-        } else {
-          setState(() {
-            _status = 'error';
-            _errorMessage = 'Invalid login URL received from server.';
-          });
-        }
+      if (loginUrl != null && loginUrl.startsWith('http')) {
+        setState(() => _status = 'webview');
+        _setupWebView(loginUrl);
       } else {
         setState(() {
           _status = 'error';
-          _errorMessage = 'Failed to get broker login URL. Please try again.';
+          _errorMessage = 'Invalid login URL received from server.';
         });
       }
     } catch (e) {
+      debugPrint('[BrokerAuth] ERROR: $e');
       setState(() {
         _status = 'error';
         _errorMessage = 'Network error. Please check your connection.';
       });
     }
+  }
+
+  /// Zerodha: calls CCXT POST /zerodha/login-url with company API key.
+  Future<String?> _getZerodhaLoginUrl() async {
+    final response = await AqApiService.instance.getZerodhaLoginUrl();
+    debugPrint('[BrokerAuth:Zerodha] login-url status=${response.statusCode} body=${response.body.length > 500 ? response.body.substring(0, 500) : response.body}');
+
+    if (response.statusCode == 200) {
+      final data = jsonDecode(response.body);
+      // CCXT returns: { loginUrl: "https://kite.zerodha.com/connect/login?..." }
+      return data['loginUrl'] ??
+          data['login_url'] ??
+          data['response']?['loginUrl'] ??
+          data['response']?['login_url'] ??
+          (data['response'] is String ? data['response'] : null);
+    }
+
+    debugPrint('[BrokerAuth:Zerodha] FAILED: ${response.statusCode}');
+    return null;
+  }
+
+  /// Other OAuth brokers: generic aq_backend flow.
+  Future<String?> _getGenericLoginUrl() async {
+    final response = await AqApiService.instance.getBrokerLoginUrl(
+      broker: widget.brokerName,
+      uid: widget.email,
+      apiKey: '',
+      secretKey: '',
+      redirectUrl: 'https://tidiwealth.app/broker-callback',
+    );
+
+    debugPrint('[BrokerAuth] getBrokerLoginUrl status=${response.statusCode}');
+
+    if (response.statusCode == 200) {
+      final data = jsonDecode(response.body);
+      return data['response']?['loginUrl'] ??
+          data['response']?['login_url'] ??
+          data['loginUrl'] ??
+          (data['response'] is String ? data['response'] : null);
+    }
+
+    debugPrint('[BrokerAuth] FAILED: ${response.statusCode}');
+    return null;
   }
 
   void _setupWebView(String url) {
@@ -79,30 +116,20 @@ class _BrokerAuthPageState extends State<BrokerAuthPage> {
       ..setNavigationDelegate(
         NavigationDelegate(
           onNavigationRequest: (request) {
-            // Intercept the callback URL
-            if (request.url.contains('broker-callback') ||
-                request.url.contains('request_token') ||
-                request.url.contains('auth_code')) {
+            if (_isCallbackUrl(request.url)) {
               _handleAuthCallback(request.url);
               return NavigationDecision.prevent;
             }
             return NavigationDecision.navigate;
           },
           onPageFinished: (url) {
-            // Also check the final URL after page load
-            if (url.contains('broker-callback') ||
-                url.contains('request_token') ||
-                url.contains('status=success')) {
+            if (_isCallbackUrl(url)) {
               _handleAuthCallback(url);
             }
           },
           onWebResourceError: (error) {
-            // Check if it's actually a redirect to our callback
-            if (error.url != null &&
-                (error.url!.contains('broker-callback') ||
-                 error.url!.contains('request_token'))) {
+            if (error.url != null && _isCallbackUrl(error.url!)) {
               _handleAuthCallback(error.url!);
-              return;
             }
           },
         ),
@@ -110,41 +137,45 @@ class _BrokerAuthPageState extends State<BrokerAuthPage> {
       ..loadRequest(Uri.parse(url));
   }
 
+  bool _isCallbackUrl(String url) {
+    return url.contains('broker-callback') ||
+        url.contains('request_token') ||
+        url.contains('auth_code') ||
+        url.contains('status=success') ||
+        url.contains('stock-recommendation') ||
+        url.contains('zerodha/callback') ||
+        url.contains('motilal-oswal/callback') ||
+        url.contains('icici/auth-callback');
+  }
+
   Future<void> _handleAuthCallback(String callbackUrl) async {
+    // Guard against duplicate callback handling
+    if (_callbackHandled) return;
+    _callbackHandled = true;
+
     setState(() => _status = 'loading');
 
     try {
-      // Extract auth parameters from callback URL
       final uri = Uri.parse(callbackUrl);
       final requestToken = uri.queryParameters['request_token'] ??
           uri.queryParameters['auth_code'] ??
           uri.queryParameters['code'];
 
-      if (requestToken != null) {
-        // Send auth code to aq_backend to generate session
-        final response = await AqApiService.instance.connectBroker(
-          email: widget.email,
-          broker: widget.brokerName,
-          brokerData: {
-            'request_token': requestToken,
-            'status': 'connected',
-          },
-        );
+      if (_isZerodha && requestToken != null) {
+        // Zerodha: exchange request_token via CCXT, then save connection
+        await _handleZerodhaCallback(requestToken);
+        return;
+      }
 
-        if (response.statusCode == 200) {
-          CacheService.instance.invalidate('aq/user/brokers:${widget.email}');
-          setState(() => _status = 'success');
-          await Future.delayed(const Duration(seconds: 1));
-          if (mounted) Navigator.pop(context, true);
-          return;
-        }
+      if (requestToken != null) {
+        // Other brokers: send request_token to aq_backend
+        await _handleGenericCallback(requestToken);
+        return;
       }
 
       // Check for status=success in URL params
       if (uri.queryParameters['status'] == 'success') {
-        setState(() => _status = 'success');
-        await Future.delayed(const Duration(seconds: 1));
-        if (mounted) Navigator.pop(context, true);
+        await _onConnectionSuccess();
         return;
       }
 
@@ -153,11 +184,104 @@ class _BrokerAuthPageState extends State<BrokerAuthPage> {
         _errorMessage = 'Authentication failed. Please try again.';
       });
     } catch (e) {
+      debugPrint('[BrokerAuth] callback error: $e');
       setState(() {
         _status = 'error';
         _errorMessage = 'Failed to complete broker authentication.';
       });
     }
+  }
+
+  /// Zerodha: exchange request_token → gen-access-token → save to DB.
+  Future<void> _handleZerodhaCallback(String requestToken) async {
+    debugPrint('[BrokerAuth:Zerodha] exchanging request_token...');
+
+    // Step 1: Exchange request_token for access_token via CCXT
+    final tokenResp = await AqApiService.instance.exchangeZerodhaToken(
+      requestToken: requestToken,
+    );
+
+    debugPrint('[BrokerAuth:Zerodha] gen-access-token status=${tokenResp.statusCode}');
+
+    if (tokenResp.statusCode == 200) {
+      final tokenData = jsonDecode(tokenResp.body);
+      final accessToken = tokenData['access_token'] ??
+          tokenData['jwtToken'] ??
+          tokenData['response']?['access_token'];
+
+      // Step 2: Save broker connection via aq_backend
+      // Try ObjectId-based connect first, fall back to email-based
+      final uid = await AqApiService.instance.getUserObjectId(widget.email);
+      if (uid != null) {
+        final saveResp = await AqApiService.instance.connectCredentialBroker(
+          uid: uid,
+          userBroker: 'Zerodha',
+          credentials: {
+            'jwtToken': accessToken ?? requestToken,
+          },
+        );
+        debugPrint('[BrokerAuth:Zerodha] connect-broker status=${saveResp.statusCode}');
+      }
+
+      // Also save via email-based connect as fallback
+      await AqApiService.instance.connectBrokerByEmail(
+        email: widget.email,
+        broker: 'Zerodha',
+        brokerData: {
+          'jwtToken': accessToken ?? requestToken,
+          'request_token': requestToken,
+          'status': 'connected',
+        },
+      );
+
+      await _onConnectionSuccess();
+    } else {
+      // Token exchange failed — try saving the request_token directly
+      debugPrint('[BrokerAuth:Zerodha] token exchange failed, saving request_token directly');
+      await AqApiService.instance.connectBrokerByEmail(
+        email: widget.email,
+        broker: 'Zerodha',
+        brokerData: {
+          'request_token': requestToken,
+          'status': 'connected',
+        },
+      );
+      await _onConnectionSuccess();
+    }
+  }
+
+  /// Other brokers: send request_token to aq_backend.
+  Future<void> _handleGenericCallback(String requestToken) async {
+    final response = await AqApiService.instance.connectBroker(
+      email: widget.email,
+      broker: widget.brokerName,
+      brokerData: {
+        'request_token': requestToken,
+        'status': 'connected',
+      },
+    );
+
+    if (response.statusCode == 200) {
+      await _onConnectionSuccess();
+    } else {
+      setState(() {
+        _status = 'error';
+        _errorMessage = 'Failed to save broker connection. Please try again.';
+      });
+    }
+  }
+
+  Future<void> _onConnectionSuccess() async {
+    CacheService.instance.invalidate('aq/user/brokers:${widget.email}');
+    await BrokerSessionService.instance.saveSessionTime(widget.brokerName);
+    // Non-critical: sync model portfolio broker
+    AqApiService.instance.changeBrokerModelPortfolio(
+      email: widget.email,
+      broker: widget.brokerName,
+    ).catchError((_) {});
+    setState(() => _status = 'success');
+    await Future.delayed(const Duration(seconds: 1));
+    if (mounted) Navigator.pop(context, true);
   }
 
   @override
@@ -168,6 +292,21 @@ class _BrokerAuthPageState extends State<BrokerAuthPage> {
       imageUrl: null,
       menu: "Connect ${widget.brokerName}",
       child: _buildContent(),
+    );
+  }
+
+  Widget _buildBrokerLogo({double size = 48}) {
+    final config = BrokerRegistry.getByName(widget.brokerName);
+    if (config == null) return const SizedBox.shrink();
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(12),
+      child: Image.asset(
+        config.logoAsset,
+        width: size,
+        height: size,
+        fit: BoxFit.contain,
+        errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+      ),
     );
   }
 
@@ -194,6 +333,8 @@ class _BrokerAuthPageState extends State<BrokerAuthPage> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
+              _buildBrokerLogo(),
+              const SizedBox(height: 16),
               Container(
                 padding: const EdgeInsets.all(20),
                 decoration: BoxDecoration(
@@ -220,6 +361,8 @@ class _BrokerAuthPageState extends State<BrokerAuthPage> {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
+                _buildBrokerLogo(),
+                const SizedBox(height: 16),
                 Container(
                   padding: const EdgeInsets.all(20),
                   decoration: BoxDecoration(
@@ -238,6 +381,7 @@ class _BrokerAuthPageState extends State<BrokerAuthPage> {
                 const SizedBox(height: 24),
                 ElevatedButton(
                   onPressed: () {
+                    _callbackHandled = false;
                     setState(() => _status = 'loading');
                     _initiateBrokerAuth();
                   },

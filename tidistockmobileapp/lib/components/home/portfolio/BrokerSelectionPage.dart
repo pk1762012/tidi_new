@@ -1,13 +1,16 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:tidistockmobileapp/models/broker_config.dart';
 import 'package:tidistockmobileapp/models/broker_connection.dart';
 import 'package:tidistockmobileapp/models/model_portfolio.dart';
 import 'package:tidistockmobileapp/service/AqApiService.dart';
 import 'package:tidistockmobileapp/widgets/customScaffold.dart';
 
 import 'BrokerAuthPage.dart';
+import 'BrokerCredentialPage.dart';
 import 'InvestmentModal.dart';
+import 'ManageBrokersPage.dart';
 
 class BrokerSelectionPage extends StatefulWidget {
   final String email;
@@ -27,21 +30,6 @@ class _BrokerSelectionPageState extends State<BrokerSelectionPage> {
   List<BrokerConnection> connectedBrokers = [];
   bool loading = true;
 
-  static const List<Map<String, String>> supportedBrokers = [
-    {'name': 'Zerodha', 'icon': 'Z'},
-    {'name': 'Angel One', 'icon': 'A'},
-    {'name': 'Groww', 'icon': 'G'},
-    {'name': 'Upstox', 'icon': 'U'},
-    {'name': 'ICICI Direct', 'icon': 'I'},
-    {'name': 'Kotak', 'icon': 'K'},
-    {'name': 'Dhan', 'icon': 'D'},
-    {'name': 'Fyers', 'icon': 'F'},
-    {'name': 'AliceBlue', 'icon': 'A'},
-    {'name': 'Hdfc Securities', 'icon': 'H'},
-    {'name': 'Motilal Oswal', 'icon': 'M'},
-    {'name': 'IIFL Securities', 'icon': 'I'},
-  ];
-
   @override
   void initState() {
     super.initState();
@@ -53,19 +41,8 @@ class _BrokerSelectionPageState extends State<BrokerSelectionPage> {
       final response = await AqApiService.instance.getConnectedBrokers(widget.email);
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
-        final rawData = data['data'];
-        final List<dynamic> brokerList;
-        if (rawData is List) {
-          brokerList = rawData;
-        } else if (rawData is Map) {
-          brokerList = rawData['connected_brokers'] ?? [];
-        } else {
-          brokerList = data['connected_brokers'] ?? [];
-        }
         setState(() {
-          connectedBrokers = brokerList
-              .map((e) => BrokerConnection.fromJson(e))
-              .toList();
+          connectedBrokers = BrokerConnection.parseApiResponse(data);
           loading = false;
         });
       } else {
@@ -86,9 +63,15 @@ class _BrokerSelectionPageState extends State<BrokerSelectionPage> {
     }
   }
 
-  void _onBrokerTap(String brokerName) async {
+  bool get _hasExpiredBrokers =>
+      connectedBrokers.any((b) => b.isExpired);
+
+  bool get _hasConnectedBrokers =>
+      connectedBrokers.any((b) => b.isConnected);
+
+  void _onBrokerTap(BrokerConfig brokerConfig) async {
     HapticFeedback.mediumImpact();
-    final connection = _getConnection(brokerName);
+    final connection = _getConnection(brokerConfig.name);
 
     if (connection != null && connection.isConnected) {
       // Already connected — proceed to investment
@@ -108,19 +91,31 @@ class _BrokerSelectionPageState extends State<BrokerSelectionPage> {
       return;
     }
 
-    // Navigate to OAuth auth flow
-    final result = await Navigator.push<bool>(
-      context,
-      MaterialPageRoute(
-        builder: (_) => BrokerAuthPage(
-          email: widget.email,
-          brokerName: brokerName,
+    // Route based on auth type
+    bool? result;
+    if (brokerConfig.authType == BrokerAuthType.oauth) {
+      result = await Navigator.push<bool>(
+        context,
+        MaterialPageRoute(
+          builder: (_) => BrokerAuthPage(
+            email: widget.email,
+            brokerName: brokerConfig.name,
+          ),
         ),
-      ),
-    );
+      );
+    } else {
+      result = await Navigator.push<bool>(
+        context,
+        MaterialPageRoute(
+          builder: (_) => BrokerCredentialPage(
+            email: widget.email,
+            brokerConfig: brokerConfig,
+          ),
+        ),
+      );
+    }
 
     if (result == true) {
-      // Broker connected successfully
       await _fetchConnectedBrokers();
       if (widget.portfolio != null && mounted) {
         Navigator.pushReplacement(
@@ -133,13 +128,11 @@ class _BrokerSelectionPageState extends State<BrokerSelectionPage> {
           ),
         );
       } else if (mounted) {
-        // Auto-pop with the connected broker (picker mode)
         final connected = connectedBrokers.where((b) =>
-            b.broker.toLowerCase() == brokerName.toLowerCase() && b.isConnected).toList();
+            b.broker.toLowerCase() == brokerConfig.name.toLowerCase() && b.isConnected).toList();
         if (connected.isNotEmpty) {
           Navigator.pop(context, connected.first);
         } else {
-          // Fallback: pop with any connected broker
           final anyConnected = connectedBrokers.where((b) => b.isConnected).toList();
           if (anyConnected.isNotEmpty) {
             Navigator.pop(context, anyConnected.first);
@@ -147,6 +140,21 @@ class _BrokerSelectionPageState extends State<BrokerSelectionPage> {
         }
       }
     }
+  }
+
+  void _openManageBrokers() async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => ManageBrokersPage(email: widget.email),
+      ),
+    );
+    // Refresh after returning from manage page
+    _fetchConnectedBrokers();
+  }
+
+  void _continueWithoutBroker() {
+    Navigator.pop(context, null);
   }
 
   @override
@@ -161,6 +169,68 @@ class _BrokerSelectionPageState extends State<BrokerSelectionPage> {
           : ListView(
               padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
               children: [
+                // Token expired warning banner
+                if (_hasExpiredBrokers)
+                  Container(
+                    margin: const EdgeInsets.only(bottom: 12),
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.orange.shade50,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: Colors.orange.shade200),
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(Icons.warning_amber_rounded,
+                            size: 20, color: Colors.orange.shade700),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            "Some broker sessions have expired. Please reconnect to continue trading.",
+                            style: TextStyle(
+                                fontSize: 12,
+                                color: Colors.orange.shade800,
+                                height: 1.3),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+
+                // Manage Connected Brokers link
+                if (_hasConnectedBrokers)
+                  GestureDetector(
+                    onTap: _openManageBrokers,
+                    child: Container(
+                      margin: const EdgeInsets.only(bottom: 12),
+                      padding: const EdgeInsets.symmetric(
+                          vertical: 12, horizontal: 16),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: Colors.blue.shade100),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(Icons.settings,
+                              size: 18, color: Colors.blue.shade600),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Text(
+                              "Manage Connected Brokers",
+                              style: TextStyle(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w600,
+                                  color: Colors.blue.shade700),
+                            ),
+                          ),
+                          Icon(Icons.chevron_right,
+                              size: 20, color: Colors.blue.shade400),
+                        ],
+                      ),
+                    ),
+                  ),
+
                 // SEBI disclaimer
                 Container(
                   margin: const EdgeInsets.only(bottom: 16),
@@ -186,7 +256,7 @@ class _BrokerSelectionPageState extends State<BrokerSelectionPage> {
                   ),
                 ),
 
-                // Broker grid
+                // Broker grid using BrokerRegistry
                 GridView.builder(
                   shrinkWrap: true,
                   physics: const NeverScrollableScrollPhysics(),
@@ -196,19 +266,36 @@ class _BrokerSelectionPageState extends State<BrokerSelectionPage> {
                     crossAxisSpacing: 12,
                     mainAxisSpacing: 12,
                   ),
-                  itemCount: supportedBrokers.length,
+                  itemCount: BrokerRegistry.brokers.length,
                   itemBuilder: (context, index) {
-                    final broker = supportedBrokers[index];
-                    return _brokerCard(broker['name']!, broker['icon']!);
+                    final config = BrokerRegistry.brokers[index];
+                    return _brokerCard(config);
                   },
                 ),
+
+                // Continue without broker button (portfolio flow only)
+                if (widget.portfolio != null) ...[
+                  const SizedBox(height: 20),
+                  Center(
+                    child: TextButton(
+                      onPressed: _continueWithoutBroker,
+                      child: const Text(
+                        "Continue without broker",
+                        style: TextStyle(
+                            fontSize: 14,
+                            color: Colors.grey,
+                            decoration: TextDecoration.underline),
+                      ),
+                    ),
+                  ),
+                ],
               ],
             ),
     );
   }
 
-  Widget _brokerCard(String name, String iconLetter) {
-    final connection = _getConnection(name);
+  Widget _brokerCard(BrokerConfig config) {
+    final connection = _getConnection(config.name);
     final isConnected = connection?.isConnected ?? false;
     final isExpired = connection?.isExpired ?? false;
 
@@ -226,7 +313,7 @@ class _BrokerSelectionPageState extends State<BrokerSelectionPage> {
     }
 
     return GestureDetector(
-      onTap: () => _onBrokerTap(name),
+      onTap: () => _onBrokerTap(config),
       child: Container(
         decoration: BoxDecoration(
           color: Colors.white,
@@ -243,29 +330,38 @@ class _BrokerSelectionPageState extends State<BrokerSelectionPage> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Container(
-              width: 42,
-              height: 42,
-              decoration: BoxDecoration(
-                color: isConnected
-                    ? Colors.green.withOpacity(0.1)
-                    : Colors.grey.shade100,
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: Center(
-                child: Text(
-                  iconLetter,
-                  style: TextStyle(
-                    fontSize: 20,
-                    fontWeight: FontWeight.w800,
-                    color: isConnected ? Colors.green : Colors.grey.shade700,
+            ClipRRect(
+              borderRadius: BorderRadius.circular(10),
+              child: Image.asset(
+                config.logoAsset,
+                width: 42,
+                height: 42,
+                fit: BoxFit.contain,
+                errorBuilder: (_, __, ___) => Container(
+                  width: 42,
+                  height: 42,
+                  decoration: BoxDecoration(
+                    color: isConnected
+                        ? Colors.green.withOpacity(0.1)
+                        : Colors.grey.shade100,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Center(
+                    child: Text(
+                      config.iconLetter,
+                      style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.w800,
+                        color: isConnected ? Colors.green : Colors.grey.shade700,
+                      ),
+                    ),
                   ),
                 ),
               ),
             ),
             const SizedBox(height: 8),
             Text(
-              name,
+              config.name,
               style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600),
               textAlign: TextAlign.center,
               maxLines: 1,

@@ -6,6 +6,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
 
 import 'AqCryptoService.dart';
+import 'BrokerCryptoService.dart';
 import 'CacheService.dart';
 import 'UserIdentityService.dart';
 
@@ -219,8 +220,35 @@ class AqApiService {
     );
   }
 
-  /// Connect a broker (send API key / credentials)
-  Future<http.Response> connectBroker({
+  // ── User ObjectId lookup ────────────────────────────────────────────
+  String? _cachedObjectId;
+
+  /// Get the user's AQ MongoDB ObjectId from their email.
+  /// Required by broker-specific endpoints (update-key, connect-broker).
+  Future<String?> getUserObjectId(String email) async {
+    if (_cachedObjectId != null) return _cachedObjectId;
+    try {
+      final resp = await http.post(
+        Uri.parse('${baseUrl}api/user/getUser'),
+        headers: _headers(),
+        body: jsonEncode({'email': email}),
+      );
+      if (resp.statusCode == 200) {
+        final data = jsonDecode(resp.body);
+        _cachedObjectId = data['_id'] as String?;
+        debugPrint('[AqApiService] getUserObjectId: $_cachedObjectId');
+        return _cachedObjectId;
+      }
+    } catch (e) {
+      debugPrint('[AqApiService] getUserObjectId error: $e');
+    }
+    return null;
+  }
+
+  // ── Multi-broker connect (email-based fallback) ───────────────────
+  /// Fallback: connect via multi-broker endpoint using email.
+  /// This stores credentials without server-side validation.
+  Future<http.Response> connectBrokerByEmail({
     required String email,
     required String broker,
     required Map<String, dynamic> brokerData,
@@ -232,7 +260,222 @@ class AqApiService {
     );
   }
 
-  /// Send broker API key to get OAuth login URL (Zerodha example)
+  // ── Credential broker connect (uid-based, validates via CCXT) ─────
+  /// PUT api/user/connect-broker — validates credentials via CCXT.
+  /// Used by: Dhan, AliceBlue, Groww, Angel One callback.
+  Future<http.Response> connectCredentialBroker({
+    required String uid,
+    required String userBroker,
+    required Map<String, dynamic> credentials,
+  }) async {
+    return http.put(
+      Uri.parse('${baseUrl}api/user/connect-broker'),
+      headers: _headers(),
+      body: jsonEncode({'uid': uid, 'user_broker': userBroker, ...credentials}),
+    );
+  }
+
+  // ── Zerodha (Publisher Login / OAuth) ─────────────────────────────
+  /// POST ccxt/zerodha/login-url — gets Kite login URL using company API key.
+  Future<http.Response> getZerodhaLoginUrl() async {
+    return http.post(
+      Uri.parse('${ccxtUrl}zerodha/login-url'),
+      headers: _headers(),
+      body: jsonEncode({
+        'site': advisorSubdomain,
+      }),
+    );
+  }
+
+  /// POST ccxt/zerodha/gen-access-token — exchanges request_token for access_token.
+  Future<http.Response> exchangeZerodhaToken({
+    required String requestToken,
+  }) async {
+    return http.post(
+      Uri.parse('${ccxtUrl}zerodha/gen-access-token'),
+      headers: _headers(),
+      body: jsonEncode({
+        'requestToken': requestToken,
+      }),
+    );
+  }
+
+  /// PUT api/zerodha/update-key — sends encrypted credentials, returns OAuth URL.
+  /// (Used for non-publisher/personal API key flow.)
+  Future<http.Response> connectZerodha({
+    required String uid,
+    required String apiKey,
+    required String secretKey,
+    required String redirectUrl,
+  }) async {
+    final crypto = BrokerCryptoService.instance;
+    return http.put(
+      Uri.parse('${baseUrl}api/zerodha/update-key'),
+      headers: _headers(),
+      body: jsonEncode({
+        'uid': uid,
+        'apiKey': crypto.encryptCredential(apiKey),
+        'secretKey': crypto.encryptCredential(secretKey),
+        'user_broker': 'Zerodha',
+        'redirect_url': redirectUrl,
+      }),
+    );
+  }
+
+  // ── Upstox ────────────────────────────────────────────────────────
+  /// POST api/upstox/update-key — sends encrypted credentials, returns OAuth URL.
+  Future<http.Response> connectUpstox({
+    required String uid,
+    required String apiKey,
+    required String secretKey,
+    required String redirectUri,
+  }) async {
+    final crypto = BrokerCryptoService.instance;
+    return http.post(
+      Uri.parse('${baseUrl}api/upstox/update-key'),
+      headers: _headers(),
+      body: jsonEncode({
+        'uid': uid,
+        'apiKey': crypto.encryptCredential(apiKey),
+        'secretKey': crypto.encryptCredential(secretKey),
+        'redirect_uri': redirectUri,
+      }),
+    );
+  }
+
+  // ── Fyers ─────────────────────────────────────────────────────────
+  /// POST api/fyers/update-key — sends credentials, returns OAuth URL.
+  Future<http.Response> connectFyers({
+    required String uid,
+    required String clientCode,
+    required String secretKey,
+    required String redirectUrl,
+  }) async {
+    final crypto = BrokerCryptoService.instance;
+    return http.post(
+      Uri.parse('${baseUrl}api/fyers/update-key'),
+      headers: _headers(),
+      body: jsonEncode({
+        'uid': uid,
+        'redirect_url': redirectUrl,
+        'clientCode': clientCode,
+        'secretKey': crypto.encryptCredential(secretKey),
+      }),
+    );
+  }
+
+  // ── HDFC Securities ───────────────────────────────────────────────
+  /// POST api/hdfc/update-key — sends encrypted credentials, returns OAuth URL.
+  Future<http.Response> connectHdfc({
+    required String uid,
+    required String apiKey,
+    required String secretKey,
+  }) async {
+    final crypto = BrokerCryptoService.instance;
+    return http.post(
+      Uri.parse('${baseUrl}api/hdfc/update-key'),
+      headers: _headers(),
+      body: jsonEncode({
+        'uid': uid,
+        'apiKey': crypto.encryptCredential(apiKey),
+        'secretKey': crypto.encryptCredential(secretKey),
+      }),
+    );
+  }
+
+  // ── ICICI Direct ──────────────────────────────────────────────────
+  /// PUT api/icici/update-key — sends encrypted credentials.
+  /// After success, redirects to ICICI login page.
+  Future<http.Response> connectIcici({
+    required String uid,
+    required String apiKey,
+    required String secretKey,
+  }) async {
+    final crypto = BrokerCryptoService.instance;
+    return http.put(
+      Uri.parse('${baseUrl}api/icici/update-key'),
+      headers: _headers(),
+      body: jsonEncode({
+        'uid': uid,
+        'user_broker': 'ICICI Direct',
+        'apiKey': crypto.encryptCredential(apiKey),
+        'secretKey': crypto.encryptCredential(secretKey),
+      }),
+    );
+  }
+
+  // ── Motilal Oswal ─────────────────────────────────────────────────
+  /// PUT api/motilal-oswal/update-key — sends encrypted credentials, returns OAuth URL.
+  Future<http.Response> connectMotilal({
+    required String uid,
+    required String apiKey,
+    required String clientCode,
+    required String redirectUrl,
+  }) async {
+    final crypto = BrokerCryptoService.instance;
+    return http.put(
+      Uri.parse('${baseUrl}api/motilal-oswal/update-key'),
+      headers: _headers(),
+      body: jsonEncode({
+        'uid': uid,
+        'apiKey': crypto.encryptCredential(apiKey),
+        'user_broker': 'Motilal Oswal',
+        'redirect_url': redirectUrl,
+        'clientCode': clientCode,
+      }),
+    );
+  }
+
+  // ── Kotak ─────────────────────────────────────────────────────────
+  /// PUT api/kotak/connect-broker — full credential auth with TOTP.
+  Future<http.Response> connectKotak({
+    required String uid,
+    required String apiKey,
+    required String secretKey,
+    required String mobileNumber,
+    required String mpin,
+    required String ucc,
+    required String totp,
+  }) async {
+    final crypto = BrokerCryptoService.instance;
+    return http.put(
+      Uri.parse('${baseUrl}api/kotak/connect-broker'),
+      headers: _headers(),
+      body: jsonEncode({
+        'uid': uid,
+        'apiKey': crypto.encryptCredential(apiKey),
+        'secretKey': crypto.encryptCredential(secretKey),
+        'mobileNumber': mobileNumber,
+        'mpin': mpin,
+        'ucc': ucc,
+        'totp': totp,
+      }),
+    );
+  }
+
+  // ── Groww OAuth ───────────────────────────────────────────────────
+  /// GET ccxt/groww/login/oauth — returns OAuth redirect URL.
+  Future<http.Response> getGrowwOAuthUrl() async {
+    final redirectUri = advisorSubdomain == 'prod'
+        ? 'prod.alphaquark.in/stock-recommendation'
+        : 'dev.alphaquark.in/stock-recommendation';
+    return http.get(
+      Uri.parse('${ccxtUrl}groww/login/oauth?redirectUri=$redirectUri'),
+      headers: _headers(),
+    );
+  }
+
+  /// Generic connectBroker kept for backward compat (delegates to email fallback)
+  Future<http.Response> connectBroker({
+    required String email,
+    required String broker,
+    required Map<String, dynamic> brokerData,
+  }) async {
+    return connectBrokerByEmail(
+        email: email, broker: broker, brokerData: brokerData);
+  }
+
+  /// Generic getBrokerLoginUrl kept for backward compat
   Future<http.Response> getBrokerLoginUrl({
     required String broker,
     required String uid,
@@ -273,6 +516,42 @@ class AqApiService {
     final uri = Uri.parse('$baseUrl$path')
         .replace(queryParameters: {'email': email});
     return http.get(uri, headers: _headers());
+  }
+
+  /// Disconnect a broker
+  Future<http.Response> disconnectBroker({
+    required String email,
+    required String broker,
+  }) async {
+    final brokerPath = broker.toLowerCase().replaceAll(' ', '');
+    final uri = Uri.parse('${baseUrl}api/user/brokers/$brokerPath')
+        .replace(queryParameters: {'email': email});
+    return http.delete(uri, headers: _headers());
+  }
+
+  /// Switch the primary (active) broker
+  Future<http.Response> switchPrimaryBroker({
+    required String email,
+    required String broker,
+  }) async {
+    final brokerPath = broker.toLowerCase().replaceAll(' ', '');
+    return http.put(
+      Uri.parse('${baseUrl}api/user/brokers/$brokerPath/primary'),
+      headers: _headers(),
+      body: jsonEncode({'email': email}),
+    );
+  }
+
+  /// Change broker for model portfolio (after switching primary)
+  Future<http.Response> changeBrokerModelPortfolio({
+    required String email,
+    required String broker,
+  }) async {
+    return http.post(
+      Uri.parse('${ccxtUrl}rebalance/change_broker_model_pf'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({'user_email': email, 'new_broker': broker}),
+    );
   }
 
   // ---------------------------------------------------------------------------

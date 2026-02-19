@@ -16,6 +16,7 @@ class BrokerConnection {
   final bool ddpiEnabled;
   final bool tpinEnabled;
   final bool isAuthorizedForSell;
+  final bool isPrimary;
 
   BrokerConnection({
     this.id,
@@ -35,6 +36,7 @@ class BrokerConnection {
     this.ddpiEnabled = false,
     this.tpinEnabled = false,
     this.isAuthorizedForSell = false,
+    this.isPrimary = false,
   });
 
   factory BrokerConnection.fromJson(Map<String, dynamic> json) {
@@ -62,9 +64,57 @@ class BrokerConnection {
       ddpiEnabled: json['ddpi_enabled'] ?? false,
       tpinEnabled: json['tpin_enabled'] ?? false,
       isAuthorizedForSell: json['is_authorized_for_sell'] ?? false,
+      isPrimary: json['is_primary'] ?? json['isPrimary'] ?? false,
     );
   }
 
   bool get isConnected => status == 'connected';
   bool get isExpired => status == 'expired';
+
+  /// Parse the connected brokers API response, setting isPrimary based on
+  /// the top-level `primary_broker` field.
+  static List<BrokerConnection> parseApiResponse(Map<String, dynamic> data) {
+    final rawData = data['data'];
+    String? primaryBroker;
+    List<dynamic> brokerList;
+
+    if (rawData is Map) {
+      primaryBroker = rawData['primary_broker'] as String?;
+      brokerList = rawData['connected_brokers'] ?? [];
+    } else if (rawData is List) {
+      brokerList = rawData;
+      primaryBroker = data['primary_broker'] as String?;
+    } else {
+      primaryBroker = data['primary_broker'] as String?;
+      brokerList = data['connected_brokers'] ?? [];
+    }
+
+    return brokerList.map((e) {
+      final conn = BrokerConnection.fromJson(e);
+      if (primaryBroker != null &&
+          conn.broker.toLowerCase() == primaryBroker.toLowerCase()) {
+        return BrokerConnection(
+          id: conn.id,
+          broker: conn.broker,
+          clientCode: conn.clientCode,
+          apiKey: conn.apiKey,
+          secretKey: conn.secretKey,
+          jwtToken: conn.jwtToken,
+          viewToken: conn.viewToken,
+          sid: conn.sid,
+          serverId: conn.serverId,
+          status: conn.status,
+          tokenExpire: conn.tokenExpire,
+          connectedAt: conn.connectedAt,
+          lastUsed: conn.lastUsed,
+          lastError: conn.lastError,
+          ddpiEnabled: conn.ddpiEnabled,
+          tpinEnabled: conn.tpinEnabled,
+          isAuthorizedForSell: conn.isAuthorizedForSell,
+          isPrimary: true,
+        );
+      }
+      return conn;
+    }).toList();
+  }
 }

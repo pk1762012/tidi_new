@@ -76,6 +76,7 @@ dependencies:
   hive_flutter: ^1.1.0
   connectivity_plus: ^6.0.0
   crypto: ^3.0.3
+  encrypt: ^5.0.3
   lottie: ^3.3.1
 
 dev_dependencies:
@@ -104,6 +105,7 @@ flutter:
   assets:
     - assets/images/
     - assets/images/branch/
+    - assets/images/brokers/
     - .env.test
     - .env.prod
 

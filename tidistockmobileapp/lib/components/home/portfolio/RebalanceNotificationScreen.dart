@@ -6,6 +6,8 @@ import 'package:intl/intl.dart';
 import 'package:tidistockmobileapp/widgets/customScaffold.dart';
 
 import 'BrokerSelectionPage.dart';
+import 'ExecutionStatusPage.dart';
+import 'package:tidistockmobileapp/models/model_portfolio.dart';
 import 'package:tidistockmobileapp/service/AqApiService.dart';
 import 'package:tidistockmobileapp/service/OrderExecutionService.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -569,6 +571,37 @@ class _RebalanceNotificationScreenState extends State<RebalanceNotificationScree
     );
   }
 
+  /// Normalize trade objects from FCM notification format into
+  /// the order format expected by OrderExecutionService/ExecutionStatusPage.
+  /// FCM may use 'action'/'Action' while execution expects 'transactionType'.
+  List<Map<String, dynamic>> _normalizeTradesForExecution(
+      List<Map<String, dynamic>> trades) {
+    return trades
+        .map((t) {
+          final symbol = t['symbol'] ?? t['Symbol'] ?? '';
+          final action = (t['action'] ?? t['Action'] ??
+                  t['transactionType'] ?? 'BUY')
+              .toString()
+              .toUpperCase();
+          final quantity = t['quantity'] ?? t['Quantity'] ?? 0;
+          final price = t['price'] ?? t['Price'] ?? 0;
+          final exchange = t['exchange'] ?? t['Exchange'] ?? 'NSE';
+          if (symbol.toString().isEmpty || quantity == 0) return null;
+          return <String, dynamic>{
+            'symbol': symbol,
+            'exchange': exchange,
+            'transactionType': action,
+            'quantity': quantity is int ? quantity : int.tryParse('$quantity') ?? 0,
+            'orderType': t['orderType'] ?? 'MARKET',
+            'productType': t['productType'] ?? 'CNC',
+            'price': price is double ? price : double.tryParse('$price') ?? 0.0,
+          };
+        })
+        .where((t) => t != null)
+        .cast<Map<String, dynamic>>()
+        .toList();
+  }
+
   Future<void> _executeTrades() async {
     if (_userEmail == null || _userEmail!.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -582,17 +615,34 @@ class _RebalanceNotificationScreenState extends State<RebalanceNotificationScree
 
     try {
       if (_brokerConnection != null) {
-        // Broker connected - execute via API
-        // TODO: Implement actual trade execution via broker
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Executing trades through broker...")),
+        // Broker connected — navigate to ExecutionStatusPage which handles
+        // real order placement via OrderExecutionService.executeOrders()
+        final orders = _normalizeTradesForExecution(widget.trades);
+        if (orders.isEmpty) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text("No valid trades to execute.")),
+            );
+          }
+          return;
+        }
+        // Create a minimal ModelPortfolio for the execution page
+        final minimalPortfolio = ModelPortfolio(
+          id: '',
+          advisor: widget.advisorName,
+          modelName: widget.modelName,
+          minInvestment: 0,
         );
-        // For now, just show a success message
-        await Future.delayed(const Duration(seconds: 1));
         if (mounted) {
-          Navigator.pop(context);
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text("Trades executed successfully!")),
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(
+              builder: (_) => ExecutionStatusPage(
+                portfolio: minimalPortfolio,
+                email: _userEmail!,
+                orders: orders,
+              ),
+            ),
           );
         }
       } else {
@@ -602,8 +652,9 @@ class _RebalanceNotificationScreenState extends State<RebalanceNotificationScree
           if (confirmed == true && mounted) {
             // Record trades via OrderExecutionService
             try {
+              final normalizedTrades = _normalizeTradesForExecution(widget.trades);
               await OrderExecutionService.instance.executeDummyBrokerOrders(
-                orders: widget.trades,
+                orders: normalizedTrades,
                 email: _userEmail!,
                 modelName: widget.modelName,
                 modelId: '',

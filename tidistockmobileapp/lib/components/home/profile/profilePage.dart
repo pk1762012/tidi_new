@@ -2,6 +2,7 @@ import 'dart:ui';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:tidistockmobileapp/screens/welcomeScreen.dart';
 import 'package:tidistockmobileapp/service/ApiService.dart';
+import 'package:tidistockmobileapp/service/AqApiService.dart';
 import 'package:tidistockmobileapp/service/CacheService.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
@@ -18,6 +19,7 @@ import '../../../theme/theme.dart';
 import '../../../widgets/customScaffold.dart';
 import '../../login/splash.dart';
 import '../portfolio/BrokerSelectionPage.dart';
+import '../portfolio/ManageBrokersPage.dart';
 import 'SubscriptionPlanScreen.dart';
 import 'SubscriptionTransactionsScreen.dart';
 
@@ -690,55 +692,104 @@ class ProfilePageState extends State<ProfilePage>
                             const SizedBox(height: 10),
                             FutureBuilder<String?>(
                               future: secureStorage.read(key: 'user_email'),
-                              builder: (context, snapshot) {
-                                final email = snapshot.data;
+                              builder: (context, emailSnap) {
+                                final email = emailSnap.data;
                                 if (email == null || email.isEmpty) return const SizedBox.shrink();
-                                return InkWell(
-                                  onTap: () {
-                                    Navigator.push(
-                                      context,
-                                      MaterialPageRoute(
-                                        builder: (_) => BrokerSelectionPage(
-                                          email: email,
+                                return FutureBuilder(
+                                  future: AqApiService.instance.getConnectedBrokers(email),
+                                  builder: (context, brokerSnap) {
+                                    int brokerCount = 0;
+                                    String activeBroker = '';
+                                    if (brokerSnap.hasData && brokerSnap.data!.statusCode == 200) {
+                                      try {
+                                        final data = json.decode(brokerSnap.data!.body);
+                                        final rawData = data['data'];
+                                        final List<dynamic> brokerList;
+                                        if (rawData is List) {
+                                          brokerList = rawData;
+                                        } else if (rawData is Map) {
+                                          brokerList = rawData['connected_brokers'] ?? [];
+                                        } else {
+                                          brokerList = data['connected_brokers'] ?? [];
+                                        }
+                                        brokerCount = brokerList.length;
+                                        for (final b in brokerList) {
+                                          if (b['is_primary'] == true || b['isPrimary'] == true) {
+                                            activeBroker = b['broker'] ?? '';
+                                            break;
+                                          }
+                                        }
+                                        if (activeBroker.isEmpty && brokerList.isNotEmpty) {
+                                          activeBroker = brokerList.first['broker'] ?? '';
+                                        }
+                                      } catch (_) {}
+                                    }
+
+                                    final hasBrokers = brokerCount > 0;
+                                    return InkWell(
+                                      onTap: () {
+                                        Navigator.push(
+                                          context,
+                                          MaterialPageRoute(
+                                            builder: (_) => hasBrokers
+                                                ? ManageBrokersPage(email: email)
+                                                : BrokerSelectionPage(email: email),
+                                          ),
+                                        ).then((_) => setState(() {}));
+                                      },
+                                      borderRadius: BorderRadius.circular(12),
+                                      child: Container(
+                                        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+                                        decoration: BoxDecoration(
+                                          gradient: LinearGradient(
+                                            colors: [lightColorScheme.primary, lightColorScheme.secondary],
+                                            begin: Alignment.topLeft,
+                                            end: Alignment.bottomRight,
+                                          ),
+                                          borderRadius: BorderRadius.circular(12),
+                                          boxShadow: [
+                                            BoxShadow(
+                                              color: lightColorScheme.primary.withOpacity(0.3),
+                                              blurRadius: 8,
+                                              offset: const Offset(0, 4),
+                                            ),
+                                          ],
+                                        ),
+                                        child: Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            const Icon(Icons.account_balance, color: Colors.white, size: 20),
+                                            const SizedBox(width: 10),
+                                            Column(
+                                              crossAxisAlignment: CrossAxisAlignment.start,
+                                              children: [
+                                                Text(
+                                                  hasBrokers
+                                                      ? "$activeBroker${brokerCount > 1 ? ' +${brokerCount - 1}' : ''}"
+                                                      : "No broker connected",
+                                                  style: const TextStyle(
+                                                    color: Colors.white,
+                                                    fontSize: 14,
+                                                    fontWeight: FontWeight.w700,
+                                                  ),
+                                                ),
+                                                Text(
+                                                  hasBrokers ? "Manage connections" : "Tap to connect",
+                                                  style: TextStyle(
+                                                    color: Colors.white.withOpacity(0.7),
+                                                    fontSize: 11,
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                            const SizedBox(width: 8),
+                                            Icon(Icons.chevron_right,
+                                                color: Colors.white.withOpacity(0.7), size: 20),
+                                          ],
                                         ),
                                       ),
                                     );
                                   },
-                                  borderRadius: BorderRadius.circular(12),
-                                  child: Container(
-                                    padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 20),
-                                    decoration: BoxDecoration(
-                                      gradient: LinearGradient(
-                                        colors: [lightColorScheme.primary, lightColorScheme.secondary],
-                                        begin: Alignment.topLeft,
-                                        end: Alignment.bottomRight,
-                                      ),
-                                      borderRadius: BorderRadius.circular(12),
-                                      boxShadow: [
-                                        BoxShadow(
-                                          color: lightColorScheme.primary.withOpacity(0.3),
-                                          blurRadius: 8,
-                                          offset: const Offset(0, 4),
-                                        ),
-                                      ],
-                                    ),
-                                    child: Row(
-                                      mainAxisSize: MainAxisSize.min,
-                                      mainAxisAlignment: MainAxisAlignment.center,
-                                      children: const [
-                                        Icon(Icons.account_balance, color: Colors.blue, size: 20),
-                                        SizedBox(width: 8),
-                                        Text(
-                                          "Connected Brokers",
-                                          style: TextStyle(
-                                            color: Colors.white,
-                                            fontSize: 14,
-                                            fontWeight: FontWeight.w700,
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
                                 );
                               },
                             ),
