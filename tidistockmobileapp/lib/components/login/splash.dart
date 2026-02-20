@@ -155,14 +155,16 @@ class _SplashScreenState extends State<SplashScreen> {
     return PopScope(
       canPop: false,
       child: Scaffold(
-        backgroundColor: Colors.white, // or any theme color
-        body: SizedBox.expand(
-          child: Image.asset(
-            'assets/images/tidi_intro_static.png',
-            fit: BoxFit.fill,
+        backgroundColor: Colors.white,
+        body: Center(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 48),
+            child: Image.asset(
+              'assets/images/tidi_one_1024.png',
+              fit: BoxFit.contain,
+            ),
           ),
         ),
-
       ),
     );
   }
