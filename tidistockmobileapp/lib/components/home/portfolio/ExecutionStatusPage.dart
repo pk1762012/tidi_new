@@ -119,30 +119,8 @@ class _ExecutionStatusPageState extends State<ExecutionStatusPage> {
       return;
     }
 
-    // Post-execution: update portfolio database
-    try {
-      final mid = _modelId;
-      if (mid.isNotEmpty) {
-        await OrderExecutionService.instance.updatePortfolioAfterExecution(
-          modelId: mid,
-          results: orderResults,
-          email: widget.email,
-          broker: OrderExecutionService.instance.lastUsedBrokerName,
-        );
-      }
-    } catch (e) {
-      debugPrint('[ExecutionStatusPage] Portfolio update failed: $e');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Orders placed but portfolio sync failed. It will sync automatically.'),
-            backgroundColor: Colors.orange,
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
-      }
-    }
-
+    // Portfolio DB update is handled inside OrderExecutionService.executeOrders
+    // (step 6 of the post-execution pipeline). Just invalidate local cache.
     CacheService.instance.invalidatePortfolioData(
       widget.email,
       _modelName,
@@ -262,7 +240,15 @@ class _ExecutionStatusPageState extends State<ExecutionStatusPage> {
         }
       }
 
-      // Step 2: Update subscriber execution
+      // Step 2: Sync Zerodha user portfolio (matches RGX zerodha/user-portfolio call)
+      try {
+        await AqApiService.instance.syncZerodhaUserPortfolio(email: widget.email);
+        debugPrint('[ExecutionStatus:Zerodha] user-portfolio sync success');
+      } catch (e) {
+        debugPrint('[ExecutionStatus:Zerodha] user-portfolio sync failed: $e');
+      }
+
+      // Step 3: Update subscriber execution
       final successCount = results.where((r) => r.isSuccess).length;
       final execStatus = successCount == results.length
           ? 'executed'
@@ -279,7 +265,7 @@ class _ExecutionStatusPageState extends State<ExecutionStatusPage> {
         debugPrint('[ExecutionStatus:Zerodha] updateSubscriberExecution failed: $e');
       }
 
-      // Step 3: Add to status check queue
+      // Step 4: Add to status check queue
       try {
         await AqApiService.instance.addToStatusCheckQueue(
           email: widget.email,
@@ -291,7 +277,7 @@ class _ExecutionStatusPageState extends State<ExecutionStatusPage> {
         debugPrint('[ExecutionStatus:Zerodha] addToStatusCheckQueue failed: $e');
       }
 
-      // Step 4: Update portfolio DB
+      // Step 5: Update portfolio DB
       try {
         if (_modelId.isNotEmpty) {
           await OrderExecutionService.instance.updatePortfolioAfterExecution(

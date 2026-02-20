@@ -12,4 +12,9 @@ class AppConfig {
 
   /// Smallcase gateway URL used when [advisoryMode] == [AdvisoryPortfolioMode.smallcase]
   static const String smallcaseUrl = 'https://tidiwealth.smallcase.com/';
+
+  // ── In-app update prompt ─────────────────────────────────────────────────
+  /// When true the update sheet cannot be dismissed (mandatory update).
+  /// When false the user can tap "Maybe Later" to skip.
+  static const bool forceUpdate = false;
 }

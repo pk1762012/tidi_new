@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
+import 'package:tidistockmobileapp/models/broker_connection.dart';
 import 'package:tidistockmobileapp/models/order_result.dart';
 import 'package:tidistockmobileapp/service/AqApiService.dart';
 
@@ -25,6 +26,21 @@ class OrderExecutionService {
   String _lastUsedBrokerName = '';
   String get lastUsedBrokerName => _lastUsedBrokerName;
 
+  /// Select the best broker for execution.
+  /// Priority: primary + effectively connected > effectively connected > connected.
+  BrokerConnection? _selectBroker(List<BrokerConnection> connections) {
+    for (final c in connections) {
+      if (c.isPrimary && c.isEffectivelyConnected) return c;
+    }
+    for (final c in connections) {
+      if (c.isEffectivelyConnected) return c;
+    }
+    for (final c in connections) {
+      if (c.isConnected) return c;
+    }
+    return null;
+  }
+
   /// Execute a list of orders through the connected broker via CCXT
   /// rebalance/process-trade endpoint (matching the RGX web app flow).
   ///
@@ -33,9 +49,11 @@ class OrderExecutionService {
   ///
   /// For other brokers: calls CCXT rebalance/process-trade and returns results.
   ///
-  /// After successful execution, calls:
-  ///   1. rebalance/add-user/status-check-queue
+  /// Post-execution pipeline (matching RGX):
+  ///   1. model-portfolio-db-update
   ///   2. rebalance/update/subscriber-execution
+  ///   3. rebalance/record-publisher-results (Fyers only)
+  ///   4. rebalance/add-user/status-check-queue
   Future<List<OrderResult>> executeOrders({
     required List<Map<String, dynamic>> orders,
     required String email,
@@ -57,35 +75,40 @@ class OrderExecutionService {
       debugPrint('[OrderExecution] Failed to parse broker response: $e');
       throw Exception('Invalid broker response from server');
     }
-    if (brokerData is! Map) {
+    if (brokerData is! Map<String, dynamic>) {
       throw Exception('Unexpected broker response format');
     }
-    final brokers = brokerData['data'] ?? brokerData['connected_brokers'] ?? [];
-    if (brokers is! List || brokers.isEmpty) {
+
+    // 2. Parse connections and select PRIMARY broker
+    final connections = BrokerConnection.parseApiResponse(brokerData);
+    if (connections.isEmpty) {
       throw Exception('No connected broker found');
     }
 
-    // Use the first connected broker
-    final broker = brokers.firstWhere(
-      (b) => b['status'] == 'connected',
-      orElse: () => brokers[0],
-    );
+    final selected = _selectBroker(connections);
+    if (selected == null) {
+      throw Exception('No connected broker found. Please reconnect your broker.');
+    }
+    if (selected.isTokenExpired) {
+      throw Exception('session expired for ${selected.broker}. Please reconnect.');
+    }
 
-    final brokerName = broker['broker'] ?? '';
+    debugPrint('[OrderExecution] Selected broker: ${selected.broker} (primary=${selected.isPrimary})');
+
+    final brokerName = selected.broker;
     _lastUsedBrokerName = brokerName;
-    final apiKey = broker['apiKey'] ?? '';
-    final jwtToken = broker['jwtToken'] ?? '';
-    final clientCode = broker['clientCode'];
-    final secretKey = broker['secretKey'];
-    final accessToken = broker['accessToken'];
-    final viewToken = broker['viewToken'];
-    final sid = broker['sid'];
-    final serverId = broker['serverId'];
+    final apiKey = selected.apiKey ?? '';
+    final jwtToken = selected.jwtToken ?? '';
+    final clientCode = selected.clientCode;
+    final secretKey = selected.secretKey;
+    final viewToken = selected.viewToken;
+    final sid = selected.sid;
+    final serverId = selected.serverId;
 
     // Generate unique_id matching RGX pattern
     final uniqueId = '${modelId}_${DateTime.now().millisecondsSinceEpoch}_$email';
 
-    // 2. Build trade list in CCXT format (matching RGX RebalanceModal.js)
+    // 3. Build trade list in CCXT format (matching RGX RebalanceModal.js)
     final trades = orders.map((o) => <String, dynamic>{
       'user_email': email,
       'tradingSymbol': o['symbol'] ?? o['tradingSymbol'] ?? '',
@@ -144,7 +167,7 @@ class OrderExecutionService {
       }
 
       // Company API key for publisher login
-      final zerodhaApiKey = broker['zerodhaApiKey'] ?? apiKey;
+      final zerodhaApiKey = apiKey;
 
       throw ZerodhaBasketRequiredException(
         apiKey: zerodhaApiKey,
@@ -166,14 +189,15 @@ class OrderExecutionService {
       secretKey: secretKey,
       jwtToken: jwtToken.isNotEmpty ? jwtToken : null,
       clientCode: clientCode,
-      accessToken: accessToken,
       viewToken: viewToken,
       sid: sid,
       serverId: serverId,
     );
 
-    // 5. Parse results
+    // 5. Parse results — save raw details for post-execution API calls
     final results = <OrderResult>[];
+    List<Map<String, dynamic>> rawTradeDetails = [];
+
     if (response.statusCode == 200) {
       final data = jsonDecode(response.body);
       final tradeDetails = data['tradeDetails'] ??
@@ -183,6 +207,10 @@ class OrderExecutionService {
           [];
 
       if (tradeDetails is List && tradeDetails.isNotEmpty) {
+        rawTradeDetails = tradeDetails
+            .map((e) => e is Map ? Map<String, dynamic>.from(e) : <String, dynamic>{})
+            .toList();
+
         for (int i = 0; i < tradeDetails.length; i++) {
           final result = OrderResult.fromJson(
             tradeDetails[i] is Map
@@ -208,6 +236,14 @@ class OrderExecutionService {
         }
       }
     } else {
+      // Extract error message from response body if possible
+      String errorMsg = 'Order placement failed (HTTP ${response.statusCode})';
+      try {
+        final errData = jsonDecode(response.body);
+        final serverMsg = errData['message'] ?? errData['error'] ?? errData['msg'];
+        if (serverMsg != null) errorMsg = serverMsg.toString();
+      } catch (_) {}
+
       debugPrint('[OrderExecution] process-trade failed: ${response.statusCode} ${response.body}');
       for (int i = 0; i < orders.length; i++) {
         final result = OrderResult(
@@ -215,19 +251,36 @@ class OrderExecutionService {
           transactionType: orders[i]['transactionType'] ?? 'BUY',
           quantity: orders[i]['quantity'] ?? 0,
           status: 'failed',
-          message: 'Order placement failed (HTTP ${response.statusCode})',
+          message: errorMsg,
         );
         results.add(result);
         onOrderUpdate(i + 1, orders.length, result);
       }
     }
 
-    // 6. Post-execution: update subscriber execution status
+    // ── Post-execution pipeline (matching RGX RebalanceModal.js) ──
+
     final successCount = results.where((r) => r.isSuccess).length;
     final executionStatus = successCount == results.length
         ? 'executed'
         : (successCount > 0 ? 'partial' : 'pending');
 
+    // 6. model-portfolio-db-update (RGX calls this first)
+    try {
+      final orderResultsForDb = rawTradeDetails.isNotEmpty
+          ? rawTradeDetails
+          : results.map((r) => r.toApiJson()).toList();
+      await AqApiService.instance.updatePortfolioAfterExecution(
+        modelId: modelId,
+        orderResults: orderResultsForDb,
+        userEmail: email,
+        userBroker: brokerName,
+      );
+    } catch (e) {
+      debugPrint('[OrderExecution] updatePortfolioAfterExecution failed: $e');
+    }
+
+    // 7. update/subscriber-execution
     try {
       await AqApiService.instance.updateSubscriberExecution(
         email: email,
@@ -240,7 +293,27 @@ class OrderExecutionService {
       debugPrint('[OrderExecution] updateSubscriberExecution failed: $e');
     }
 
-    // 7. Post-execution: add to status check queue
+    // 8. record-publisher-results (Fyers publisher flow — matches RGX)
+    if (brokerName.toLowerCase() == 'fyers') {
+      try {
+        await AqApiService.instance.recordPublisherResults(
+          modelName: modelName,
+          modelId: modelId,
+          uniqueId: uniqueId,
+          advisor: advisor,
+          orderResults: rawTradeDetails.isNotEmpty
+              ? rawTradeDetails
+              : results.map((r) => r.toApiJson()).toList(),
+          email: email,
+          broker: brokerName,
+        );
+        debugPrint('[OrderExecution] recordPublisherResults success (Fyers)');
+      } catch (e) {
+        debugPrint('[OrderExecution] recordPublisherResults failed: $e');
+      }
+    }
+
+    // 9. add-user/status-check-queue (always last)
     try {
       await AqApiService.instance.addToStatusCheckQueue(
         email: email,

@@ -11,6 +11,7 @@ import '../components/home/advisory/StockRecommendationScreen.dart';
 import '../components/home/portfolio/ModelPortfolioListPage.dart';
 import '../service/AqApiService.dart';
 import '../service/RebalanceStatusService.dart';
+import '../widgets/update_prompt_sheet.dart';
 
 class HomeScreen extends StatefulWidget {
   final int currentIndex;
@@ -56,6 +57,9 @@ class HomeScreenState extends State<HomeScreen> {
     imageUrl = widget.userData?['profilePicture'];
     currentMenu = _menuMap[currentIndex];
     _loadRebalanceAlerts();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      UpdatePromptSheet.checkAndShow(context);
+    });
   }
 
   Future<void> _loadRebalanceAlerts() async {

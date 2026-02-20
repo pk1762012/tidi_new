@@ -655,6 +655,18 @@ class AqApiService {
     );
   }
 
+  /// Sync Zerodha user portfolio after basket execution.
+  /// POST ccxt/zerodha/user-portfolio
+  Future<http.Response> syncZerodhaUserPortfolio({
+    required String email,
+  }) async {
+    return http.post(
+      Uri.parse('${ccxtUrl}zerodha/user-portfolio'),
+      headers: _headers(),
+      body: jsonEncode({'user_email': email}),
+    );
+  }
+
   /// Record publisher execution results (for all brokers).
   /// POST ccxt/rebalance/record-publisher-results
   Future<http.Response> recordPublisherResults({
