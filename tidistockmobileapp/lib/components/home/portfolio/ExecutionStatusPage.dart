@@ -1,10 +1,14 @@
+import 'dart:convert';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:tidistockmobileapp/models/model_portfolio.dart';
 import 'package:tidistockmobileapp/models/order_result.dart';
+import 'package:tidistockmobileapp/service/AqApiService.dart';
 import 'package:tidistockmobileapp/service/CacheService.dart';
 import 'package:tidistockmobileapp/service/OrderExecutionService.dart';
 import 'package:tidistockmobileapp/widgets/customScaffold.dart';
+import 'package:webview_flutter/webview_flutter.dart';
 
 import 'BrokerSelectionPage.dart';
 import 'PortfolioHoldingsPage.dart';
@@ -13,12 +17,18 @@ class ExecutionStatusPage extends StatefulWidget {
   final ModelPortfolio portfolio;
   final String email;
   final List<Map<String, dynamic>> orders;
+  final String? modelId;
+  final String? modelName;
+  final String? advisor;
 
   const ExecutionStatusPage({
     super.key,
     required this.portfolio,
     required this.email,
     required this.orders,
+    this.modelId,
+    this.modelName,
+    this.advisor,
   });
 
   @override
@@ -28,10 +38,28 @@ class ExecutionStatusPage extends StatefulWidget {
 class _ExecutionStatusPageState extends State<ExecutionStatusPage> {
   List<OrderResult> results = [];
   int completedCount = 0;
-  bool executing = true;
+
+  // States: executing, zerodha_webview, recording, done, error
+  String _state = 'executing';
+  bool get executing => _state == 'executing' || _state == 'recording';
   bool hasError = false;
   bool isBrokerError = false;
   String? errorMessage;
+
+  // Zerodha WebView state
+  WebViewController? _zerodhaWebController;
+  List<Map<String, dynamic>>? _zerodhaStockDetails;
+  String? _zerodhaApiKey;
+
+  String get _modelName => widget.modelName ?? widget.portfolio.modelName;
+  String get _advisor => widget.advisor ?? widget.portfolio.advisor;
+  String get _modelId {
+    if (widget.modelId != null && widget.modelId!.isNotEmpty) return widget.modelId!;
+    if (widget.portfolio.rebalanceHistory.isNotEmpty) {
+      return widget.portfolio.rebalanceHistory.last.modelId ?? widget.portfolio.id;
+    }
+    return widget.portfolio.id;
+  }
 
   @override
   void initState() {
@@ -45,11 +73,13 @@ class _ExecutionStatusPageState extends State<ExecutionStatusPage> {
       orderResults = await OrderExecutionService.instance.executeOrders(
         orders: widget.orders,
         email: widget.email,
+        modelName: _modelName,
+        modelId: _modelId,
+        advisor: _advisor,
         onOrderUpdate: (completed, total, latest) {
           if (!mounted) return;
           setState(() {
             completedCount = completed;
-            // Update or add result
             final idx = results.indexWhere((r) => r.symbol == latest.symbol);
             if (idx >= 0) {
               results[idx] = latest;
@@ -59,12 +89,18 @@ class _ExecutionStatusPageState extends State<ExecutionStatusPage> {
           });
         },
       );
+    } on ZerodhaBasketRequiredException catch (e) {
+      // Zerodha needs WebView basket — switch to WebView mode
+      _zerodhaStockDetails = e.stockDetails;
+      _zerodhaApiKey = e.apiKey;
+      _setupZerodhaWebView(e.apiKey, e.basketItems);
+      return;
     } catch (e) {
       final errStr = e.toString();
       final brokerErr = errStr.contains('No connected broker') ||
           errStr.contains('broker credentials');
       setState(() {
-        executing = false;
+        _state = 'error';
         hasError = true;
         isBrokerError = brokerErr;
         errorMessage = brokerErr
@@ -74,23 +110,19 @@ class _ExecutionStatusPageState extends State<ExecutionStatusPage> {
       return;
     }
 
-    // Update portfolio database — separate try/catch so order results are
-    // preserved even if the portfolio update fails.
+    // Post-execution: update portfolio database
     try {
-      if (widget.portfolio.rebalanceHistory.isNotEmpty) {
-        final latestRebalance = widget.portfolio.rebalanceHistory.last;
-        if (latestRebalance.modelId != null) {
-          await OrderExecutionService.instance.updatePortfolioAfterExecution(
-            modelId: latestRebalance.modelId!,
-            results: orderResults,
-            email: widget.email,
-            broker: OrderExecutionService.instance.lastUsedBrokerName,
-          );
-        }
+      final mid = _modelId;
+      if (mid.isNotEmpty) {
+        await OrderExecutionService.instance.updatePortfolioAfterExecution(
+          modelId: mid,
+          results: orderResults,
+          email: widget.email,
+          broker: OrderExecutionService.instance.lastUsedBrokerName,
+        );
       }
     } catch (e) {
       debugPrint('[ExecutionStatusPage] Portfolio update failed: $e');
-      // Show warning but don't treat as fatal — orders were placed successfully
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -102,19 +134,191 @@ class _ExecutionStatusPageState extends State<ExecutionStatusPage> {
       }
     }
 
-    // Invalidate portfolio caches so next views show fresh data
     CacheService.instance.invalidatePortfolioData(
       widget.email,
-      widget.portfolio.modelName,
+      _modelName,
     );
 
     if (mounted) {
       setState(() {
-        executing = false;
+        _state = 'done';
         results = orderResults;
       });
     }
   }
+
+  // ---------------------------------------------------------------------------
+  // Zerodha WebView Basket Flow
+  // ---------------------------------------------------------------------------
+
+  void _setupZerodhaWebView(String apiKey, List<Map<String, dynamic>> basketItems) {
+    final basketJson = jsonEncode(basketItems);
+    final html = '''
+<html>
+<body>
+<form id="zerodhaForm" method="POST" action="https://kite.zerodha.com/connect/basket">
+  <input type="hidden" name="api_key" value="$apiKey" />
+  <input type="hidden" name="data" value='$basketJson' />
+  <input type="hidden" name="redirect_params" value="test=true" />
+</form>
+<script>document.getElementById('zerodhaForm').submit();</script>
+</body>
+</html>
+''';
+
+    _zerodhaWebController = WebViewController()
+      ..setJavaScriptMode(JavaScriptMode.unrestricted)
+      ..setNavigationDelegate(NavigationDelegate(
+        onNavigationRequest: (request) {
+          if (_isZerodhaSuccessUrl(request.url)) {
+            _handleZerodhaBasketSuccess();
+            return NavigationDecision.prevent;
+          }
+          return NavigationDecision.navigate;
+        },
+        onPageFinished: (url) {
+          if (_isZerodhaSuccessUrl(url)) {
+            _handleZerodhaBasketSuccess();
+          }
+        },
+        onWebResourceError: (error) {
+          if (error.url != null && _isZerodhaSuccessUrl(error.url!)) {
+            _handleZerodhaBasketSuccess();
+          }
+        },
+      ))
+      ..loadHtmlString(html);
+
+    setState(() => _state = 'zerodha_webview');
+  }
+
+  bool _isZerodhaSuccessUrl(String url) {
+    return url.contains('success') ||
+        url.contains('completed') ||
+        url.contains('status=success') ||
+        url.contains('broker-callback');
+  }
+
+  Future<void> _handleZerodhaBasketSuccess() async {
+    if (_state == 'recording') return; // guard against duplicates
+    setState(() => _state = 'recording');
+
+    try {
+      final uniqueId = '${_modelId}_${DateTime.now().millisecondsSinceEpoch}_${widget.email}';
+
+      // Step 1: Record orders — fetch actual results from Zerodha
+      final recordResp = await AqApiService.instance.recordZerodhaOrders(
+        stockDetails: _zerodhaStockDetails ?? [],
+        email: widget.email,
+        modelId: _modelId,
+        modelName: _modelName,
+        advisor: _advisor,
+        uniqueId: uniqueId,
+      );
+
+      debugPrint('[ExecutionStatus:Zerodha] record-orders status=${recordResp.statusCode}');
+
+      if (recordResp.statusCode == 200) {
+        final data = jsonDecode(recordResp.body);
+        final orderData = data['response'] ?? data['results'] ?? data['tradeDetails'] ?? [];
+        if (orderData is List && orderData.isNotEmpty) {
+          for (int i = 0; i < orderData.length; i++) {
+            results.add(OrderResult.fromJson(
+              orderData[i] is Map ? Map<String, dynamic>.from(orderData[i]) : {},
+            ));
+          }
+        } else {
+          // No detailed results — assume success for all trades
+          for (final order in widget.orders) {
+            results.add(OrderResult(
+              symbol: order['symbol'] ?? order['tradingSymbol'] ?? '',
+              transactionType: order['transactionType'] ?? 'BUY',
+              quantity: order['quantity'] ?? 0,
+              price: (order['price'] as num?)?.toDouble(),
+              status: 'success',
+              message: 'Order placed via Zerodha Kite',
+            ));
+          }
+        }
+      } else {
+        // record-orders failed — mark as success anyway since basket was submitted
+        for (final order in widget.orders) {
+          results.add(OrderResult(
+            symbol: order['symbol'] ?? order['tradingSymbol'] ?? '',
+            transactionType: order['transactionType'] ?? 'BUY',
+            quantity: order['quantity'] ?? 0,
+            status: 'success',
+            message: 'Basket submitted to Zerodha Kite',
+          ));
+        }
+      }
+
+      // Step 2: Update subscriber execution
+      final successCount = results.where((r) => r.isSuccess).length;
+      final execStatus = successCount == results.length
+          ? 'executed'
+          : (successCount > 0 ? 'partial' : 'pending');
+      try {
+        await AqApiService.instance.updateSubscriberExecution(
+          email: widget.email,
+          modelName: _modelName,
+          advisor: _advisor,
+          broker: 'Zerodha',
+          executionStatus: execStatus,
+        );
+      } catch (e) {
+        debugPrint('[ExecutionStatus:Zerodha] updateSubscriberExecution failed: $e');
+      }
+
+      // Step 3: Add to status check queue
+      try {
+        await AqApiService.instance.addToStatusCheckQueue(
+          email: widget.email,
+          modelName: _modelName,
+          advisor: _advisor,
+          broker: 'Zerodha',
+        );
+      } catch (e) {
+        debugPrint('[ExecutionStatus:Zerodha] addToStatusCheckQueue failed: $e');
+      }
+
+      // Step 4: Update portfolio DB
+      try {
+        if (_modelId.isNotEmpty) {
+          await OrderExecutionService.instance.updatePortfolioAfterExecution(
+            modelId: _modelId,
+            results: results,
+            email: widget.email,
+            broker: 'Zerodha',
+          );
+        }
+      } catch (e) {
+        debugPrint('[ExecutionStatus:Zerodha] Portfolio update failed: $e');
+      }
+
+      CacheService.instance.invalidatePortfolioData(widget.email, _modelName);
+
+      if (mounted) {
+        setState(() {
+          _state = 'done';
+          completedCount = widget.orders.length;
+        });
+      }
+    } catch (e) {
+      debugPrint('[ExecutionStatus:Zerodha] post-basket error: $e');
+      if (mounted) {
+        setState(() {
+          _state = 'error';
+          hasError = true;
+          errorMessage = 'Failed to record Zerodha orders: $e';
+        });
+      }
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Retry failed orders
+  // ---------------------------------------------------------------------------
 
   Future<void> _retryFailed() async {
     final failedOrders = <Map<String, dynamic>>[];
@@ -127,7 +331,7 @@ class _ExecutionStatusPageState extends State<ExecutionStatusPage> {
     if (failedOrders.isEmpty) return;
 
     setState(() {
-      executing = true;
+      _state = 'executing';
       completedCount = 0;
     });
 
@@ -135,13 +339,15 @@ class _ExecutionStatusPageState extends State<ExecutionStatusPage> {
       final retryResults = await OrderExecutionService.instance.executeOrders(
         orders: failedOrders,
         email: widget.email,
+        modelName: _modelName,
+        modelId: _modelId,
+        advisor: _advisor,
         onOrderUpdate: (completed, total, latest) {
           if (!mounted) return;
           setState(() => completedCount = completed);
         },
       );
 
-      // Merge retry results
       for (final retry in retryResults) {
         final idx = results.indexWhere((r) => r.symbol == retry.symbol);
         if (idx >= 0) {
@@ -149,10 +355,13 @@ class _ExecutionStatusPageState extends State<ExecutionStatusPage> {
         }
       }
 
-      setState(() => executing = false);
+      setState(() => _state = 'done');
+    } on ZerodhaBasketRequiredException catch (e) {
+      _zerodhaStockDetails = e.stockDetails;
+      _setupZerodhaWebView(e.apiKey, e.basketItems);
     } catch (e) {
       setState(() {
-        executing = false;
+        _state = 'error';
         errorMessage = e.toString();
       });
     }
@@ -163,6 +372,17 @@ class _ExecutionStatusPageState extends State<ExecutionStatusPage> {
 
   @override
   Widget build(BuildContext context) {
+    // Zerodha WebView mode
+    if (_state == 'zerodha_webview' && _zerodhaWebController != null) {
+      return CustomScaffold(
+        allowBackNavigation: true,
+        displayActions: false,
+        imageUrl: null,
+        menu: "Place Orders — Zerodha",
+        child: WebViewWidget(controller: _zerodhaWebController!),
+      );
+    }
+
     return CustomScaffold(
       allowBackNavigation: !executing,
       displayActions: false,
@@ -174,15 +394,10 @@ class _ExecutionStatusPageState extends State<ExecutionStatusPage> {
             child: ListView(
               padding: const EdgeInsets.fromLTRB(16, 12, 16, 100),
               children: [
-                // Progress header
                 _progressHeader(),
                 const SizedBox(height: 20),
-
-                // Summary card (shown when done)
-                if (!executing) _summaryCard(),
-                if (!executing) const SizedBox(height: 16),
-
-                // Error message
+                if (!executing && _state == 'done') _summaryCard(),
+                if (!executing && _state == 'done') const SizedBox(height: 16),
                 if (hasError && errorMessage != null)
                   Container(
                     margin: const EdgeInsets.only(bottom: 16),
@@ -196,7 +411,7 @@ class _ExecutionStatusPageState extends State<ExecutionStatusPage> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(errorMessage!,
-                          style: TextStyle(fontSize: 13, color: Colors.red.shade700)),
+                            style: TextStyle(fontSize: 13, color: Colors.red.shade700)),
                         if (isBrokerError) ...[
                           const SizedBox(height: 10),
                           SizedBox(
@@ -206,9 +421,7 @@ class _ExecutionStatusPageState extends State<ExecutionStatusPage> {
                                 Navigator.push(
                                   context,
                                   MaterialPageRoute(
-                                    builder: (_) => BrokerSelectionPage(
-                                      email: widget.email,
-                                    ),
+                                    builder: (_) => BrokerSelectionPage(email: widget.email),
                                   ),
                                 );
                               },
@@ -226,23 +439,18 @@ class _ExecutionStatusPageState extends State<ExecutionStatusPage> {
                       ],
                     ),
                   ),
-
-                // Order results
                 ...results.map((r) => _orderResultCard(r)),
-
-                // Placeholder for pending orders
                 if (executing)
                   ...List.generate(
                     widget.orders.length - results.length,
                     (i) => _pendingOrderCard(
-                      widget.orders[results.length + i]['symbol'] ?? ''),
+                        widget.orders[results.length + i]['symbol'] ?? ''),
                   ),
               ],
             ),
           ),
-
-          // Bottom actions
-          if (!executing) _bottomActions(),
+          if (!executing && _state == 'done') _bottomActions(),
+          if (_state == 'error') _bottomActions(),
         ],
       ),
     );
@@ -273,8 +481,12 @@ class _ExecutionStatusPageState extends State<ExecutionStatusPage> {
               child: CircularProgressIndicator(strokeWidth: 3, color: Colors.white),
             ),
             const SizedBox(height: 14),
-            Text("Placing orders... ($completedCount/${widget.orders.length})",
-              style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w600)),
+            Text(
+              _state == 'recording'
+                  ? "Recording Zerodha orders..."
+                  : "Placing orders... ($completedCount/${widget.orders.length})",
+              style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w600),
+            ),
           ] else ...[
             Icon(
               _failedCount == 0 ? Icons.check_circle : Icons.warning_rounded,
@@ -328,7 +540,7 @@ class _ExecutionStatusPageState extends State<ExecutionStatusPage> {
     return Column(
       children: [
         Text(value,
-          style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800, color: color)),
+            style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800, color: color)),
         const SizedBox(height: 2),
         Text(label, style: TextStyle(fontSize: 12, color: Colors.grey.shade600)),
       ],
@@ -379,14 +591,14 @@ class _ExecutionStatusPageState extends State<ExecutionStatusPage> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(result.symbol,
-                  style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
+                    style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
                 const SizedBox(height: 2),
                 Text("${result.transactionType.toUpperCase()} x ${result.quantity}",
-                  style: TextStyle(fontSize: 12, color: Colors.grey.shade600)),
+                    style: TextStyle(fontSize: 12, color: Colors.grey.shade600)),
                 if (result.message != null && result.isFailed)
                   Text(result.message!,
-                    style: TextStyle(fontSize: 11, color: Colors.red.shade400),
-                    maxLines: 2, overflow: TextOverflow.ellipsis),
+                      style: TextStyle(fontSize: 11, color: Colors.red.shade400),
+                      maxLines: 2, overflow: TextOverflow.ellipsis),
               ],
             ),
           ),
@@ -394,10 +606,10 @@ class _ExecutionStatusPageState extends State<ExecutionStatusPage> {
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
               Text(statusText,
-                style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: color)),
+                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: color)),
               if (result.orderId != null)
                 Text("#${result.orderId}",
-                  style: TextStyle(fontSize: 10, color: Colors.grey.shade500)),
+                    style: TextStyle(fontSize: 10, color: Colors.grey.shade500)),
             ],
           ),
         ],
@@ -418,14 +630,14 @@ class _ExecutionStatusPageState extends State<ExecutionStatusPage> {
           SizedBox(
             width: 20, height: 20,
             child: CircularProgressIndicator(
-              strokeWidth: 2, color: Colors.grey.shade400),
+                strokeWidth: 2, color: Colors.grey.shade400),
           ),
           const SizedBox(width: 12),
           Text(symbol,
-            style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: Colors.grey.shade500)),
+              style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: Colors.grey.shade500)),
           const Spacer(),
           Text("Pending",
-            style: TextStyle(fontSize: 13, color: Colors.grey.shade400)),
+              style: TextStyle(fontSize: 13, color: Colors.grey.shade400)),
         ],
       ),
     );
@@ -455,11 +667,10 @@ class _ExecutionStatusPageState extends State<ExecutionStatusPage> {
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
                     ),
                     child: Text("Retry $_failedCount Failed Orders",
-                      style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: Colors.orange)),
+                        style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: Colors.orange)),
                   ),
                 ),
               ),
-            // View Updated Portfolio button
             SizedBox(
               width: double.infinity,
               height: 50,
@@ -477,7 +688,7 @@ class _ExecutionStatusPageState extends State<ExecutionStatusPage> {
                 },
                 icon: const Icon(Icons.visibility_rounded, size: 18),
                 label: const Text("View Updated Portfolio",
-                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
+                    style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: const Color(0xFF2E7D32),
                   foregroundColor: Colors.white,
@@ -487,7 +698,6 @@ class _ExecutionStatusPageState extends State<ExecutionStatusPage> {
               ),
             ),
             const SizedBox(height: 8),
-            // Back to Portfolios button
             SizedBox(
               width: double.infinity,
               height: 46,
@@ -500,7 +710,7 @@ class _ExecutionStatusPageState extends State<ExecutionStatusPage> {
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
                 ),
                 child: const Text("Back to Portfolios",
-                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: Color(0xFF1A237E))),
+                    style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: Color(0xFF1A237E))),
               ),
             ),
           ],

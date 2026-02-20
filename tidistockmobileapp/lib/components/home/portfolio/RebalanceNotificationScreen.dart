@@ -16,12 +16,16 @@ class RebalanceNotificationScreen extends StatefulWidget {
   final String modelName;
   final String advisorName;
   final List<Map<String, dynamic>> trades;
+  final String? modelId;
+  final String? uniqueId;
 
   const RebalanceNotificationScreen({
     super.key,
     required this.modelName,
     required this.advisorName,
     required this.trades,
+    this.modelId,
+    this.uniqueId,
   });
 
   @override
@@ -33,10 +37,12 @@ class _RebalanceNotificationScreenState extends State<RebalanceNotificationScree
   bool _isLoading = false;
   String? _userEmail;
   Map<String, dynamic>? _brokerConnection;
+  String? _resolvedModelId;
 
   @override
   void initState() {
     super.initState();
+    _resolvedModelId = widget.modelId;
     _loadUserData();
   }
 
@@ -47,9 +53,38 @@ class _RebalanceNotificationScreenState extends State<RebalanceNotificationScree
         _userEmail = email;
       });
     }
-    // Load broker connection
+    // Load broker connection and fetch model_id if needed
     if (email != null && email.isNotEmpty) {
-      await _checkBrokerConnection(email);
+      await Future.wait([
+        _checkBrokerConnection(email),
+        if (_resolvedModelId == null || _resolvedModelId!.isEmpty)
+          _fetchModelId(email),
+      ]);
+    }
+  }
+
+  /// Fetch model_id from strategy API if not provided in notification data.
+  Future<void> _fetchModelId(String email) async {
+    try {
+      final resp = await AqApiService.instance.getStrategyDetails(widget.modelName);
+      if (resp.statusCode == 200) {
+        final data = json.decode(resp.body);
+        final originalData = data['originalData'] ?? data;
+        // Get model_Id from the latest rebalanceHistory entry
+        final rebalanceHistory = originalData['model']?['rebalanceHistory'] ??
+            originalData['rebalanceHistory'];
+        if (rebalanceHistory is List && rebalanceHistory.isNotEmpty) {
+          final latest = rebalanceHistory.last;
+          if (latest is Map) {
+            _resolvedModelId = latest['model_Id'] ?? latest['_id'];
+            debugPrint('[RebalanceNotification] Resolved modelId: $_resolvedModelId');
+          }
+        }
+        // Fallback to portfolio _id
+        _resolvedModelId ??= originalData['_id'];
+      }
+    } catch (e) {
+      debugPrint('[RebalanceNotification] Failed to fetch modelId: $e');
     }
   }
 
@@ -616,7 +651,7 @@ class _RebalanceNotificationScreenState extends State<RebalanceNotificationScree
     try {
       if (_brokerConnection != null) {
         // Broker connected — navigate to ExecutionStatusPage which handles
-        // real order placement via OrderExecutionService.executeOrders()
+        // real order placement via CCXT rebalance/process-trade
         final orders = _normalizeTradesForExecution(widget.trades);
         if (orders.isEmpty) {
           if (mounted) {
@@ -626,9 +661,8 @@ class _RebalanceNotificationScreenState extends State<RebalanceNotificationScree
           }
           return;
         }
-        // Create a minimal ModelPortfolio for the execution page
         final minimalPortfolio = ModelPortfolio(
-          id: '',
+          id: _resolvedModelId ?? '',
           advisor: widget.advisorName,
           modelName: widget.modelName,
           minInvestment: 0,
@@ -641,6 +675,9 @@ class _RebalanceNotificationScreenState extends State<RebalanceNotificationScree
                 portfolio: minimalPortfolio,
                 email: _userEmail!,
                 orders: orders,
+                modelId: _resolvedModelId,
+                modelName: widget.modelName,
+                advisor: widget.advisorName,
               ),
             ),
           );
@@ -657,7 +694,7 @@ class _RebalanceNotificationScreenState extends State<RebalanceNotificationScree
                 orders: normalizedTrades,
                 email: _userEmail!,
                 modelName: widget.modelName,
-                modelId: '',
+                modelId: _resolvedModelId ?? '',
                 advisor: widget.advisorName,
                 onOrderUpdate: (completed, total, result) {
                   debugPrint('[Rebalance] Order $completed/$total: ${result.status}');

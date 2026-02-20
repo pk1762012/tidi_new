@@ -558,31 +558,120 @@ class AqApiService {
   // Order APIs
   // ---------------------------------------------------------------------------
 
-  /// Place orders via the unified order placement endpoint
-  Future<http.Response> placeOrders({
-    required String userBroker,
-    required String apiKey,
-    required String jwtToken,
+  /// Process trades via CCXT rebalance/process-trade — the correct endpoint
+  /// used by the RGX web app for ALL broker order execution.
+  Future<http.Response> processTrade({
+    required String email,
+    required String broker,
+    required String modelName,
+    required String modelId,
+    required String advisor,
+    required String uniqueId,
     required List<Map<String, dynamic>> trades,
-    String? clientCode,
+    // Broker-specific credential fields
+    String? apiKey,
     String? secretKey,
+    String? jwtToken,
+    String? clientCode,
+    String? accessToken,
     String? viewToken,
     String? sid,
     String? serverId,
+    String? consumerKey,
+    String? consumerSecret,
   }) async {
     return http.post(
-      Uri.parse('${baseUrl}api/process-trades/order-place'),
+      Uri.parse('${ccxtUrl}rebalance/process-trade'),
       headers: _headers(),
       body: jsonEncode({
-        'user_broker': userBroker,
-        'apiKey': apiKey,
-        'jwtToken': jwtToken,
+        'user_broker': broker,
+        'user_email': email,
         'trades': trades,
-        if (clientCode != null) 'clientCode': clientCode,
+        'model_id': modelId,
+        'modelName': modelName,
+        'advisor': advisor,
+        'unique_id': uniqueId,
+        if (apiKey != null) 'apiKey': apiKey,
         if (secretKey != null) 'secretKey': secretKey,
+        if (jwtToken != null) 'jwtToken': jwtToken,
+        if (clientCode != null) 'clientId': clientCode,
+        if (accessToken != null) 'accessToken': accessToken,
         if (viewToken != null) 'viewToken': viewToken,
         if (sid != null) 'sid': sid,
         if (serverId != null) 'serverId': serverId,
+        if (consumerKey != null) 'consumerKey': consumerKey,
+        if (consumerSecret != null) 'consumerSecret': consumerSecret,
+      }),
+    ).timeout(const Duration(seconds: 120));
+  }
+
+  /// Zerodha publisher: update DB before WebView basket redirect.
+  /// POST api/zerodha/model-portfolio/update-reco-with-zerodha-model-pf
+  Future<http.Response> updateZerodhaRecoBeforeBasket({
+    required List<Map<String, dynamic>> stockDetails,
+    required String email,
+    required String advisor,
+  }) async {
+    return http.post(
+      Uri.parse('${baseUrl}api/zerodha/model-portfolio/update-reco-with-zerodha-model-pf'),
+      headers: _headers(),
+      body: jsonEncode({
+        'stockDetails': stockDetails,
+        'leaving_datetime': DateTime.now().toIso8601String(),
+        'email': email,
+        'trade_given_by': advisor,
+      }),
+    );
+  }
+
+  /// Zerodha publisher: record order results after basket redirect success.
+  /// POST api/zerodha/publisher/record-orders
+  Future<http.Response> recordZerodhaOrders({
+    required List<Map<String, dynamic>> stockDetails,
+    required String email,
+    required String modelId,
+    required String modelName,
+    required String advisor,
+    required String uniqueId,
+  }) async {
+    return http.post(
+      Uri.parse('${baseUrl}api/zerodha/publisher/record-orders'),
+      headers: _headers(),
+      body: jsonEncode({
+        'stockDetails': stockDetails,
+        'publisherResults': [{'status': 'success', 'batchIndex': 0}],
+        'userEmail': email,
+        'broker': 'Zerodha',
+        'model_id': modelId,
+        'modelName': modelName,
+        'advisor': advisor,
+        'unique_id': uniqueId,
+      }),
+    );
+  }
+
+  /// Record publisher execution results (for all brokers).
+  /// POST ccxt/rebalance/record-publisher-results
+  Future<http.Response> recordPublisherResults({
+    required String modelName,
+    required String modelId,
+    required String uniqueId,
+    required String advisor,
+    required List<Map<String, dynamic>> orderResults,
+    required String email,
+    required String broker,
+  }) async {
+    return http.post(
+      Uri.parse('${ccxtUrl}rebalance/record-publisher-results'),
+      headers: _headers(),
+      body: jsonEncode({
+        'modelName': modelName,
+        'model_id': modelId,
+        'unique_id': uniqueId,
+        'advisor': advisor,
+        'order_results': orderResults,
+        'user_email': email,
+        'user_broker': broker,
       }),
     );
   }
@@ -729,53 +818,53 @@ class AqApiService {
     required String advisor,
     required List<Map<String, dynamic>> trades,
   }) async {
-    return http.post(
-      Uri.parse('${ccxtUrl}rebalance/process-trade'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({
-        'user_email': email,
-        'user_broker': 'DummyBroker',
-        'model_id': modelId,
-        'modelName': modelName,
-        'advisor': advisor,
-        'trades': trades,
-      }),
+    return processTrade(
+      email: email,
+      broker: 'DummyBroker',
+      modelName: modelName,
+      modelId: modelId,
+      advisor: advisor,
+      uniqueId: '${modelId}_${DateTime.now().millisecondsSinceEpoch}_$email',
+      trades: trades,
     );
   }
 
-  /// Update subscriber execution status after DummyBroker confirmation.
+  /// Update subscriber execution status (generic — works for all brokers).
   Future<http.Response> updateSubscriberExecution({
     required String email,
     required String modelName,
     required String advisor,
+    required String broker,
+    String executionStatus = 'executed',
   }) async {
     return http.put(
       Uri.parse('${ccxtUrl}rebalance/update/subscriber-execution'),
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode({
         'user_email': email,
-        'user_broker': 'DummyBroker',
+        'user_broker': broker,
         'modelName': modelName,
         'advisor': advisor,
-        'executionStatus': 'executed',
+        'executionStatus': executionStatus,
       }),
     );
   }
 
-  /// Add user to status-check queue for DummyBroker.
+  /// Add user to status-check queue (generic — works for all brokers).
   Future<http.Response> addToStatusCheckQueue({
     required String email,
     required String modelName,
     required String advisor,
+    required String broker,
   }) async {
     return http.post(
       Uri.parse('${ccxtUrl}rebalance/add-user/status-check-queue'),
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode({
-        'user_email': email,
-        'broker': 'DummyBroker',
+        'userEmail': email,
         'modelName': modelName,
         'advisor': advisor,
+        'broker': broker,
       }),
     );
   }

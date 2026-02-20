@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:tidistockmobileapp/theme/theme.dart';
+import 'package:url_launcher/url_launcher.dart';
+import '../../../config/app_config.dart';
 import 'StockPortfolioPage.dart';
 import 'StockRecommendationPage.dart';
 import '../../../widgets/SubscriptionPromptDialog.dart';
@@ -115,22 +117,39 @@ class _StockRecommendationScreenState extends State<StockRecommendationScreen> w
                     },
                   ),
 
-                  _menuCard(
-                    icon: Icons.account_balance_rounded,
-                    title: "Model Portfolios",
-                    subtitle: "Expert-managed investment strategies",
-                    gradient: const [
-                      Color(0xFFF3E5F5),
-                      Color(0xFFE1BEE7),
-                    ],
+                  if (AppConfig.advisoryMode == AdvisoryPortfolioMode.modelPortfolio)
+                    _menuCard(
+                      icon: Icons.account_balance_rounded,
+                      title: "Model Portfolios",
+                      subtitle: "Expert-managed investment strategies",
+                      gradient: const [
+                        Color(0xFFF3E5F5),
+                        Color(0xFFE1BEE7),
+                      ],
+                      onTap: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(builder: (_) => const ModelPortfolioListPage()),
+                        );
+                      },
+                    ),
 
-                    onTap: () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(builder: (_) => const ModelPortfolioListPage()),
-                      );
-                    },
-                  ),
+                  if (AppConfig.advisoryMode == AdvisoryPortfolioMode.smallcase)
+                    _menuCard(
+                      icon: Icons.newspaper_rounded,
+                      title: "Smallcase",
+                      subtitle: "Thematic & smart portfolios",
+                      gradient: const [
+                        Color(0xFFF3E5F5),
+                        Color(0xFFE1BEE7),
+                      ],
+                      onTap: () async {
+                        final url = Uri.parse(AppConfig.smallcaseUrl);
+                        if (await canLaunchUrl(url)) {
+                          await launchUrl(url, mode: LaunchMode.externalApplication);
+                        }
+                      },
+                    ),
                 ],
               ),
             ),

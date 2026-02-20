@@ -148,6 +148,8 @@ class FCMHandler {
     final modelName = data['modelName'] ?? '';
     final advisorName = data['advisorName'] ?? data['advisor'] ?? '';
     final stocksData = data['stocks'] ?? '[]';
+    final modelId = data['model_id'] ?? data['modelId'] ?? data['model_Id'];
+    final uniqueId = data['unique_id'] ?? data['uniqueId'];
 
     // Parse stocks data
     List<Map<String, dynamic>> stocks = [];
@@ -167,6 +169,8 @@ class FCMHandler {
           modelName: modelName,
           advisorName: advisorName,
           trades: stocks,
+          modelId: modelId,
+          uniqueId: uniqueId,
         ),
       ),
     );

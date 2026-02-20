@@ -211,6 +211,13 @@ class _RebalanceReviewPageState extends State<RebalanceReviewPage> {
       return;
     }
 
+    // Resolve modelId from latest rebalance history
+    String? modelId;
+    if (widget.portfolio.rebalanceHistory.isNotEmpty) {
+      modelId = widget.portfolio.rebalanceHistory.last.modelId;
+    }
+    modelId ??= widget.portfolio.id;
+
     Navigator.pushReplacement(
       context,
       MaterialPageRoute(
@@ -218,6 +225,9 @@ class _RebalanceReviewPageState extends State<RebalanceReviewPage> {
           portfolio: widget.portfolio,
           email: widget.email,
           orders: orders,
+          modelId: modelId,
+          modelName: widget.portfolio.modelName,
+          advisor: widget.portfolio.advisor,
         ),
       ),
     );

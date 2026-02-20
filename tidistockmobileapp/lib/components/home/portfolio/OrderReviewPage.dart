@@ -54,6 +54,8 @@ class _OrderReviewPageState extends State<OrderReviewPage> {
                 portfolio: widget.portfolio,
                 email: widget.email,
                 orders: widget.allocations,
+                modelName: widget.portfolio.modelName,
+                advisor: widget.portfolio.advisor,
               ),
       ),
     );
