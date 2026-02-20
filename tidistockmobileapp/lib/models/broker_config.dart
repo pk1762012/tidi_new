@@ -354,28 +354,15 @@ class BrokerRegistry {
     ),
 
     // ── IIFL Securities ─────────────────────────────────────────────────
+    // OAuth via IIFL Markets login — uses company appkey, no user credentials.
+    // Matches RGX connectBroker.js IIFL flow.
     BrokerConfig(
       name: 'IIFL Securities',
       key: 'iifl',
       logoAsset: 'assets/images/brokers/iifl.png',
-      authType: BrokerAuthType.credential,
-      fields: [
-        BrokerFieldConfig(
-          label: 'Client Code',
-          key: 'clientCode',
-          placeholder: 'Enter client code',
-        ),
-        BrokerFieldConfig(
-          label: 'API Key',
-          key: 'apiKey',
-          placeholder: 'Enter API key',
-        ),
-      ],
-      instructionSteps: [
-        'Login to your IIFL Securities account.',
-        'Navigate to API settings and copy your Client Code and API Key.',
-        'Paste the credentials below to connect.',
-      ],
+      authType: BrokerAuthType.oauth,
+      fields: [],
+      instructionSteps: [],
     ),
   ];
 

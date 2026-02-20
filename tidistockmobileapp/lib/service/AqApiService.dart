@@ -453,6 +453,23 @@ class AqApiService {
     );
   }
 
+  // ── IIFL Securities (OAuth) ──────────────────────────────────────
+  /// POST ccxt/iifl/login/client — exchanges auth_token for sessionToken.
+  /// Matches RGX connectBroker.js IIFL flow.
+  Future<http.Response> exchangeIiflToken({
+    required String authToken,
+    required String clientCode,
+  }) async {
+    return http.post(
+      Uri.parse('${ccxtUrl}iifl/login/client'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({
+        'auth_token': authToken,
+        'client_code': clientCode,
+      }),
+    );
+  }
+
   // ── Groww OAuth ───────────────────────────────────────────────────
   /// GET ccxt/groww/login/oauth — returns OAuth redirect URL.
   Future<http.Response> getGrowwOAuthUrl() async {

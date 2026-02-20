@@ -12,10 +12,11 @@ import 'package:webview_flutter/webview_flutter.dart';
 /// Handles OAuth / publisher-login broker connections via WebView.
 ///
 /// Broker-specific flows:
-///   - Zerodha:   CCXT POST /zerodha/login-url → Kite login → exchange token
-///   - Angel One: SmartAPI publisher-login URL → callback with auth_token
-///   - Groww:     CCXT GET /groww/login/oauth → OAuth redirect → callback
-///   - Others:    aq_backend POST /api/{broker}/update-key → OAuth → callback
+///   - Zerodha:       CCXT POST /zerodha/login-url → Kite login → exchange token
+///   - Angel One:     SmartAPI publisher-login URL → callback with auth_token
+///   - IIFL:          markets.iiflcapital.com login → callback auth_token → ccxt exchange
+///   - Groww:         CCXT GET /groww/login/oauth → OAuth redirect → callback with access_token
+///   - Others:        aq_backend POST /api/{broker}/update-key → OAuth → callback
 class BrokerAuthPage extends StatefulWidget {
   final String email;
   final String brokerName;
@@ -40,6 +41,7 @@ class _BrokerAuthPageState extends State<BrokerAuthPage> {
   bool get _isZerodha => _brokerLower == 'zerodha';
   bool get _isAngelOne => _brokerLower == 'angel one' || _brokerLower == 'angelone';
   bool get _isGroww => _brokerLower == 'groww';
+  bool get _isIifl => _brokerLower == 'iifl securities' || _brokerLower == 'iifl';
 
   @override
   void initState() {
@@ -55,6 +57,8 @@ class _BrokerAuthPageState extends State<BrokerAuthPage> {
         loginUrl = await _getZerodhaLoginUrl();
       } else if (_isAngelOne) {
         loginUrl = _getAngelOneLoginUrl();
+      } else if (_isIifl) {
+        loginUrl = _getIiflLoginUrl();
       } else if (_isGroww) {
         loginUrl = await _getGrowwLoginUrl();
       } else {
@@ -110,6 +114,17 @@ class _BrokerAuthPageState extends State<BrokerAuthPage> {
     return 'https://smartapi.angelbroking.com/publisher-login?api_key=$apiKey&state=$nonce';
   }
 
+  /// IIFL Securities: client-side URL with company appkey.
+  /// Matches RGX connectBroker.js IIFL flow:
+  ///   https://markets.iiflcapital.com/?v=1&appkey={appkey}&redirect_url={redirect}
+  String _getIiflLoginUrl() {
+    const appKey = 'nHjYctmzvrHrYWA';
+    final redirectUrl = AqApiService.instance.advisorSubdomain == 'prod'
+        ? 'prod.alphaquark.in/stock-recommendation'
+        : 'dev.alphaquark.in/stock-recommendation';
+    return 'https://markets.iiflcapital.com/?v=1&appkey=$appKey&redirect_url=$redirectUrl';
+  }
+
   /// Groww: CCXT GET /groww/login/oauth → returns redirect URL.
   Future<String?> _getGrowwLoginUrl() async {
     final response = await AqApiService.instance.getGrowwOAuthUrl();
@@ -134,9 +149,10 @@ class _BrokerAuthPageState extends State<BrokerAuthPage> {
 
   /// Generic: aq_backend POST /api/{broker}/update-key.
   Future<String?> _getGenericLoginUrl() async {
+    final uid = await AqApiService.instance.getUserObjectId(widget.email) ?? widget.email;
     final response = await AqApiService.instance.getBrokerLoginUrl(
       broker: widget.brokerName,
-      uid: widget.email,
+      uid: uid,
       apiKey: '',
       secretKey: '',
       redirectUrl: 'https://tidiwealth.app/broker-callback',
@@ -192,6 +208,7 @@ class _BrokerAuthPageState extends State<BrokerAuthPage> {
         url.contains('request_token') ||
         url.contains('auth_token') ||
         url.contains('auth_code') ||
+        url.contains('access_token') ||
         url.contains('status=success') ||
         url.contains('stock-recommendation') ||
         url.contains('zerodha/callback') ||
@@ -212,6 +229,17 @@ class _BrokerAuthPageState extends State<BrokerAuthPage> {
 
     try {
       final uri = Uri.parse(callbackUrl);
+
+      // IIFL returns auth_token + clientid from markets.iiflcapital.com
+      if (_isIifl) {
+        final authToken = uri.queryParameters['auth_token'];
+        final clientId = uri.queryParameters['clientid'] ??
+            uri.queryParameters['client_id'];
+        if (authToken != null) {
+          await _handleIiflCallback(authToken, clientId ?? '');
+          return;
+        }
+      }
 
       // Angel One returns auth_token directly
       if (_isAngelOne) {
@@ -234,13 +262,28 @@ class _BrokerAuthPageState extends State<BrokerAuthPage> {
         return;
       }
 
-      // Groww / generic: request_token or auth_code
-      if (requestToken != null) {
-        if (_isGroww) {
-          await _handleGrowwCallback(requestToken);
-        } else {
-          await _handleGenericCallback(requestToken);
+      // Groww returns access_token (RGX uses queryParams.access_token)
+      if (_isGroww) {
+        final accessToken = uri.queryParameters['access_token'] ??
+            uri.queryParameters['jwtToken'] ??
+            requestToken;
+        final status = uri.queryParameters['status'];
+        if (accessToken != null && (status == null || status == '0')) {
+          await _handleGrowwCallback(accessToken);
+          return;
         }
+        if (status != null && status != '0') {
+          setState(() {
+            _status = 'error';
+            _errorMessage = 'Groww authentication was denied or failed.';
+          });
+          return;
+        }
+      }
+
+      // Generic: request_token or auth_code
+      if (requestToken != null) {
+        await _handleGenericCallback(requestToken);
         return;
       }
 
@@ -357,7 +400,60 @@ class _BrokerAuthPageState extends State<BrokerAuthPage> {
     await _onConnectionSuccess();
   }
 
-  /// Groww: save auth code via connect-broker.
+  /// IIFL: exchange auth_token via ccxt/iifl/login/client → save sessionToken.
+  /// Matches RGX connectBroker.js IIFL flow.
+  Future<void> _handleIiflCallback(String authToken, String clientId) async {
+    debugPrint('[BrokerAuth:IIFL] exchanging auth_token (clientId=$clientId)...');
+
+    final tokenResp = await AqApiService.instance.exchangeIiflToken(
+      authToken: authToken,
+      clientCode: clientId,
+    );
+
+    debugPrint('[BrokerAuth:IIFL] iifl/login/client status=${tokenResp.statusCode}');
+
+    if (tokenResp.statusCode == 200) {
+      final tokenData = jsonDecode(tokenResp.body);
+      final sessionToken = tokenData['sessionToken'] ??
+          tokenData['session_token'] ??
+          tokenData['jwtToken'] ??
+          authToken;
+
+      // Save via ObjectId-based connect
+      final uid = await AqApiService.instance.getUserObjectId(widget.email);
+      if (uid != null) {
+        await AqApiService.instance.connectCredentialBroker(
+          uid: uid,
+          userBroker: 'IIFL Securities',
+          credentials: {
+            'jwtToken': sessionToken,
+            'clientCode': clientId,
+          },
+        );
+      }
+
+      // Also save via email-based connect as fallback
+      await AqApiService.instance.connectBrokerByEmail(
+        email: widget.email,
+        broker: 'IIFL Securities',
+        brokerData: {
+          'jwtToken': sessionToken,
+          'clientCode': clientId,
+          'status': 'connected',
+        },
+      );
+
+      await _onConnectionSuccess();
+    } else {
+      debugPrint('[BrokerAuth:IIFL] token exchange failed: ${tokenResp.body}');
+      setState(() {
+        _status = 'error';
+        _errorMessage = 'IIFL authentication failed. Please try again.';
+      });
+    }
+  }
+
+  /// Groww: save access token via connect-broker.
   Future<void> _handleGrowwCallback(String authCode) async {
     debugPrint('[BrokerAuth:Groww] saving auth_code...');
 

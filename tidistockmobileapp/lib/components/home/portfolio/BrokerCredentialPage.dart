@@ -141,12 +141,7 @@ class _BrokerCredentialPageState extends State<BrokerCredentialPage> {
         case 'aliceblue':
           await _connectAliceBlue(uid, values);
           break;
-        case 'groww':
-          await _connectGroww(uid, values);
-          break;
-        case 'iifl':
-          await _connectIifl(uid, values);
-          break;
+        // Groww and IIFL are OAuth — handled by BrokerAuthPage, not this page.
         default:
           // Fallback: use email-based multi-broker connect
           await _fallbackConnect(values);
@@ -248,7 +243,20 @@ class _BrokerCredentialPageState extends State<BrokerCredentialPage> {
     );
 
     if (resp.statusCode == 200) {
-      // ICICI: redirect to ICICI's login page with apiKey
+      // Try to extract loginUrl from backend response (like other hybrid brokers)
+      try {
+        final data = jsonDecode(resp.body);
+        final url = data['response']?['loginUrl'] ??
+            data['response']?['login_url'] ??
+            data['loginUrl'] ??
+            (data['response'] is String ? data['response'] : null);
+        if (url != null && url is String && url.startsWith('http')) {
+          setState(() => _status = 'webview');
+          _setupWebView(url);
+          return;
+        }
+      } catch (_) {}
+      // Fallback: ICICI login URL constructed with user's API key
       final loginUrl =
           'https://api.icicidirect.com/apiuser/login?api_key=${Uri.encodeComponent(values['apiKey']!)}';
       setState(() => _status = 'webview');
@@ -340,48 +348,6 @@ class _BrokerCredentialPageState extends State<BrokerCredentialPage> {
       await _onConnectionSuccess();
     } else {
       debugPrint('[AliceBlue] connect failed: ${resp.statusCode} ${resp.body}');
-      _handleApiError(resp);
-    }
-  }
-
-  // ── Groww: PUT api/user/connect-broker with clientCode + jwtToken ─
-  Future<void> _connectGroww(String? uid, Map<String, String> values) async {
-    if (uid == null) return _fallbackConnect(values);
-
-    final resp = await AqApiService.instance.connectCredentialBroker(
-      uid: uid,
-      userBroker: 'Groww',
-      credentials: {
-        'clientCode': values['clientCode'],
-        'jwtToken': values['jwtToken'],
-      },
-    );
-
-    if (resp.statusCode == 200) {
-      await _onConnectionSuccess();
-    } else {
-      debugPrint('[Groww] connect failed: ${resp.statusCode} ${resp.body}');
-      _handleApiError(resp);
-    }
-  }
-
-  // ── IIFL: PUT api/user/connect-broker with clientCode + apiKey ────
-  Future<void> _connectIifl(String? uid, Map<String, String> values) async {
-    if (uid == null) return _fallbackConnect(values);
-
-    final resp = await AqApiService.instance.connectCredentialBroker(
-      uid: uid,
-      userBroker: 'IIFL Securities',
-      credentials: {
-        'clientCode': values['clientCode'],
-        'apiKey': values['apiKey'],
-      },
-    );
-
-    if (resp.statusCode == 200) {
-      await _onConnectionSuccess();
-    } else {
-      debugPrint('[IIFL] connect failed: ${resp.statusCode} ${resp.body}');
       _handleApiError(resp);
     }
   }
