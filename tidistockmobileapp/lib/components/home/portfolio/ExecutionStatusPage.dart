@@ -5,11 +5,14 @@ import 'package:flutter/material.dart';
 import 'package:tidistockmobileapp/models/model_portfolio.dart';
 import 'package:tidistockmobileapp/models/order_result.dart';
 import 'package:tidistockmobileapp/service/AqApiService.dart';
+import 'package:tidistockmobileapp/models/broker_config.dart';
 import 'package:tidistockmobileapp/service/CacheService.dart';
 import 'package:tidistockmobileapp/service/OrderExecutionService.dart';
 import 'package:tidistockmobileapp/widgets/customScaffold.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
+import 'BrokerAuthPage.dart';
+import 'BrokerCredentialPage.dart';
 import 'BrokerSelectionPage.dart';
 import 'PortfolioHoldingsPage.dart';
 
@@ -98,13 +101,19 @@ class _ExecutionStatusPageState extends State<ExecutionStatusPage> {
     } catch (e) {
       final errStr = e.toString();
       final brokerErr = errStr.contains('No connected broker') ||
-          errStr.contains('broker credentials');
+          errStr.contains('broker credentials') ||
+          errStr.contains('session expired') ||
+          errStr.contains('token expired') ||
+          errStr.contains('Invalid token') ||
+          errStr.contains('authentication') ||
+          errStr.contains('unauthorized') ||
+          errStr.contains('401');
       setState(() {
         _state = 'error';
         hasError = true;
         isBrokerError = brokerErr;
         errorMessage = brokerErr
-            ? 'No broker connected. Please connect a broker first.'
+            ? 'Broker session expired or not connected. Please reconnect your broker.'
             : errStr;
       });
       return;
@@ -417,18 +426,60 @@ class _ExecutionStatusPageState extends State<ExecutionStatusPage> {
                           SizedBox(
                             width: double.infinity,
                             child: ElevatedButton.icon(
-                              onPressed: () {
-                                Navigator.push(
-                                  context,
-                                  MaterialPageRoute(
-                                    builder: (_) => BrokerSelectionPage(email: widget.email),
-                                  ),
-                                );
+                              onPressed: () async {
+                                // Try to navigate to specific broker auth page
+                                final brokerName = OrderExecutionService.instance.lastUsedBrokerName;
+                                final config = brokerName.isNotEmpty
+                                    ? BrokerRegistry.getByName(brokerName)
+                                    : null;
+
+                                bool? result;
+                                if (config != null && config.authType == BrokerAuthType.oauth) {
+                                  result = await Navigator.push<bool>(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (_) => BrokerAuthPage(
+                                        email: widget.email,
+                                        brokerName: config.name,
+                                      ),
+                                    ),
+                                  );
+                                } else if (config != null) {
+                                  result = await Navigator.push<bool>(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (_) => BrokerCredentialPage(
+                                        email: widget.email,
+                                        brokerConfig: config,
+                                      ),
+                                    ),
+                                  );
+                                } else {
+                                  result = await Navigator.push<bool>(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (_) => BrokerSelectionPage(email: widget.email),
+                                    ),
+                                  );
+                                }
+                                if (result == true && mounted) {
+                                  CacheService.instance.invalidate('aq/user/brokers:${widget.email}');
+                                  // Retry execution after reconnect
+                                  setState(() {
+                                    _state = 'executing';
+                                    hasError = false;
+                                    isBrokerError = false;
+                                    errorMessage = null;
+                                    results.clear();
+                                    completedCount = 0;
+                                  });
+                                  _executeOrders();
+                                }
                               },
-                              icon: const Icon(Icons.account_balance, size: 18),
-                              label: const Text("Connect Broker"),
+                              icon: const Icon(Icons.refresh, size: 18),
+                              label: const Text("Reconnect Broker"),
                               style: ElevatedButton.styleFrom(
-                                backgroundColor: const Color(0xFF1565C0),
+                                backgroundColor: Colors.orange.shade700,
                                 foregroundColor: Colors.white,
                                 shape: RoundedRectangleBorder(
                                     borderRadius: BorderRadius.circular(10)),
@@ -467,9 +518,11 @@ class _ExecutionStatusPageState extends State<ExecutionStatusPage> {
         gradient: LinearGradient(
           colors: executing
               ? [const Color(0xFF1A237E), const Color(0xFF283593)]
-              : (_failedCount > 0
-                  ? [Colors.orange.shade600, Colors.orange.shade400]
-                  : [const Color(0xFF2E7D32), const Color(0xFF43A047)]),
+              : (hasError && results.isEmpty
+                  ? [Colors.red.shade600, Colors.red.shade400]
+                  : (_failedCount > 0
+                      ? [Colors.orange.shade600, Colors.orange.shade400]
+                      : [const Color(0xFF2E7D32), const Color(0xFF43A047)])),
         ),
         borderRadius: BorderRadius.circular(16),
       ),
@@ -487,6 +540,11 @@ class _ExecutionStatusPageState extends State<ExecutionStatusPage> {
                   : "Placing orders... ($completedCount/${widget.orders.length})",
               style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w600),
             ),
+          ] else if (hasError && results.isEmpty) ...[
+            const Icon(Icons.error_outline, size: 44, color: Colors.white),
+            const SizedBox(height: 10),
+            const Text("Execution Failed",
+              style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w700)),
           ] else ...[
             Icon(
               _failedCount == 0 ? Icons.check_circle : Icons.warning_rounded,

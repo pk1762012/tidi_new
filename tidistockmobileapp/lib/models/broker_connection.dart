@@ -71,6 +71,19 @@ class BrokerConnection {
   bool get isConnected => status == 'connected';
   bool get isExpired => status == 'expired';
 
+  /// True if the token_expire date has passed (or status is explicitly 'expired').
+  bool get isTokenExpired {
+    if (status == 'expired') return true;
+    if (tokenExpire != null && DateTime.now().toUtc().isAfter(tokenExpire!)) {
+      return true;
+    }
+    return false;
+  }
+
+  /// True if the broker is connected AND the token hasn't expired.
+  /// Use this instead of [isConnected] when you need to verify the session is usable.
+  bool get isEffectivelyConnected => isConnected && !isTokenExpired;
+
   /// Parse the connected brokers API response, setting isPrimary based on
   /// the top-level `primary_broker` field.
   static List<BrokerConnection> parseApiResponse(Map<String, dynamic> data) {

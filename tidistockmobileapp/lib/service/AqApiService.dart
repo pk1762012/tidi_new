@@ -518,39 +518,44 @@ class AqApiService {
     return http.get(uri, headers: _headers());
   }
 
-  /// Disconnect a broker
+  /// Disconnect a broker — sets user to DummyBroker via CCXT.
+  /// Uses the same pattern as the RGX web app:
+  ///   1. PUT comms/no-broker-required/save
+  ///   2. POST rebalance/change_broker_model_pf → DummyBroker
   Future<http.Response> disconnectBroker({
     required String email,
     required String broker,
   }) async {
-    final brokerPath = broker.toLowerCase().replaceAll(' ', '');
-    final uri = Uri.parse('${baseUrl}api/user/brokers/$brokerPath')
-        .replace(queryParameters: {'email': email});
-    return http.delete(uri, headers: _headers());
+    // Mark user as not needing a broker
+    await http.put(
+      Uri.parse('${ccxtUrl}comms/no-broker-required/save'),
+      headers: _headers(),
+      body: jsonEncode({
+        'userEmail': email,
+        'noBrokerRequired': true,
+      }),
+    );
+    // Switch model portfolios to DummyBroker
+    return changeBrokerModelPortfolio(email: email, broker: 'DummyBroker');
   }
 
-  /// Switch the primary (active) broker
+  /// Switch the primary (active) broker via CCXT change_broker_model_pf.
   Future<http.Response> switchPrimaryBroker({
     required String email,
     required String broker,
   }) async {
-    final brokerPath = broker.toLowerCase().replaceAll(' ', '');
-    return http.put(
-      Uri.parse('${baseUrl}api/user/brokers/$brokerPath/primary'),
-      headers: _headers(),
-      body: jsonEncode({'email': email}),
-    );
+    return changeBrokerModelPortfolio(email: email, broker: broker);
   }
 
-  /// Change broker for model portfolio (after switching primary)
+  /// Change broker for model portfolio — CCXT rebalance/change_broker_model_pf.
   Future<http.Response> changeBrokerModelPortfolio({
     required String email,
     required String broker,
   }) async {
     return http.post(
       Uri.parse('${ccxtUrl}rebalance/change_broker_model_pf'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({'user_email': email, 'new_broker': broker}),
+      headers: _headers(),
+      body: jsonEncode({'user_email': email, 'user_broker': broker}),
     );
   }
 

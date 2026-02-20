@@ -65,39 +65,14 @@ class BrokerRegistry {
     ),
 
     // ── Groww ───────────────────────────────────────────────────────────
+    // OAuth via CCXT — no user credentials needed.
     BrokerConfig(
       name: 'Groww',
       key: 'groww',
       logoAsset: 'assets/images/brokers/groww.png',
-      authType: BrokerAuthType.credential,
-      fields: [
-        BrokerFieldConfig(
-          label: 'Unique Client Code',
-          key: 'clientCode',
-          placeholder: 'Enter unique client code',
-        ),
-        BrokerFieldConfig(
-          label: 'Access Token',
-          key: 'jwtToken',
-          isSecret: true,
-          placeholder: 'Enter access token',
-        ),
-      ],
-      instructionSteps: [
-        'Login to Groww at groww.in/login',
-        'Go to Settings: Click your profile icon → Settings\n'
-            '  Direct link: groww.in/user/profile/basic-details',
-        'Copy "Unique Client Code" from your settings',
-        'Navigate to Trading API: In the left-hand tabs, click on "Trading API"',
-        'Generate Access Token:\n'
-            '  - Click "Generate API Key"\n'
-            '  - Enter token name\n'
-            '  - Enable "Access Token"\n'
-            '  - Click Generate',
-        'Copy the Access Token and paste below',
-      ],
-      instructionNote:
-          'Important: Ignore the API Key and Secret Key shown. Only copy the Access Token.',
+      authType: BrokerAuthType.oauth,
+      fields: [],
+      instructionSteps: [],
     ),
 
     // ── Upstox ──────────────────────────────────────────────────────────

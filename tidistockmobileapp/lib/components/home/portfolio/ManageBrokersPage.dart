@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:tidistockmobileapp/models/broker_config.dart';
@@ -6,6 +7,8 @@ import 'package:tidistockmobileapp/models/broker_connection.dart';
 import 'package:tidistockmobileapp/service/AqApiService.dart';
 import 'package:tidistockmobileapp/service/CacheService.dart';
 import 'package:tidistockmobileapp/widgets/customScaffold.dart';
+import 'BrokerAuthPage.dart';
+import 'BrokerCredentialPage.dart';
 
 class ManageBrokersPage extends StatefulWidget {
   final String email;
@@ -51,16 +54,14 @@ class _ManageBrokersPageState extends State<ManageBrokersPage> {
     setState(() => _actionBroker = broker.broker);
 
     try {
+      // changeBrokerModelPortfolio is the correct CCXT endpoint
+      // switchPrimaryBroker delegates to it
       final resp = await AqApiService.instance.switchPrimaryBroker(
         email: widget.email,
         broker: broker.broker,
       );
-      if (resp.statusCode == 200) {
-        // Non-critical: sync model portfolio
-        AqApiService.instance
-            .changeBrokerModelPortfolio(
-                email: widget.email, broker: broker.broker)
-            .catchError((_) {});
+      debugPrint('[ManageBrokers] switchPrimary ${broker.broker} status=${resp.statusCode} body=${resp.body}');
+      if (resp.statusCode >= 200 && resp.statusCode < 300) {
         CacheService.instance.invalidate('aq/user/brokers:${widget.email}');
         await _fetchBrokers();
         if (mounted) {
@@ -72,11 +73,12 @@ class _ManageBrokersPageState extends State<ManageBrokersPage> {
       } else {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Failed to switch broker')),
+            SnackBar(content: Text('Failed to switch broker (${resp.statusCode})')),
           );
         }
       }
-    } catch (_) {
+    } catch (e) {
+      debugPrint('[ManageBrokers] switchPrimary error: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Network error. Please try again.')),
@@ -120,7 +122,8 @@ class _ManageBrokersPageState extends State<ManageBrokersPage> {
         email: widget.email,
         broker: broker.broker,
       );
-      if (resp.statusCode == 200) {
+      debugPrint('[ManageBrokers] disconnect ${broker.broker} status=${resp.statusCode} body=${resp.body}');
+      if (resp.statusCode >= 200 && resp.statusCode < 300) {
         CacheService.instance.invalidate('aq/user/brokers:${widget.email}');
         await _fetchBrokers();
         if (mounted) {
@@ -131,11 +134,12 @@ class _ManageBrokersPageState extends State<ManageBrokersPage> {
       } else {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Failed to remove broker')),
+            SnackBar(content: Text('Failed to remove broker (${resp.statusCode})')),
           );
         }
       }
-    } catch (_) {
+    } catch (e) {
+      debugPrint('[ManageBrokers] disconnect error: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Network error. Please try again.')),
@@ -143,6 +147,39 @@ class _ManageBrokersPageState extends State<ManageBrokersPage> {
       }
     } finally {
       setState(() => _actionBroker = null);
+    }
+  }
+
+  void _reconnectBroker(BrokerConnection broker) async {
+    final config = BrokerRegistry.getByName(broker.broker);
+    if (config == null) return;
+
+    bool? result;
+    if (config.authType == BrokerAuthType.oauth) {
+      result = await Navigator.push<bool>(
+        context,
+        MaterialPageRoute(
+          builder: (_) => BrokerAuthPage(
+            email: widget.email,
+            brokerName: config.name,
+          ),
+        ),
+      );
+    } else {
+      result = await Navigator.push<bool>(
+        context,
+        MaterialPageRoute(
+          builder: (_) => BrokerCredentialPage(
+            email: widget.email,
+            brokerConfig: config,
+          ),
+        ),
+      );
+    }
+
+    if (result == true) {
+      CacheService.instance.invalidate('aq/user/brokers:${widget.email}');
+      _fetchBrokers();
     }
   }
 
@@ -292,16 +329,18 @@ class _ManageBrokersPageState extends State<ManageBrokersPage> {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  broker.isConnected
+                  broker.isEffectivelyConnected
                       ? "Connected"
-                      : broker.isExpired
-                          ? "Session expired"
-                          : broker.status,
+                      : broker.isTokenExpired
+                          ? "Session expired — reconnect required"
+                          : broker.isExpired
+                              ? "Session expired"
+                              : broker.status,
                   style: TextStyle(
                     fontSize: 12,
-                    color: broker.isConnected
+                    color: broker.isEffectivelyConnected
                         ? Colors.green
-                        : broker.isExpired
+                        : (broker.isTokenExpired || broker.isExpired)
                             ? Colors.orange
                             : Colors.grey,
                   ),
@@ -316,7 +355,21 @@ class _ManageBrokersPageState extends State<ManageBrokersPage> {
               child: CircularProgressIndicator(strokeWidth: 2),
             )
           else ...[
-            if (!isActive)
+            if (broker.isTokenExpired || broker.isExpired)
+              TextButton(
+                onPressed: () => _reconnectBroker(broker),
+                style: TextButton.styleFrom(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  minimumSize: Size.zero,
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  foregroundColor: Colors.orange.shade700,
+                ),
+                child: const Text("Reconnect",
+                    style:
+                        TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+              )
+            else if (!isActive)
               TextButton(
                 onPressed: () => _switchPrimary(broker),
                 style: TextButton.styleFrom(

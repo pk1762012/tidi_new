@@ -64,7 +64,7 @@ class _BrokerSelectionPageState extends State<BrokerSelectionPage> {
   }
 
   bool get _hasExpiredBrokers =>
-      connectedBrokers.any((b) => b.isExpired);
+      connectedBrokers.any((b) => b.isExpired || b.isTokenExpired);
 
   bool get _hasConnectedBrokers =>
       connectedBrokers.any((b) => b.isConnected);
@@ -73,8 +73,8 @@ class _BrokerSelectionPageState extends State<BrokerSelectionPage> {
     HapticFeedback.mediumImpact();
     final connection = _getConnection(brokerConfig.name);
 
-    if (connection != null && connection.isConnected) {
-      // Already connected — proceed to investment
+    if (connection != null && connection.isEffectivelyConnected) {
+      // Connected with valid token — proceed to investment
       if (widget.portfolio != null) {
         Navigator.pushReplacement(
           context,
@@ -91,7 +91,19 @@ class _BrokerSelectionPageState extends State<BrokerSelectionPage> {
       return;
     }
 
-    // Route based on auth type
+    // If connected but token expired, show reconnect message
+    if (connection != null && connection.isConnected && connection.isTokenExpired) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('${brokerConfig.name} session expired. Please reconnect.'),
+            backgroundColor: Colors.orange.shade700,
+          ),
+        );
+      }
+    }
+
+    // Route based on auth type (for new connection or reconnect)
     bool? result;
     if (brokerConfig.authType == BrokerAuthType.oauth) {
       result = await Navigator.push<bool>(
@@ -296,8 +308,11 @@ class _BrokerSelectionPageState extends State<BrokerSelectionPage> {
 
   Widget _brokerCard(BrokerConfig config) {
     final connection = _getConnection(config.name);
-    final isConnected = connection?.isConnected ?? false;
+    final isConnected = connection?.isEffectivelyConnected ?? false;
     final isExpired = connection?.isExpired ?? false;
+    final isTokenExpired = connection != null &&
+        connection.isConnected &&
+        connection.isTokenExpired;
 
     Color borderColor = Colors.grey.shade200;
     Color statusColor = Colors.grey;
@@ -306,7 +321,7 @@ class _BrokerSelectionPageState extends State<BrokerSelectionPage> {
       borderColor = Colors.green.shade300;
       statusColor = Colors.green;
       statusText = "Connected";
-    } else if (isExpired) {
+    } else if (isExpired || isTokenExpired) {
       borderColor = Colors.orange.shade300;
       statusColor = Colors.orange;
       statusText = "Reconnect";

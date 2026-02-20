@@ -16,6 +16,7 @@ import 'market/StockScanner.dart';
 import 'news/NewsScreen.dart';
 import '../../widgets/PortfolioSummaryCard.dart';
 import '../../service/AqApiService.dart';
+import '../../config/app_config.dart';
 
 
 class MarketPage extends StatefulWidget {
@@ -506,8 +507,9 @@ class MarketPageState extends State<MarketPage> with TickerProviderStateMixin, W
                               child: const MarketDataWidget(),
                             ),
                           ),
-                          // Portfolio summary card
-                          if (_userEmail != null)
+                          // Portfolio summary card (hidden when smallcase mode is active)
+                          if (_userEmail != null &&
+                              AppConfig.advisoryMode == AdvisoryPortfolioMode.modelPortfolio)
                             PortfolioSummaryCard(email: _userEmail!),
                           GridView.builder(
                             shrinkWrap: true,

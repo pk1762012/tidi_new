@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:tidistockmobileapp/models/broker_config.dart';
 import 'package:tidistockmobileapp/service/AqApiService.dart';
 import 'package:tidistockmobileapp/service/BrokerSessionService.dart';
@@ -8,6 +9,13 @@ import 'package:tidistockmobileapp/service/CacheService.dart';
 import 'package:tidistockmobileapp/widgets/customScaffold.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
+/// Handles OAuth / publisher-login broker connections via WebView.
+///
+/// Broker-specific flows:
+///   - Zerodha:   CCXT POST /zerodha/login-url → Kite login → exchange token
+///   - Angel One: SmartAPI publisher-login URL → callback with auth_token
+///   - Groww:     CCXT GET /groww/login/oauth → OAuth redirect → callback
+///   - Others:    aq_backend POST /api/{broker}/update-key → OAuth → callback
 class BrokerAuthPage extends StatefulWidget {
   final String email;
   final String brokerName;
@@ -28,8 +36,10 @@ class _BrokerAuthPageState extends State<BrokerAuthPage> {
   late WebViewController _webViewController;
   bool _callbackHandled = false;
 
-  bool get _isZerodha =>
-      widget.brokerName.toLowerCase() == 'zerodha';
+  String get _brokerLower => widget.brokerName.toLowerCase();
+  bool get _isZerodha => _brokerLower == 'zerodha';
+  bool get _isAngelOne => _brokerLower == 'angel one' || _brokerLower == 'angelone';
+  bool get _isGroww => _brokerLower == 'groww';
 
   @override
   void initState() {
@@ -42,12 +52,16 @@ class _BrokerAuthPageState extends State<BrokerAuthPage> {
       String? loginUrl;
 
       if (_isZerodha) {
-        // Zerodha publisher login: get login URL from CCXT server
         loginUrl = await _getZerodhaLoginUrl();
+      } else if (_isAngelOne) {
+        loginUrl = _getAngelOneLoginUrl();
+      } else if (_isGroww) {
+        loginUrl = await _getGrowwLoginUrl();
       } else {
-        // Other OAuth brokers: use aq_backend generic flow
         loginUrl = await _getGenericLoginUrl();
       }
+
+      debugPrint('[BrokerAuth] loginUrl for ${widget.brokerName}: ${loginUrl?.substring(0, (loginUrl?.length ?? 0).clamp(0, 100))}...');
 
       if (loginUrl != null && loginUrl.startsWith('http')) {
         setState(() => _status = 'webview');
@@ -67,26 +81,58 @@ class _BrokerAuthPageState extends State<BrokerAuthPage> {
     }
   }
 
-  /// Zerodha: calls CCXT POST /zerodha/login-url with company API key.
+  // ---------------------------------------------------------------------------
+  // Broker-specific login URL generators
+  // ---------------------------------------------------------------------------
+
+  /// Zerodha: CCXT POST /zerodha/login-url with company API key.
   Future<String?> _getZerodhaLoginUrl() async {
     final response = await AqApiService.instance.getZerodhaLoginUrl();
-    debugPrint('[BrokerAuth:Zerodha] login-url status=${response.statusCode} body=${response.body.length > 500 ? response.body.substring(0, 500) : response.body}');
+    debugPrint('[BrokerAuth:Zerodha] login-url status=${response.statusCode}');
 
     if (response.statusCode == 200) {
       final data = jsonDecode(response.body);
-      // CCXT returns: { loginUrl: "https://kite.zerodha.com/connect/login?..." }
       return data['loginUrl'] ??
           data['login_url'] ??
           data['response']?['loginUrl'] ??
           data['response']?['login_url'] ??
           (data['response'] is String ? data['response'] : null);
     }
-
-    debugPrint('[BrokerAuth:Zerodha] FAILED: ${response.statusCode}');
+    debugPrint('[BrokerAuth:Zerodha] FAILED: ${response.statusCode} ${response.body}');
     return null;
   }
 
-  /// Other OAuth brokers: generic aq_backend flow.
+  /// Angel One: SmartAPI publisher login — direct URL with company API key.
+  /// No backend call needed; the URL is constructed client-side.
+  String _getAngelOneLoginUrl() {
+    final apiKey = dotenv.env['ANGEL_ONE_API_KEY'] ?? 'MSthREMz';
+    final nonce = '${DateTime.now().millisecondsSinceEpoch}_${widget.email.hashCode}';
+    return 'https://smartapi.angelbroking.com/publisher-login?api_key=$apiKey&state=$nonce';
+  }
+
+  /// Groww: CCXT GET /groww/login/oauth → returns redirect URL.
+  Future<String?> _getGrowwLoginUrl() async {
+    final response = await AqApiService.instance.getGrowwOAuthUrl();
+    debugPrint('[BrokerAuth:Groww] OAuth status=${response.statusCode}');
+
+    if (response.statusCode == 200) {
+      final data = jsonDecode(response.body);
+      return data['loginUrl'] ??
+          data['login_url'] ??
+          data['redirectUrl'] ??
+          data['redirect_url'] ??
+          data['response']?['loginUrl'] ??
+          (data['response'] is String ? data['response'] : null);
+    }
+    // Groww CCXT may return a 302 redirect — check Location header
+    final location = response.headers['location'];
+    if (location != null && location.startsWith('http')) return location;
+
+    debugPrint('[BrokerAuth:Groww] FAILED: ${response.statusCode} ${response.body}');
+    return null;
+  }
+
+  /// Generic: aq_backend POST /api/{broker}/update-key.
   Future<String?> _getGenericLoginUrl() async {
     final response = await AqApiService.instance.getBrokerLoginUrl(
       broker: widget.brokerName,
@@ -105,10 +151,13 @@ class _BrokerAuthPageState extends State<BrokerAuthPage> {
           data['loginUrl'] ??
           (data['response'] is String ? data['response'] : null);
     }
-
-    debugPrint('[BrokerAuth] FAILED: ${response.statusCode}');
+    debugPrint('[BrokerAuth] FAILED: ${response.statusCode} ${response.body}');
     return null;
   }
+
+  // ---------------------------------------------------------------------------
+  // WebView setup & callback detection
+  // ---------------------------------------------------------------------------
 
   void _setupWebView(String url) {
     _webViewController = WebViewController()
@@ -116,6 +165,7 @@ class _BrokerAuthPageState extends State<BrokerAuthPage> {
       ..setNavigationDelegate(
         NavigationDelegate(
           onNavigationRequest: (request) {
+            debugPrint('[BrokerAuth:WebView] nav → ${request.url.substring(0, request.url.length.clamp(0, 120))}');
             if (_isCallbackUrl(request.url)) {
               _handleAuthCallback(request.url);
               return NavigationDecision.prevent;
@@ -140,16 +190,21 @@ class _BrokerAuthPageState extends State<BrokerAuthPage> {
   bool _isCallbackUrl(String url) {
     return url.contains('broker-callback') ||
         url.contains('request_token') ||
+        url.contains('auth_token') ||
         url.contains('auth_code') ||
         url.contains('status=success') ||
         url.contains('stock-recommendation') ||
         url.contains('zerodha/callback') ||
         url.contains('motilal-oswal/callback') ||
-        url.contains('icici/auth-callback');
+        url.contains('icici/auth-callback') ||
+        url.contains('api/deploy/broker/callback');
   }
 
+  // ---------------------------------------------------------------------------
+  // Callback handling
+  // ---------------------------------------------------------------------------
+
   Future<void> _handleAuthCallback(String callbackUrl) async {
-    // Guard against duplicate callback handling
     if (_callbackHandled) return;
     _callbackHandled = true;
 
@@ -157,23 +212,46 @@ class _BrokerAuthPageState extends State<BrokerAuthPage> {
 
     try {
       final uri = Uri.parse(callbackUrl);
+
+      // Angel One returns auth_token directly
+      if (_isAngelOne) {
+        final authToken = uri.queryParameters['auth_token'] ??
+            uri.queryParameters['jwtToken'] ??
+            uri.queryParameters['token'];
+        if (authToken != null) {
+          await _handleAngelOneCallback(authToken);
+          return;
+        }
+      }
+
+      // Zerodha returns request_token
       final requestToken = uri.queryParameters['request_token'] ??
           uri.queryParameters['auth_code'] ??
           uri.queryParameters['code'];
 
       if (_isZerodha && requestToken != null) {
-        // Zerodha: exchange request_token via CCXT, then save connection
         await _handleZerodhaCallback(requestToken);
         return;
       }
 
+      // Groww / generic: request_token or auth_code
       if (requestToken != null) {
-        // Other brokers: send request_token to aq_backend
-        await _handleGenericCallback(requestToken);
+        if (_isGroww) {
+          await _handleGrowwCallback(requestToken);
+        } else {
+          await _handleGenericCallback(requestToken);
+        }
         return;
       }
 
-      // Check for status=success in URL params
+      // Check for auth_token in URL (Angel One fallback)
+      final authToken = uri.queryParameters['auth_token'];
+      if (authToken != null) {
+        await _handleAngelOneCallback(authToken);
+        return;
+      }
+
+      // Check for status=success
       if (uri.queryParameters['status'] == 'success') {
         await _onConnectionSuccess();
         return;
@@ -181,7 +259,7 @@ class _BrokerAuthPageState extends State<BrokerAuthPage> {
 
       setState(() {
         _status = 'error';
-        _errorMessage = 'Authentication failed. Please try again.';
+        _errorMessage = 'Authentication failed. No token received.';
       });
     } catch (e) {
       debugPrint('[BrokerAuth] callback error: $e');
@@ -196,7 +274,6 @@ class _BrokerAuthPageState extends State<BrokerAuthPage> {
   Future<void> _handleZerodhaCallback(String requestToken) async {
     debugPrint('[BrokerAuth:Zerodha] exchanging request_token...');
 
-    // Step 1: Exchange request_token for access_token via CCXT
     final tokenResp = await AqApiService.instance.exchangeZerodhaToken(
       requestToken: requestToken,
     );
@@ -209,18 +286,14 @@ class _BrokerAuthPageState extends State<BrokerAuthPage> {
           tokenData['jwtToken'] ??
           tokenData['response']?['access_token'];
 
-      // Step 2: Save broker connection via aq_backend
-      // Try ObjectId-based connect first, fall back to email-based
+      // Save via ObjectId-based connect
       final uid = await AqApiService.instance.getUserObjectId(widget.email);
       if (uid != null) {
-        final saveResp = await AqApiService.instance.connectCredentialBroker(
+        await AqApiService.instance.connectCredentialBroker(
           uid: uid,
           userBroker: 'Zerodha',
-          credentials: {
-            'jwtToken': accessToken ?? requestToken,
-          },
+          credentials: {'jwtToken': accessToken ?? requestToken},
         );
-        debugPrint('[BrokerAuth:Zerodha] connect-broker status=${saveResp.statusCode}');
       }
 
       // Also save via email-based connect as fallback
@@ -236,8 +309,8 @@ class _BrokerAuthPageState extends State<BrokerAuthPage> {
 
       await _onConnectionSuccess();
     } else {
-      // Token exchange failed — try saving the request_token directly
-      debugPrint('[BrokerAuth:Zerodha] token exchange failed, saving request_token directly');
+      // Token exchange failed — still save the request_token
+      debugPrint('[BrokerAuth:Zerodha] token exchange failed, saving request_token');
       await AqApiService.instance.connectBrokerByEmail(
         email: widget.email,
         broker: 'Zerodha',
@@ -250,7 +323,68 @@ class _BrokerAuthPageState extends State<BrokerAuthPage> {
     }
   }
 
-  /// Other brokers: send request_token to aq_backend.
+  /// Angel One: save auth_token via PUT /api/user/connect-broker.
+  /// Matches RGX connectBroker.js Angel One flow.
+  Future<void> _handleAngelOneCallback(String authToken) async {
+    debugPrint('[BrokerAuth:AngelOne] saving auth_token...');
+    final apiKey = dotenv.env['ANGEL_ONE_API_KEY'] ?? 'MSthREMz';
+
+    // Save via ObjectId-based connect (primary method)
+    final uid = await AqApiService.instance.getUserObjectId(widget.email);
+    if (uid != null) {
+      final saveResp = await AqApiService.instance.connectCredentialBroker(
+        uid: uid,
+        userBroker: 'Angel One',
+        credentials: {
+          'jwtToken': authToken,
+          'apiKey': apiKey,
+        },
+      );
+      debugPrint('[BrokerAuth:AngelOne] connect-broker status=${saveResp.statusCode}');
+    }
+
+    // Also save via email-based connect as fallback
+    await AqApiService.instance.connectBrokerByEmail(
+      email: widget.email,
+      broker: 'Angel One',
+      brokerData: {
+        'jwtToken': authToken,
+        'apiKey': apiKey,
+        'status': 'connected',
+      },
+    );
+
+    await _onConnectionSuccess();
+  }
+
+  /// Groww: save auth code via connect-broker.
+  Future<void> _handleGrowwCallback(String authCode) async {
+    debugPrint('[BrokerAuth:Groww] saving auth_code...');
+
+    final uid = await AqApiService.instance.getUserObjectId(widget.email);
+    if (uid != null) {
+      await AqApiService.instance.connectCredentialBroker(
+        uid: uid,
+        userBroker: 'Groww',
+        credentials: {
+          'jwtToken': authCode,
+        },
+      );
+    }
+
+    await AqApiService.instance.connectBrokerByEmail(
+      email: widget.email,
+      broker: 'Groww',
+      brokerData: {
+        'jwtToken': authCode,
+        'status': 'connected',
+      },
+    );
+
+    await _onConnectionSuccess();
+  }
+
+  /// Generic: send request_token to aq_backend.
   Future<void> _handleGenericCallback(String requestToken) async {
     final response = await AqApiService.instance.connectBroker(
       email: widget.email,
@@ -274,7 +408,6 @@ class _BrokerAuthPageState extends State<BrokerAuthPage> {
   Future<void> _onConnectionSuccess() async {
     CacheService.instance.invalidate('aq/user/brokers:${widget.email}');
     await BrokerSessionService.instance.saveSessionTime(widget.brokerName);
-    // Non-critical: sync model portfolio broker
     AqApiService.instance.changeBrokerModelPortfolio(
       email: widget.email,
       broker: widget.brokerName,
@@ -283,6 +416,10 @@ class _BrokerAuthPageState extends State<BrokerAuthPage> {
     await Future.delayed(const Duration(seconds: 1));
     if (mounted) Navigator.pop(context, true);
   }
+
+  // ---------------------------------------------------------------------------
+  // UI
+  // ---------------------------------------------------------------------------
 
   @override
   Widget build(BuildContext context) {
@@ -320,7 +457,7 @@ class _BrokerAuthPageState extends State<BrokerAuthPage> {
               CircularProgressIndicator(),
               SizedBox(height: 16),
               Text("Connecting to broker...",
-                style: TextStyle(fontSize: 16, color: Colors.grey)),
+                  style: TextStyle(fontSize: 16, color: Colors.grey)),
             ],
           ),
         );
@@ -345,11 +482,11 @@ class _BrokerAuthPageState extends State<BrokerAuthPage> {
               ),
               const SizedBox(height: 20),
               const Text("Broker Connected!",
-                style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
+                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
               const SizedBox(height: 8),
               Text("${widget.brokerName} has been connected successfully.",
-                style: const TextStyle(fontSize: 14, color: Colors.grey),
-                textAlign: TextAlign.center),
+                  style: const TextStyle(fontSize: 14, color: Colors.grey),
+                  textAlign: TextAlign.center),
             ],
           ),
         );
@@ -373,11 +510,11 @@ class _BrokerAuthPageState extends State<BrokerAuthPage> {
                 ),
                 const SizedBox(height: 20),
                 const Text("Connection Failed",
-                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
+                    style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
                 const SizedBox(height: 8),
                 Text(_errorMessage ?? "Something went wrong.",
-                  style: const TextStyle(fontSize: 14, color: Colors.grey),
-                  textAlign: TextAlign.center),
+                    style: const TextStyle(fontSize: 14, color: Colors.grey),
+                    textAlign: TextAlign.center),
                 const SizedBox(height: 24),
                 ElevatedButton(
                   onPressed: () {

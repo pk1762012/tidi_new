@@ -5,10 +5,15 @@ import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:tidistockmobileapp/widgets/customScaffold.dart';
 
+import 'BrokerAuthPage.dart';
+import 'BrokerCredentialPage.dart';
 import 'BrokerSelectionPage.dart';
 import 'ExecutionStatusPage.dart';
+import 'package:tidistockmobileapp/models/broker_config.dart';
+import 'package:tidistockmobileapp/models/broker_connection.dart';
 import 'package:tidistockmobileapp/models/model_portfolio.dart';
 import 'package:tidistockmobileapp/service/AqApiService.dart';
+import 'package:tidistockmobileapp/service/CacheService.dart';
 import 'package:tidistockmobileapp/service/OrderExecutionService.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
@@ -36,7 +41,7 @@ class _RebalanceNotificationScreenState extends State<RebalanceNotificationScree
   bool _isExpanded = false;
   bool _isLoading = false;
   String? _userEmail;
-  Map<String, dynamic>? _brokerConnection;
+  BrokerConnection? _brokerConnection;
   String? _resolvedModelId;
 
   @override
@@ -92,26 +97,16 @@ class _RebalanceNotificationScreenState extends State<RebalanceNotificationScree
     try {
       final response = await AqApiService.instance.getConnectedBrokers(email);
       if (response.statusCode >= 200 && response.statusCode < 300) {
-        dynamic parsedBody;
-        try {
-          parsedBody = json.decode(response.body);
-        } catch (e) {
-          parsedBody = response.body;
-        }
-        List<dynamic> brokers = [];
-        if (parsedBody is List) {
-          brokers = parsedBody;
-        } else if (parsedBody is Map) {
-          if (parsedBody['data'] is List) {
-            brokers = List<dynamic>.from(parsedBody['data']);
-          } else if (parsedBody['connected_brokers'] is List) {
-            brokers = List<dynamic>.from(parsedBody['connected_brokers']);
-          }
-        }
-        if (brokers.isNotEmpty && mounted) {
-          setState(() {
-            _brokerConnection = Map<String, dynamic>.from(brokers.first);
-          });
+        final data = json.decode(response.body);
+        final connections = BrokerConnection.parseApiResponse(
+          data is Map<String, dynamic> ? data : {'data': data},
+        );
+        // Find the primary broker, or first connected one
+        final primary = connections.where((b) => b.isPrimary).toList();
+        final connected = connections.where((b) => b.isConnected).toList();
+        final broker = primary.isNotEmpty ? primary.first : (connected.isNotEmpty ? connected.first : null);
+        if (broker != null && mounted) {
+          setState(() => _brokerConnection = broker);
         }
       }
     } catch (e) {
@@ -453,10 +448,20 @@ class _RebalanceNotificationScreenState extends State<RebalanceNotificationScree
                 Container(
                   padding: const EdgeInsets.all(8),
                   decoration: BoxDecoration(
-                    color: Colors.green.withOpacity(0.1),
+                    color: _brokerConnection!.isTokenExpired
+                        ? Colors.orange.withOpacity(0.1)
+                        : Colors.green.withOpacity(0.1),
                     borderRadius: BorderRadius.circular(8),
                   ),
-                  child: const Icon(Icons.check_circle, color: Colors.green, size: 20),
+                  child: Icon(
+                    _brokerConnection!.isTokenExpired
+                        ? Icons.warning_amber_rounded
+                        : Icons.check_circle,
+                    color: _brokerConnection!.isTokenExpired
+                        ? Colors.orange
+                        : Colors.green,
+                    size: 20,
+                  ),
                 ),
                 const SizedBox(width: 12),
                 Expanded(
@@ -464,22 +469,38 @@ class _RebalanceNotificationScreenState extends State<RebalanceNotificationScree
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        _brokerConnection!['broker'] ?? 'Connected',
+                        _brokerConnection!.broker,
                         style: const TextStyle(
                           fontWeight: FontWeight.w600,
                           fontSize: 14,
                         ),
                       ),
                       Text(
-                        _brokerConnection!['clientCode'] ?? '',
+                        _brokerConnection!.isTokenExpired
+                            ? 'Session expired — please reconnect'
+                            : (_brokerConnection!.clientCode ?? 'Connected'),
                         style: TextStyle(
                           fontSize: 12,
-                          color: Colors.grey.shade600,
+                          color: _brokerConnection!.isTokenExpired
+                              ? Colors.orange
+                              : Colors.grey.shade600,
                         ),
                       ),
                     ],
                   ),
                 ),
+                if (_brokerConnection!.isTokenExpired)
+                  TextButton(
+                    onPressed: _reconnectBroker,
+                    style: TextButton.styleFrom(
+                      foregroundColor: Colors.orange.shade700,
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                      minimumSize: Size.zero,
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
+                    child: const Text("Reconnect",
+                        style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+                  ),
               ],
             ),
           ] else ...[
@@ -572,6 +593,49 @@ class _RebalanceNotificationScreenState extends State<RebalanceNotificationScree
     );
   }
 
+  /// Navigate to the appropriate broker auth page for reconnection.
+  void _reconnectBroker() async {
+    if (_brokerConnection == null || _userEmail == null) return;
+    final brokerName = _brokerConnection!.broker;
+    final config = BrokerRegistry.getByName(brokerName);
+
+    bool? result;
+    if (config != null && config.authType == BrokerAuthType.oauth) {
+      result = await Navigator.push<bool>(
+        context,
+        MaterialPageRoute(
+          builder: (_) => BrokerAuthPage(
+            email: _userEmail!,
+            brokerName: config.name,
+          ),
+        ),
+      );
+    } else if (config != null) {
+      result = await Navigator.push<bool>(
+        context,
+        MaterialPageRoute(
+          builder: (_) => BrokerCredentialPage(
+            email: _userEmail!,
+            brokerConfig: config,
+          ),
+        ),
+      );
+    } else {
+      // Unknown broker — go to selection page
+      result = await Navigator.push<bool>(
+        context,
+        MaterialPageRoute(
+          builder: (_) => BrokerSelectionPage(email: _userEmail!),
+        ),
+      );
+    }
+
+    if (result == true && _userEmail != null) {
+      CacheService.instance.invalidate('aq/user/brokers:${_userEmail!}');
+      await _checkBrokerConnection(_userEmail!);
+    }
+  }
+
   Future<bool?> _showDummyBrokerConfirmation() {
     return showDialog<bool>(
       context: context,
@@ -649,6 +713,47 @@ class _RebalanceNotificationScreenState extends State<RebalanceNotificationScree
     setState(() => _isLoading = true);
 
     try {
+      if (_brokerConnection != null && _brokerConnection!.isTokenExpired) {
+        // Token expired — prompt reconnect instead of trying to execute
+        if (mounted) {
+          final shouldReconnect = await showDialog<bool>(
+            context: context,
+            builder: (ctx) => AlertDialog(
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+              title: const Row(
+                children: [
+                  Icon(Icons.warning_amber_rounded, color: Colors.orange, size: 24),
+                  SizedBox(width: 8),
+                  Text("Session Expired"),
+                ],
+              ),
+              content: Text(
+                'Your ${_brokerConnection!.broker} session has expired. Please reconnect to execute trades.',
+                style: const TextStyle(fontSize: 14, height: 1.5),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx, false),
+                  child: const Text("Cancel"),
+                ),
+                ElevatedButton(
+                  onPressed: () => Navigator.pop(ctx, true),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.orange.shade700,
+                    foregroundColor: Colors.white,
+                  ),
+                  child: const Text("Reconnect"),
+                ),
+              ],
+            ),
+          );
+          if (shouldReconnect == true) {
+            _reconnectBroker();
+          }
+        }
+        return;
+      }
+
       if (_brokerConnection != null) {
         // Broker connected — navigate to ExecutionStatusPage which handles
         // real order placement via CCXT rebalance/process-trade
