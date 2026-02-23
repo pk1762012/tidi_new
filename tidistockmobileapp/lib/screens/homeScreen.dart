@@ -66,7 +66,11 @@ class HomeScreenState extends State<HomeScreen> {
     final email = await AqApiService.resolveUserEmail();
     if (email == null || !mounted) return;
     try {
-      final pending = await RebalanceStatusService.fetchPendingRebalances(email);
+      final connectedBroker = await RebalanceStatusService.fetchConnectedBrokerName(email);
+      final pending = await RebalanceStatusService.fetchPendingRebalances(
+        email,
+        connectedBroker: connectedBroker,
+      );
       if (mounted) setState(() => _pendingRebalances = pending);
     } catch (_) {}
   }

@@ -23,6 +23,7 @@ import 'package:tidistockmobileapp/models/broker_connection.dart';
 import 'BrokerSelectionPage.dart';
 import 'InvestInPlanSheet.dart';
 import 'InvestmentModal.dart';
+import 'PendingOrdersPage.dart';
 import 'PortfolioHoldingsPage.dart';
 import 'RebalanceReviewPage.dart';
 
@@ -68,7 +69,7 @@ class _ModelPortfolioDetailPageState extends State<ModelPortfolioDetailPage>
   List<String> _availableBrokers = ['ALL'];
   double _totalInvested = 0;
   double _totalCurrent = 0;
-  bool _hasPendingRebalance = false;
+  PortfolioRebalanceStatus? _rebalanceStatus;
   bool _disclaimerAccepted = false;
 
   static const Map<String, String> _indexSymbols = {
@@ -410,25 +411,25 @@ class _ModelPortfolioDetailPageState extends State<ModelPortfolioDetailPage>
   void _checkPendingRebalance() async {
     if (userEmail == null) return;
 
-    // First: try from local portfolio data (fast, works if data is present)
-    if (portfolio.rebalanceHistory.isNotEmpty) {
-      final pending = portfolio.rebalanceHistory.last.hasPendingExecution(userEmail!);
-      if (pending) {
-        if (mounted) setState(() => _hasPendingRebalance = true);
-        return;
-      }
-    }
-
-    // Fallback: use RebalanceStatusService (proven, uses subscribed-strategies endpoint)
     try {
-      final pending = await RebalanceStatusService.fetchPendingRebalances(userEmail!);
-      final hasPending = pending.any((p) =>
-          p.modelName.toLowerCase().trim() == portfolio.modelName.toLowerCase().trim() ||
-          p.modelId == portfolio.id ||
-          p.modelId == portfolio.strategyId);
-      if (mounted) setState(() => _hasPendingRebalance = hasPending);
+      // Fetch connected broker for broker-match check (mirrors rgx_app)
+      final connectedBroker = await RebalanceStatusService.fetchConnectedBrokerName(userEmail!);
+      final statuses = await RebalanceStatusService.fetchAllRebalanceStatuses(
+        userEmail!,
+        connectedBroker: connectedBroker,
+      );
+      // Try exact match first, then case-insensitive
+      PortfolioRebalanceStatus? status = statuses[portfolio.modelName];
+      if (status == null) {
+        final key = statuses.keys.firstWhere(
+          (k) => k.toLowerCase().trim() == portfolio.modelName.toLowerCase().trim(),
+          orElse: () => '',
+        );
+        if (key.isNotEmpty) status = statuses[key];
+      }
+      if (mounted) setState(() => _rebalanceStatus = status);
     } catch (e) {
-      debugPrint('[DetailPage] _checkPendingRebalance fallback error: $e');
+      debugPrint('[DetailPage] _checkPendingRebalance error: $e');
     }
   }
 
@@ -586,7 +587,7 @@ class _ModelPortfolioDetailPageState extends State<ModelPortfolioDetailPage>
       _subscribedStatsGrid(),
       const SizedBox(height: 16),
       _rebalanceInfoSection(),
-      if (_hasPendingRebalance) _rebalanceBanner(),
+      if (_rebalanceStatus != null) _rebalanceBanner(),
       _tabBar(),
       const SizedBox(height: 12),
       _tabContent(),
@@ -815,44 +816,120 @@ class _ModelPortfolioDetailPageState extends State<ModelPortfolioDetailPage>
   // ---------------------------------------------------------------------------
 
   Widget _rebalanceBanner() {
+    final state = _rebalanceStatus!.cardState;
+
+    Color bgColor;
+    Color borderColor;
+    Color textColor;
+    Color subtitleColor;
+    IconData icon;
+    String title;
+    String subtitle;
+    bool showArrow = true;
+
+    switch (state) {
+      case RebalanceCardState.pending:
+        bgColor = Colors.orange.shade50;
+        borderColor = Colors.orange.shade200;
+        textColor = Colors.orange.shade800;
+        subtitleColor = Colors.orange.shade600;
+        icon = Icons.sync;
+        title = "Rebalance Available";
+        subtitle = "Review and execute the latest changes.";
+        break;
+      case RebalanceCardState.executed:
+        bgColor = Colors.grey.shade100;
+        borderColor = Colors.grey.shade300;
+        textColor = Colors.grey.shade600;
+        subtitleColor = Colors.grey.shade500;
+        icon = Icons.check_circle_outline;
+        title = "No action due";
+        subtitle = "Rebalance executed";
+        showArrow = false;
+        break;
+      case RebalanceCardState.partiallyExecuted:
+        bgColor = Colors.orange.shade50;
+        borderColor = Colors.orange.shade200;
+        textColor = Colors.orange.shade800;
+        subtitleColor = Colors.orange.shade600;
+        icon = Icons.warning_rounded;
+        title = "Partially Executed";
+        subtitle = "Some orders failed. Tap to retry.";
+        break;
+      case RebalanceCardState.pendingVerification:
+        bgColor = Colors.amber.shade50;
+        borderColor = Colors.amber.shade200;
+        textColor = Colors.amber.shade900;
+        subtitleColor = Colors.amber.shade700;
+        icon = Icons.hourglass_top;
+        title = "Verifying Order Status...";
+        subtitle = "Orders are being processed.";
+        break;
+      case RebalanceCardState.failed:
+        bgColor = Colors.red.shade50;
+        borderColor = Colors.red.shade200;
+        textColor = Colors.red.shade800;
+        subtitleColor = Colors.red.shade600;
+        icon = Icons.error_outline;
+        title = "Action Required";
+        subtitle = "Execution failed. Tap to review.";
+        break;
+    }
+
     return GestureDetector(
       onTap: () {
-        Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (_) => RebalanceReviewPage(
-              portfolio: portfolio,
-              email: userEmail!,
+        if (state == RebalanceCardState.executed) return;
+        if (state == RebalanceCardState.pendingVerification) {
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => PendingOrdersPage(
+                portfolio: portfolio,
+                email: userEmail!,
+                broker: _rebalanceStatus!.broker,
+                advisor: _rebalanceStatus!.advisor,
+              ),
             ),
-          ),
-        );
+          ).then((_) => _checkPendingRebalance());
+        } else {
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => RebalanceReviewPage(
+                portfolio: portfolio,
+                email: userEmail!,
+              ),
+            ),
+          ).then((_) => _checkPendingRebalance());
+        }
       },
       child: Container(
         margin: const EdgeInsets.only(bottom: 16),
         padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
-          color: Colors.orange.shade50,
+          color: bgColor,
           borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: Colors.orange.shade200),
+          border: Border.all(color: borderColor),
         ),
         child: Row(
           children: [
-            Icon(Icons.sync, color: Colors.orange.shade700, size: 22),
+            Icon(icon, color: textColor, size: 22),
             const SizedBox(width: 12),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text("Rebalance Available",
+                  Text(title,
                       style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700,
-                          color: Colors.orange.shade800)),
-                  Text("Review and execute the latest changes.",
-                      style: TextStyle(fontSize: 12, color: Colors.orange.shade600)),
+                          color: textColor)),
+                  Text(subtitle,
+                      style: TextStyle(fontSize: 12, color: subtitleColor)),
                 ],
               ),
             ),
-            Icon(Icons.arrow_forward_ios_rounded,
-                size: 14, color: Colors.orange.shade400),
+            if (showArrow)
+              Icon(Icons.arrow_forward_ios_rounded,
+                  size: 14, color: textColor.withOpacity(0.6)),
           ],
         ),
       ),
@@ -2544,11 +2621,15 @@ class _ModelPortfolioDetailPageState extends State<ModelPortfolioDetailPage>
     String label;
     IconData icon;
     VoidCallback? onPressed;
+    Color bgColor;
+
+    final cardState = _rebalanceStatus?.cardState;
 
     if (_isSubscribed && userEmail != null) {
-      if (_hasPendingRebalance) {
+      if (cardState == RebalanceCardState.pending || cardState == RebalanceCardState.failed) {
         label = "Execute Rebalance";
         icon = Icons.sync_rounded;
+        bgColor = Colors.orange.shade700;
         onPressed = () async {
           final broker = await _ensureBrokerConnected();
           if (broker == null || !mounted) return;
@@ -2560,11 +2641,46 @@ class _ModelPortfolioDetailPageState extends State<ModelPortfolioDetailPage>
                 email: userEmail!,
               ),
             ),
-          );
+          ).then((_) => _checkPendingRebalance());
+        };
+      } else if (cardState == RebalanceCardState.partiallyExecuted) {
+        label = "Retry Rebalance";
+        icon = Icons.refresh_rounded;
+        bgColor = Colors.orange.shade700;
+        onPressed = () async {
+          final broker = await _ensureBrokerConnected();
+          if (broker == null || !mounted) return;
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => RebalanceReviewPage(
+                portfolio: portfolio,
+                email: userEmail!,
+              ),
+            ),
+          ).then((_) => _checkPendingRebalance());
+        };
+      } else if (cardState == RebalanceCardState.pendingVerification) {
+        label = "Check Order Status";
+        icon = Icons.hourglass_top;
+        bgColor = Colors.amber.shade700;
+        onPressed = () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => PendingOrdersPage(
+                portfolio: portfolio,
+                email: userEmail!,
+                broker: _rebalanceStatus!.broker,
+                advisor: _rebalanceStatus!.advisor,
+              ),
+            ),
+          ).then((_) => _checkPendingRebalance());
         };
       } else {
         label = "Invest More";
         icon = Icons.add_circle_outline_rounded;
+        bgColor = const Color(0xFF1565C0);
         onPressed = () async {
           final broker = await _ensureBrokerConnected();
           if (broker == null || !mounted) return;
@@ -2583,6 +2699,7 @@ class _ModelPortfolioDetailPageState extends State<ModelPortfolioDetailPage>
     } else {
       label = "Subscribe & Invest";
       icon = Icons.arrow_forward_rounded;
+      bgColor = const Color(0xFF2E7D32);
       onPressed = _showPlanSelectionSheet;
     }
 
@@ -2604,9 +2721,7 @@ class _ModelPortfolioDetailPageState extends State<ModelPortfolioDetailPage>
           child: ElevatedButton.icon(
             onPressed: onPressed,
             style: ElevatedButton.styleFrom(
-              backgroundColor: _isSubscribed
-                  ? (_hasPendingRebalance ? Colors.orange.shade700 : const Color(0xFF1565C0))
-                  : const Color(0xFF2E7D32),
+              backgroundColor: bgColor,
               shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(14)),
               elevation: 0,

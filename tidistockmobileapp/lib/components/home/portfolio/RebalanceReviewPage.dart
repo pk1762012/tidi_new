@@ -1,12 +1,15 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:tidistockmobileapp/models/broker_connection.dart';
 import 'package:tidistockmobileapp/models/model_portfolio.dart';
 import 'package:tidistockmobileapp/models/portfolio_stock.dart';
 import 'package:tidistockmobileapp/models/rebalance_entry.dart';
 import 'package:tidistockmobileapp/service/AqApiService.dart';
+import 'package:tidistockmobileapp/service/CacheService.dart';
 import 'package:tidistockmobileapp/widgets/customScaffold.dart';
 
+import 'BrokerSelectionPage.dart';
 import 'ExecutionStatusPage.dart';
 
 class RebalanceReviewPage extends StatefulWidget {
@@ -184,8 +187,26 @@ class _RebalanceReviewPageState extends State<RebalanceReviewPage> {
     });
   }
 
-  void _executeRebalance() {
+  Future<void> _executeRebalance() async {
     if (!termsAccepted) return;
+
+    // --- Broker pre-check ---
+    final connectedBroker = await _checkBrokerConnection();
+    if (connectedBroker == null || !mounted) return;
+
+    // --- Validate broker match ---
+    if (latestRebalance != null) {
+      final execForUser = latestRebalance!.getExecutionForUser(widget.email);
+      if (execForUser != null) {
+        final execBroker = execForUser.userBroker ?? '';
+        if (execBroker.isNotEmpty &&
+            execBroker != 'DummyBroker' &&
+            execBroker.toLowerCase() != connectedBroker.broker.toLowerCase()) {
+          final proceed = await _showBrokerMismatchDialog(execBroker, connectedBroker.broker);
+          if (proceed != true || !mounted) return;
+        }
+      }
+    }
 
     // Generate orders: sells first, then buys
     final orders = <Map<String, dynamic>>[];
@@ -229,6 +250,84 @@ class _RebalanceReviewPageState extends State<RebalanceReviewPage> {
           modelName: widget.portfolio.modelName,
           advisor: widget.portfolio.advisor,
         ),
+      ),
+    );
+  }
+
+  /// Check broker connection before execution. Returns a connected broker or null.
+  Future<BrokerConnection?> _checkBrokerConnection() async {
+    try {
+      CacheService.instance.invalidate('aq/user/brokers:${widget.email}');
+      final response = await AqApiService.instance.getConnectedBrokers(widget.email);
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        final rawData = data['data'];
+        final List<dynamic> brokerList;
+        if (rawData is List) {
+          brokerList = rawData;
+        } else if (rawData is Map) {
+          brokerList = rawData['connected_brokers'] ?? [];
+        } else {
+          brokerList = data['connected_brokers'] ?? [];
+        }
+        final connected = brokerList
+            .map((e) => BrokerConnection.fromJson(e))
+            .where((b) => b.isEffectivelyConnected)
+            .toList();
+
+        if (connected.isNotEmpty) {
+          return connected.first;
+        }
+      }
+    } catch (e) {
+      debugPrint('[RebalanceReview] _checkBrokerConnection error: $e');
+    }
+
+    // No connected broker — navigate to BrokerSelectionPage
+    if (!mounted) return null;
+    final result = await Navigator.push<BrokerConnection>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => BrokerSelectionPage(email: widget.email),
+      ),
+    );
+    return result;
+  }
+
+  /// Show warning dialog when execution broker doesn't match connected broker.
+  Future<bool?> _showBrokerMismatchDialog(String executionBroker, String connectedBroker) {
+    return showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Row(
+          children: [
+            Icon(Icons.warning_amber_rounded, color: Colors.orange.shade700, size: 24),
+            const SizedBox(width: 8),
+            const Text("Broker Mismatch", style: TextStyle(fontSize: 18)),
+          ],
+        ),
+        content: Text(
+          "This rebalance was set up for $executionBroker, but you are "
+          "currently connected to $connectedBroker.\n\n"
+          "Orders will be placed through $connectedBroker.",
+          style: TextStyle(fontSize: 14, color: Colors.grey.shade700, height: 1.4),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text("Cancel", style: TextStyle(color: Colors.grey.shade600)),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.orange.shade700,
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            ),
+            child: const Text("Continue Anyway"),
+          ),
+        ],
       ),
     );
   }
@@ -425,9 +524,12 @@ class _RebalanceReviewPageState extends State<RebalanceReviewPage> {
             children: [
               Icon(Icons.sync, color: Colors.orange.shade700, size: 22),
               const SizedBox(width: 10),
-              Text(widget.portfolio.modelName,
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700,
-                    color: Colors.orange.shade800)),
+              Expanded(
+                child: Text(widget.portfolio.modelName,
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700,
+                      color: Colors.orange.shade800),
+                  overflow: TextOverflow.ellipsis),
+              ),
             ],
           ),
           if (latestRebalance?.rebalanceDate != null) ...[

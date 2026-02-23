@@ -80,7 +80,10 @@ class _BrokerAuthPageState extends State<BrokerAuthPage> {
       debugPrint('[BrokerAuth] ERROR: $e');
       setState(() {
         _status = 'error';
-        _errorMessage = 'Network error. Please check your connection.';
+        _errorMessage = e.toString().contains('SocketException') ||
+                e.toString().contains('TimeoutException')
+            ? 'Network error. Please check your connection.'
+            : 'Connection failed. Please try again.';
       });
     }
   }
@@ -96,11 +99,20 @@ class _BrokerAuthPageState extends State<BrokerAuthPage> {
 
     if (response.statusCode == 200) {
       final data = jsonDecode(response.body);
-      return data['loginUrl'] ??
-          data['login_url'] ??
-          data['response']?['loginUrl'] ??
-          data['response']?['login_url'] ??
-          (data['response'] is String ? data['response'] : null);
+      if (data is! Map) {
+        return data is String && data.startsWith('http') ? data : null;
+      }
+
+      // Direct URL fields
+      final loginUrl = data['loginUrl'] ?? data['login_url'];
+      if (loginUrl is String) return loginUrl;
+
+      // Nested response — may be a Map with loginUrl key, or a plain URL string
+      final resp = data['response'];
+      if (resp is String) return resp;
+      if (resp is Map) return resp['loginUrl'] ?? resp['login_url'];
+
+      return null;
     }
     debugPrint('[BrokerAuth:Zerodha] FAILED: ${response.statusCode} ${response.body}');
     return null;
@@ -132,12 +144,19 @@ class _BrokerAuthPageState extends State<BrokerAuthPage> {
 
     if (response.statusCode == 200) {
       final data = jsonDecode(response.body);
-      return data['loginUrl'] ??
-          data['login_url'] ??
-          data['redirectUrl'] ??
-          data['redirect_url'] ??
-          data['response']?['loginUrl'] ??
-          (data['response'] is String ? data['response'] : null);
+      if (data is! Map) {
+        return data is String && data.startsWith('http') ? data : null;
+      }
+
+      final loginUrl = data['loginUrl'] ?? data['login_url'] ??
+          data['redirectUrl'] ?? data['redirect_url'];
+      if (loginUrl is String) return loginUrl;
+
+      final resp = data['response'];
+      if (resp is String) return resp;
+      if (resp is Map) return resp['loginUrl'] ?? resp['login_url'];
+
+      return null;
     }
     // Groww CCXT may return a 302 redirect — check Location header
     final location = response.headers['location'];

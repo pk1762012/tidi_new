@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
@@ -14,6 +15,7 @@ import 'package:webview_flutter/webview_flutter.dart';
 import 'BrokerAuthPage.dart';
 import 'BrokerCredentialPage.dart';
 import 'BrokerSelectionPage.dart';
+import 'PendingOrdersPage.dart';
 import 'PortfolioHoldingsPage.dart';
 
 class ExecutionStatusPage extends StatefulWidget {
@@ -54,6 +56,9 @@ class _ExecutionStatusPageState extends State<ExecutionStatusPage> {
   List<Map<String, dynamic>>? _zerodhaStockDetails;
   String? _zerodhaApiKey;
 
+  // Delayed status poll timer
+  Timer? _statusPollTimer;
+
   String get _modelName => widget.modelName ?? widget.portfolio.modelName;
   String get _advisor => widget.advisor ?? widget.portfolio.advisor;
   String get _modelId {
@@ -68,6 +73,92 @@ class _ExecutionStatusPageState extends State<ExecutionStatusPage> {
   void initState() {
     super.initState();
     _executeOrders();
+  }
+
+  @override
+  void dispose() {
+    _statusPollTimer?.cancel();
+    super.dispose();
+  }
+
+  /// Trigger a delayed status poll after execution completes with pending results.
+  void _scheduleStatusPoll() {
+    _statusPollTimer?.cancel();
+    _statusPollTimer = Timer(const Duration(seconds: 5), () async {
+      if (!mounted) return;
+      try {
+        await AqApiService.instance.addToStatusCheckQueue(
+          email: widget.email,
+          modelName: _modelName,
+          advisor: _advisor,
+          broker: OrderExecutionService.instance.lastUsedBrokerName.isNotEmpty
+              ? OrderExecutionService.instance.lastUsedBrokerName
+              : 'DummyBroker',
+        );
+        await Future.delayed(const Duration(seconds: 3));
+        if (!mounted) return;
+        final response = await AqApiService.instance.getLatestUserPortfolio(
+          email: widget.email,
+          modelName: _modelName,
+        );
+        if (response.statusCode == 200 && mounted) {
+          final data = jsonDecode(response.body);
+          _updateResultsFromPoll(data);
+        }
+      } catch (e) {
+        debugPrint('[ExecutionStatus] _scheduleStatusPoll error: $e');
+      }
+    });
+  }
+
+  void _updateResultsFromPoll(dynamic data) {
+    // Try to extract order results from the poll response
+    List<dynamic> orderList = [];
+    if (data is Map) {
+      orderList = data['order_results'] ??
+          data['orderResults'] ??
+          data['data']?['order_results'] ??
+          [];
+      if (orderList.isEmpty) {
+        final userNetPf = data['user_net_pf_model'] ?? data['data']?['user_net_pf_model'];
+        if (userNetPf is List && userNetPf.isNotEmpty) {
+          final latest = userNetPf.last;
+          if (latest is List) orderList = latest;
+          if (latest is Map) orderList = latest['order_results'] ?? latest['stocks'] ?? [];
+        }
+      }
+    }
+
+    if (orderList.isEmpty) return;
+
+    // Update existing results with new status info
+    for (final order in orderList) {
+      if (order is! Map) continue;
+      final symbol = (order['symbol'] ?? order['tradingSymbol'] ?? '').toString();
+      final rawStatus = (order['status'] ?? order['order_status'] ?? '').toString().toLowerCase();
+
+      final idx = results.indexWhere((r) => r.symbol == symbol);
+      if (idx >= 0) {
+        String newStatus = results[idx].status;
+        if (rawStatus.contains('complete') || rawStatus.contains('traded') || rawStatus.contains('filled')) {
+          newStatus = 'success';
+        } else if (rawStatus.contains('rejected') || rawStatus.contains('cancel') || rawStatus.contains('failed')) {
+          newStatus = 'failed';
+        }
+        if (newStatus != results[idx].status) {
+          results[idx] = OrderResult(
+            symbol: results[idx].symbol,
+            transactionType: results[idx].transactionType,
+            quantity: results[idx].quantity,
+            price: results[idx].price,
+            status: newStatus,
+            orderId: results[idx].orderId,
+            message: results[idx].message,
+          );
+        }
+      }
+    }
+    if (mounted) setState(() {});
   }
 
   Future<void> _executeOrders() async {
@@ -131,6 +222,10 @@ class _ExecutionStatusPageState extends State<ExecutionStatusPage> {
         _state = 'done';
         results = orderResults;
       });
+      // If there are pending/partial results, schedule a delayed status poll
+      if (_hasPendingOrPartialOrders || _failedCount > 0) {
+        _scheduleStatusPoll();
+      }
     }
   }
 
@@ -687,6 +782,14 @@ class _ExecutionStatusPageState extends State<ExecutionStatusPage> {
     );
   }
 
+  bool get _hasPendingOrPartialOrders {
+    if (results.isEmpty) return false;
+    return results.any((r) =>
+        r.status == 'partial' ||
+        r.status == 'pending' ||
+        (!r.isSuccess && !r.isFailed));
+  }
+
   Widget _bottomActions() {
     return Container(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
@@ -712,6 +815,39 @@ class _ExecutionStatusPageState extends State<ExecutionStatusPage> {
                     ),
                     child: Text("Retry $_failedCount Failed Orders",
                         style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: Colors.orange)),
+                  ),
+                ),
+              ),
+            if (_hasPendingOrPartialOrders)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: SizedBox(
+                  width: double.infinity,
+                  height: 46,
+                  child: OutlinedButton.icon(
+                    onPressed: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => PendingOrdersPage(
+                            portfolio: widget.portfolio,
+                            email: widget.email,
+                            broker: OrderExecutionService.instance.lastUsedBrokerName.isNotEmpty
+                                ? OrderExecutionService.instance.lastUsedBrokerName
+                                : 'DummyBroker',
+                            advisor: _advisor,
+                          ),
+                        ),
+                      );
+                    },
+                    icon: const Icon(Icons.hourglass_top, size: 18),
+                    label: const Text("Check Order Status",
+                        style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
+                    style: OutlinedButton.styleFrom(
+                      side: BorderSide(color: Colors.amber.shade700),
+                      foregroundColor: Colors.amber.shade700,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                    ),
                   ),
                 ),
               ),

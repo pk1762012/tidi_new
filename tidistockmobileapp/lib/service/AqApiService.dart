@@ -884,6 +884,62 @@ class AqApiService {
     );
   }
 
+  /// Cancel a specific order via CCXT.
+  Future<http.Response> cancelOrder({
+    required String email,
+    required String orderId,
+    required String broker,
+    String? apiKey,
+    String? secretKey,
+    String? jwtToken,
+    String? clientCode,
+    String? accessToken,
+  }) async {
+    return http.post(
+      Uri.parse('${ccxtUrl}order/cancel'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({
+        'user_email': email,
+        'order_id': orderId,
+        'user_broker': broker,
+        if (apiKey != null) 'apiKey': apiKey,
+        if (secretKey != null) 'secretKey': secretKey,
+        if (jwtToken != null) 'jwtToken': jwtToken,
+        if (clientCode != null) 'clientId': clientCode,
+        if (accessToken != null) 'accessToken': accessToken,
+      }),
+    );
+  }
+
+  /// Fetch latest user portfolio for a model (order statuses).
+  Future<http.Response> getLatestUserPortfolio({
+    required String email,
+    required String modelName,
+  }) async {
+    final encodedEmail = Uri.encodeComponent(email);
+    final encodedModel = Uri.encodeComponent(modelName);
+    return http.get(
+      Uri.parse('${ccxtUrl}rebalance/user-portfolio/latest/$encodedEmail/$encodedModel'),
+      headers: {'Content-Type': 'application/json'},
+    );
+  }
+
+  /// Reset execution status to 'toExecute' for retry flow.
+  Future<http.Response> resetExecutionToExecute({
+    required String email,
+    required String modelName,
+    required String advisor,
+    required String broker,
+  }) async {
+    return updateSubscriberExecution(
+      email: email,
+      modelName: modelName,
+      advisor: advisor,
+      broker: broker,
+      executionStatus: 'toExecute',
+    );
+  }
+
   /// Add user to status-check queue (generic — works for all brokers).
   Future<http.Response> addToStatusCheckQueue({
     required String email,

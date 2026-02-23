@@ -3,12 +3,15 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:tidistockmobileapp/service/CacheService.dart';
 import 'package:tidistockmobileapp/service/DataRepository.dart';
+import 'package:tidistockmobileapp/service/RebalanceStatusService.dart';
 import 'package:intl/intl.dart';
 import 'package:tidistockmobileapp/models/model_portfolio.dart';
 import 'package:tidistockmobileapp/service/AqApiService.dart';
 import 'package:tidistockmobileapp/widgets/customScaffold.dart';
 
 import 'ModelPortfolioDetailPage.dart';
+import 'PendingOrdersPage.dart';
+import 'RebalanceReviewPage.dart';
 
 class InvestedPortfoliosPage extends StatefulWidget {
   final String email;
@@ -22,6 +25,8 @@ class InvestedPortfoliosPage extends StatefulWidget {
 class _InvestedPortfoliosPageState extends State<InvestedPortfoliosPage> {
   List<ModelPortfolio> subscribedPortfolios = [];
   Map<String, _PortfolioSummary> summaries = {};
+  Map<String, PortfolioRebalanceStatus> _rebalanceStatuses = {};
+  String? _connectedBrokerName;
   bool loading = true;
   String? error;
   final _currencyFormat = NumberFormat('#,##,###');
@@ -53,10 +58,11 @@ class _InvestedPortfoliosPageState extends State<InvestedPortfoliosPage> {
             loading = false;
             error = null;
           });
-          // Fetch summaries for all portfolios in parallel
-          Future.wait(
-            subscribedPortfolios.map((p) => _fetchPortfolioSummary(p.modelName)),
-          );
+          // Fetch summaries and rebalance statuses in parallel
+          Future.wait([
+            ...subscribedPortfolios.map((p) => _fetchPortfolioSummary(p.modelName)),
+            _fetchRebalanceStatuses(),
+          ]);
         },
       );
     } catch (e) {
@@ -177,6 +183,24 @@ class _InvestedPortfoliosPageState extends State<InvestedPortfoliosPage> {
       }
     } catch (e) {
       debugPrint('[InvestedPortfolios] Summary fetch failed for $modelName: $e');
+    }
+  }
+
+  Future<void> _fetchRebalanceStatuses() async {
+    try {
+      // Fetch connected broker fresh (mirrors rgx_app's refreshBrokerStatus)
+      _connectedBrokerName = await RebalanceStatusService.fetchConnectedBrokerName(widget.email);
+      debugPrint('[InvestedPortfolios] connectedBroker: $_connectedBrokerName');
+
+      final statuses = await RebalanceStatusService.fetchAllRebalanceStatuses(
+        widget.email,
+        connectedBroker: _connectedBrokerName,
+      );
+      if (mounted && statuses.isNotEmpty) {
+        setState(() => _rebalanceStatuses = statuses);
+      }
+    } catch (e) {
+      debugPrint('[InvestedPortfolios] _fetchRebalanceStatuses error: $e');
     }
   }
 
@@ -342,18 +366,71 @@ class _InvestedPortfoliosPageState extends State<InvestedPortfoliosPage> {
 
   Widget _portfolioCard(ModelPortfolio portfolio) {
     final summary = summaries[portfolio.modelName];
+    final rebalanceStatus = _rebalanceStatuses[portfolio.modelName];
     final pnl = summary != null ? summary.currentValue - summary.investedValue : 0.0;
     final isProfit = pnl >= 0;
+
+    // Card border color based on rebalance state
+    Color? borderColor;
+    if (rebalanceStatus != null) {
+      switch (rebalanceStatus.cardState) {
+        case RebalanceCardState.pending:
+          borderColor = Colors.blue.shade300;
+          break;
+        case RebalanceCardState.executed:
+          break; // no border
+        case RebalanceCardState.partiallyExecuted:
+          borderColor = Colors.orange.shade300;
+          break;
+        case RebalanceCardState.pendingVerification:
+          borderColor = Colors.amber.shade300;
+          break;
+        case RebalanceCardState.failed:
+          borderColor = Colors.red.shade300;
+          break;
+      }
+    }
 
     return GestureDetector(
       onTap: () {
         HapticFeedback.mediumImpact();
+        // Route based on rebalance card state
+        if (rebalanceStatus != null) {
+          switch (rebalanceStatus.cardState) {
+            case RebalanceCardState.pending:
+            case RebalanceCardState.partiallyExecuted:
+            case RebalanceCardState.failed:
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => RebalanceReviewPage(
+                    portfolio: portfolio,
+                    email: widget.email,
+                  ),
+                ),
+              ).then((_) => _fetchRebalanceStatuses());
+              return;
+            case RebalanceCardState.pendingVerification:
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => PendingOrdersPage(
+                    portfolio: portfolio,
+                    email: widget.email,
+                    broker: rebalanceStatus.broker,
+                    advisor: rebalanceStatus.advisor,
+                  ),
+                ),
+              ).then((_) => _fetchRebalanceStatuses());
+              return;
+            case RebalanceCardState.executed:
+              break; // fall through to default
+          }
+        }
         Navigator.push(
           context,
           MaterialPageRoute(
-            builder: (_) => ModelPortfolioDetailPage(
-              portfolio: portfolio,
-            ),
+            builder: (_) => ModelPortfolioDetailPage(portfolio: portfolio),
           ),
         );
       },
@@ -361,8 +438,11 @@ class _InvestedPortfoliosPageState extends State<InvestedPortfoliosPage> {
         margin: const EdgeInsets.only(bottom: 14),
         padding: const EdgeInsets.all(18),
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: rebalanceStatus?.cardState == RebalanceCardState.executed
+              ? Colors.grey.shade50.withOpacity(0.85)
+              : Colors.white,
           borderRadius: BorderRadius.circular(16),
+          border: borderColor != null ? Border.all(color: borderColor, width: 1.5) : null,
           boxShadow: [
             BoxShadow(
               color: Colors.black.withOpacity(0.05),
@@ -451,8 +531,79 @@ class _InvestedPortfoliosPageState extends State<InvestedPortfoliosPage> {
               Text("Loading...",
                 style: TextStyle(fontSize: 13, color: Colors.grey.shade400)),
             ],
+            // Rebalance status banner
+            if (rebalanceStatus != null) ...[
+              const SizedBox(height: 10),
+              _rebalanceStatusBanner(rebalanceStatus),
+            ],
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _rebalanceStatusBanner(PortfolioRebalanceStatus status) {
+    Color bgColor;
+    Color textColor;
+    Color iconColor;
+    IconData icon;
+    String text;
+
+    switch (status.cardState) {
+      case RebalanceCardState.pending:
+        bgColor = Colors.blue.shade50;
+        textColor = Colors.blue.shade800;
+        iconColor = Colors.blue.shade700;
+        icon = Icons.sync;
+        text = "Rebalance Pending \u2014 Review";
+        break;
+      case RebalanceCardState.executed:
+        bgColor = Colors.grey.shade100;
+        textColor = Colors.grey.shade600;
+        iconColor = Colors.grey.shade500;
+        icon = Icons.check_circle_outline;
+        text = "No action due";
+        break;
+      case RebalanceCardState.partiallyExecuted:
+        bgColor = Colors.orange.shade50;
+        textColor = Colors.orange.shade800;
+        iconColor = Colors.orange.shade700;
+        icon = Icons.warning_rounded;
+        text = "Partially Executed \u2014 Retry";
+        break;
+      case RebalanceCardState.pendingVerification:
+        bgColor = Colors.amber.shade50;
+        textColor = Colors.amber.shade900;
+        iconColor = Colors.amber.shade700;
+        icon = Icons.hourglass_top;
+        text = "Verifying Order Status...";
+        break;
+      case RebalanceCardState.failed:
+        bgColor = Colors.red.shade50;
+        textColor = Colors.red.shade800;
+        iconColor = Colors.red.shade700;
+        icon = Icons.error_outline;
+        text = "Action Required";
+        break;
+    }
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: bgColor,
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, size: 16, color: iconColor),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(text,
+              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: textColor)),
+          ),
+          if (status.cardState != RebalanceCardState.executed)
+            Icon(Icons.arrow_forward_ios_rounded, size: 12, color: textColor.withOpacity(0.6)),
+        ],
       ),
     );
   }

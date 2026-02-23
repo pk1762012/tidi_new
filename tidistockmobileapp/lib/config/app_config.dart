@@ -8,7 +8,7 @@ enum AdvisoryPortfolioMode { smallcase, modelPortfolio }
 class AppConfig {
   // ── Advisory tab third card ──────────────────────────────────────────────
   static const AdvisoryPortfolioMode advisoryMode =
-      AdvisoryPortfolioMode.smallcase;
+      AdvisoryPortfolioMode.modelPortfolio;
 
   /// Smallcase gateway URL used when [advisoryMode] == [AdvisoryPortfolioMode.smallcase]
   static const String smallcaseUrl = 'https://tidiwealth.smallcase.com/';

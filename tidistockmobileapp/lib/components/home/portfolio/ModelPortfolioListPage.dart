@@ -95,7 +95,11 @@ class _ModelPortfolioListPageState extends State<ModelPortfolioListPage>
     }
 
     try {
-      final pending = await RebalanceStatusService.fetchPendingRebalances(userEmail!);
+      final connectedBroker = await RebalanceStatusService.fetchConnectedBrokerName(userEmail!);
+      final pending = await RebalanceStatusService.fetchPendingRebalances(
+        userEmail!,
+        connectedBroker: connectedBroker,
+      );
       if (mounted) {
         setState(() {
           _pendingRebalances = pending.map((p) => <String, dynamic>{

@@ -114,7 +114,11 @@ class _PortfolioSummaryCardState extends State<PortfolioSummaryCard> {
 
   Future<void> _fetchPendingRebalances() async {
     try {
-      final pending = await RebalanceStatusService.fetchPendingRebalances(widget.email);
+      final connectedBroker = await RebalanceStatusService.fetchConnectedBrokerName(widget.email);
+      final pending = await RebalanceStatusService.fetchPendingRebalances(
+        widget.email,
+        connectedBroker: connectedBroker,
+      );
       if (mounted) setState(() => _pendingRebalances = pending);
     } catch (e) {
       debugPrint('[PortfolioSummaryCard] fetchRebalances error: $e');
