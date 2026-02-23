@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:tidistockmobileapp/models/broker_connection.dart';
 import 'package:tidistockmobileapp/models/order_result.dart';
 import 'package:tidistockmobileapp/service/AqApiService.dart';
@@ -166,8 +167,10 @@ class OrderExecutionService {
         debugPrint('[OrderExecution] updateZerodhaReco failed (non-fatal): $e');
       }
 
-      // Company API key for publisher login
-      final zerodhaApiKey = apiKey;
+      // Company API key for publisher login — fall back to .env if not in broker record
+      final zerodhaApiKey = apiKey.isNotEmpty
+          ? apiKey
+          : (dotenv.env['ZERODHA_API_KEY'] ?? dotenv.env['REACT_APP_ZERODHA_API_KEY'] ?? '');
 
       throw ZerodhaBasketRequiredException(
         apiKey: zerodhaApiKey,

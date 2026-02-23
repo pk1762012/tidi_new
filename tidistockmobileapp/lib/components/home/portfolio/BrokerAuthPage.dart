@@ -336,6 +336,10 @@ class _BrokerAuthPageState extends State<BrokerAuthPage> {
   Future<void> _handleZerodhaCallback(String requestToken) async {
     debugPrint('[BrokerAuth:Zerodha] exchanging request_token...');
 
+    // Company-level Zerodha API key (needed for Kite basket orders)
+    final zerodhaApiKey = dotenv.env['ZERODHA_API_KEY'] ??
+        dotenv.env['REACT_APP_ZERODHA_API_KEY'] ?? '';
+
     final tokenResp = await AqApiService.instance.exchangeZerodhaToken(
       requestToken: requestToken,
     );
@@ -354,7 +358,10 @@ class _BrokerAuthPageState extends State<BrokerAuthPage> {
         await AqApiService.instance.connectCredentialBroker(
           uid: uid,
           userBroker: 'Zerodha',
-          credentials: {'jwtToken': accessToken ?? requestToken},
+          credentials: {
+            'jwtToken': accessToken ?? requestToken,
+            'apiKey': zerodhaApiKey,
+          },
         );
       }
 
@@ -365,6 +372,7 @@ class _BrokerAuthPageState extends State<BrokerAuthPage> {
         brokerData: {
           'jwtToken': accessToken ?? requestToken,
           'request_token': requestToken,
+          'apiKey': zerodhaApiKey,
           'status': 'connected',
         },
       );
@@ -378,6 +386,7 @@ class _BrokerAuthPageState extends State<BrokerAuthPage> {
         broker: 'Zerodha',
         brokerData: {
           'request_token': requestToken,
+          'apiKey': zerodhaApiKey,
           'status': 'connected',
         },
       );
