@@ -576,14 +576,87 @@ class AqApiService {
     );
   }
 
-  // ── Zerodha DDPI / EDIS Auth ────────────────────────────────────
-  /// POST ccxt/zerodha/auth-sell — initiates DDPI/TPIN sell authorization.
+  // ── EDIS / DDPI / TPIN Sell Authorization ───────────────────────
+
+  /// Zerodha: POST ccxt/zerodha/auth-sell — initiates DDPI/TPIN sell authorization.
   /// Returns { status: 0, auth_url: "https://..." } on success.
   Future<http.Response> zerodhaAuthSell({required String accessToken}) async {
     return http.post(
       Uri.parse('${ccxtUrl}zerodha/auth-sell'),
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode({'accessToken': accessToken}),
+    );
+  }
+
+  /// Dhan: POST ccxt/dhan/generate-tpin — generates TPIN for CDSL authorization.
+  Future<http.Response> dhanGenerateTpin({
+    required String clientId,
+    required String accessToken,
+  }) async {
+    return http.post(
+      Uri.parse('${ccxtUrl}dhan/generate-tpin'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({'clientId': clientId, 'accessToken': accessToken}),
+    );
+  }
+
+  /// Dhan: POST ccxt/dhan/enter-tpin — submits TPIN and gets EDIS HTML form.
+  /// Returns { status: 0, data: { edisFormHtml: "..." } }
+  Future<http.Response> dhanEnterTpin({
+    required String clientId,
+    required String accessToken,
+    required String isin,
+    required String symbol,
+    required String exchange,
+  }) async {
+    return http.post(
+      Uri.parse('${ccxtUrl}dhan/enter-tpin'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({
+        'clientId': clientId,
+        'accessToken': accessToken,
+        'isin': isin,
+        'symbol': symbol,
+        'exchange': exchange,
+      }),
+    );
+  }
+
+  /// Fyers: POST ccxt/fyers/tpin — generates TPIN for CDSL authorization.
+  Future<http.Response> fyersGenerateTpin({
+    required String clientId,
+    required String accessToken,
+  }) async {
+    return http.post(
+      Uri.parse('${ccxtUrl}fyers/tpin'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({'clientId': clientId, 'accessToken': accessToken}),
+    );
+  }
+
+  /// Fyers: POST ccxt/fyers/submit-holdings — submits holdings for CDSL authorization.
+  /// Returns { status: 0, data: "<html>...</html>" }
+  Future<http.Response> fyersSubmitHoldings({
+    required String clientId,
+    required String accessToken,
+  }) async {
+    return http.post(
+      Uri.parse('${ccxtUrl}fyers/submit-holdings'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({'clientId': clientId, 'accessToken': accessToken}),
+    );
+  }
+
+  /// Angel One: POST ccxt/angelone/verify-dis — checks EDIS status and gets CDSL form data.
+  /// Returns { status: 0, edis: true/false, data: { DPId, ReqId, TransDtls } }
+  Future<http.Response> angelOneVerifyDis({
+    required String clientId,
+    required String jwtToken,
+  }) async {
+    return http.post(
+      Uri.parse('${ccxtUrl}angelone/verify-dis'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({'clientId': clientId, 'jwtToken': jwtToken}),
     );
   }
 

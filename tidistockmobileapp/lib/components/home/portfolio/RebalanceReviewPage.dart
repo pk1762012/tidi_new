@@ -288,38 +288,39 @@ class _RebalanceReviewPageState extends State<RebalanceReviewPage> {
       }
     }
 
-    // --- DDPI / EDIS check for Zerodha sell orders ---
+    // --- EDIS / DDPI / TPIN check for all brokers with sell orders ---
     final hasSellOrdersAfterFilter = orders.any((o) => o['transactionType'] == 'SELL');
-    if (connectedBroker.broker.toLowerCase() == 'zerodha' && hasSellOrdersAfterFilter) {
+    final brokerLower = connectedBroker.broker.toLowerCase();
+    // DummyBroker doesn't need real EDIS authorization
+    final needsEdisCheck = hasSellOrdersAfterFilter && brokerLower != 'dummybroker';
+
+    if (needsEdisCheck) {
       final canSell = connectedBroker.isAuthorizedForSell ||
           connectedBroker.ddpiEnabled ||
+          connectedBroker.tpinEnabled ||
           (connectedBroker.ddpiStatus != null &&
               ['physical', 'ddpi'].contains(connectedBroker.ddpiStatus!.toLowerCase()));
 
       if (!canSell) {
-        final accessToken = connectedBroker.jwtToken;
-        if (accessToken == null || accessToken.isEmpty) {
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text("Broker session missing. Please reconnect Zerodha."),
-                backgroundColor: Colors.red,
-              ),
-            );
-          }
-          return;
-        }
-
         if (!mounted) return;
-        final ddpiResult = await Navigator.push<bool>(
+
+        // Collect sell order details for brokers that need ISIN info (Dhan)
+        final sellOrderDetails = orders
+            .where((o) => o['transactionType'] == 'SELL')
+            .toList();
+
+        final edisResult = await Navigator.push<bool>(
           context,
           MaterialPageRoute(
-            builder: (_) => DdpiAuthPage(accessToken: accessToken),
+            builder: (_) => DdpiAuthPage(
+              broker: connectedBroker,
+              sellOrders: sellOrderDetails,
+            ),
           ),
         );
 
-        if (ddpiResult != true) {
-          // User cancelled DDPI auth — abort execution
+        if (edisResult != true) {
+          // User cancelled EDIS auth — abort execution
           return;
         }
         if (!mounted) return;
