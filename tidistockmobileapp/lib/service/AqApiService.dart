@@ -576,6 +576,17 @@ class AqApiService {
     );
   }
 
+  // ── Zerodha DDPI / EDIS Auth ────────────────────────────────────
+  /// POST ccxt/zerodha/auth-sell — initiates DDPI/TPIN sell authorization.
+  /// Returns { status: 0, auth_url: "https://..." } on success.
+  Future<http.Response> zerodhaAuthSell({required String accessToken}) async {
+    return http.post(
+      Uri.parse('${ccxtUrl}zerodha/auth-sell'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({'accessToken': accessToken}),
+    );
+  }
+
   // ---------------------------------------------------------------------------
   // Order APIs
   // ---------------------------------------------------------------------------

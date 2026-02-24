@@ -10,6 +10,7 @@ import 'package:tidistockmobileapp/service/CacheService.dart';
 import 'package:tidistockmobileapp/widgets/customScaffold.dart';
 
 import 'BrokerSelectionPage.dart';
+import 'DdpiAuthPage.dart';
 import 'ExecutionStatusPage.dart';
 
 class RebalanceReviewPage extends StatefulWidget {
@@ -226,10 +227,103 @@ class _RebalanceReviewPageState extends State<RebalanceReviewPage> {
     }
 
     if (orders.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("No trades required for this rebalance.")),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("No trades required for this rebalance.")),
+        );
+      }
       return;
+    }
+
+    // --- Holdings validation: filter sell orders with 0 broker holdings ---
+    final hasSellOrders = orders.any((o) => o['transactionType'] == 'SELL');
+    if (hasSellOrders) {
+      try {
+        final holdingsResp = await AqApiService.instance.getBrokerHoldings(
+          email: widget.email,
+          broker: connectedBroker.broker,
+        );
+        if (holdingsResp.statusCode == 200) {
+          final holdingsData = jsonDecode(holdingsResp.body);
+          final holdingsList = _parseBrokerHoldings(holdingsData);
+
+          final removedSymbols = <String>[];
+          orders.removeWhere((order) {
+            if (order['transactionType'] != 'SELL') return false;
+            final sym = (order['symbol'] ?? '').toString();
+            final held = holdingsList[sym] ?? holdingsList[_normalizeSymbol(sym)] ?? 0;
+            if (held <= 0) {
+              removedSymbols.add(sym);
+              return true;
+            }
+            return false;
+          });
+
+          if (removedSymbols.isNotEmpty && mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(
+                  "Removed ${removedSymbols.length} sell order(s) — not held in ${connectedBroker.broker}: "
+                  "${removedSymbols.join(', ')}",
+                ),
+                duration: const Duration(seconds: 5),
+                backgroundColor: Colors.orange.shade700,
+              ),
+            );
+          }
+        }
+      } catch (e) {
+        debugPrint('[RebalanceReview] Holdings validation error: $e');
+      }
+
+      if (!mounted) return;
+
+      if (orders.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text("No valid trades remaining after holdings check."),
+          ),
+        );
+        return;
+      }
+    }
+
+    // --- DDPI / EDIS check for Zerodha sell orders ---
+    final hasSellOrdersAfterFilter = orders.any((o) => o['transactionType'] == 'SELL');
+    if (connectedBroker.broker.toLowerCase() == 'zerodha' && hasSellOrdersAfterFilter) {
+      final canSell = connectedBroker.isAuthorizedForSell ||
+          connectedBroker.ddpiEnabled ||
+          (connectedBroker.ddpiStatus != null &&
+              ['physical', 'ddpi'].contains(connectedBroker.ddpiStatus!.toLowerCase()));
+
+      if (!canSell) {
+        final accessToken = connectedBroker.jwtToken;
+        if (accessToken == null || accessToken.isEmpty) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text("Broker session missing. Please reconnect Zerodha."),
+                backgroundColor: Colors.red,
+              ),
+            );
+          }
+          return;
+        }
+
+        if (!mounted) return;
+        final ddpiResult = await Navigator.push<bool>(
+          context,
+          MaterialPageRoute(
+            builder: (_) => DdpiAuthPage(accessToken: accessToken),
+          ),
+        );
+
+        if (ddpiResult != true) {
+          // User cancelled DDPI auth — abort execution
+          return;
+        }
+        if (!mounted) return;
+      }
     }
 
     // Resolve modelId from latest rebalance history
@@ -330,6 +424,43 @@ class _RebalanceReviewPageState extends State<RebalanceReviewPage> {
         ],
       ),
     );
+  }
+
+  /// Parse broker holdings response into a symbol → quantity map.
+  Map<String, double> _parseBrokerHoldings(dynamic data) {
+    final holdings = <String, double>{};
+    List<dynamic> list = [];
+
+    if (data is List) {
+      list = data;
+    } else if (data is Map) {
+      list = data['holdings'] ?? data['data'] ?? data['data']?['holdings'] ?? [];
+      if (list.isEmpty && data['data'] is List) {
+        list = data['data'];
+      }
+    }
+
+    for (final h in list) {
+      if (h is! Map) continue;
+      final symbol = (h['tradingsymbol'] ?? h['tradingSymbol'] ?? h['symbol'] ?? '').toString();
+      final qty = (h['quantity'] ?? h['qty'] ?? h['t1_quantity'] ?? 0);
+      final dQty = (qty is num) ? qty.toDouble() : double.tryParse(qty.toString()) ?? 0;
+      if (symbol.isNotEmpty) {
+        holdings[symbol] = (holdings[symbol] ?? 0) + dQty;
+        // Also store normalized version
+        holdings[_normalizeSymbol(symbol)] = (holdings[_normalizeSymbol(symbol)] ?? 0) + dQty;
+      }
+    }
+    return holdings;
+  }
+
+  /// Normalize a trading symbol: strip exchange suffixes like -EQ, .NS etc.
+  String _normalizeSymbol(String symbol) {
+    return symbol
+        .replaceAll(RegExp(r'[-.]EQ$', caseSensitive: false), '')
+        .replaceAll(RegExp(r'\.NS$', caseSensitive: false), '')
+        .replaceAll(RegExp(r'\.BSE$', caseSensitive: false), '')
+        .trim();
   }
 
   @override

@@ -275,10 +275,15 @@ class _ExecutionStatusPageState extends State<ExecutionStatusPage> {
   }
 
   bool _isZerodhaSuccessUrl(String url) {
+    final advisorSubdomain = AqApiService.instance.advisorSubdomain;
     return url.contains('success') ||
         url.contains('completed') ||
         url.contains('status=success') ||
-        url.contains('broker-callback');
+        url.contains('broker-callback') ||
+        url.contains('callback_url') ||
+        url.contains('postback') ||
+        url.contains('connect/finish') ||
+        (advisorSubdomain.isNotEmpty && url.contains(advisorSubdomain));
   }
 
   Future<void> _handleZerodhaBasketSuccess() async {
@@ -393,6 +398,8 @@ class _ExecutionStatusPageState extends State<ExecutionStatusPage> {
           _state = 'done';
           completedCount = widget.orders.length;
         });
+        // Schedule delayed status poll to get actual order statuses from broker
+        _scheduleStatusPoll();
       }
     } catch (e) {
       debugPrint('[ExecutionStatus:Zerodha] post-basket error: $e');
@@ -469,7 +476,49 @@ class _ExecutionStatusPageState extends State<ExecutionStatusPage> {
         displayActions: false,
         imageUrl: null,
         menu: "Place Orders — Zerodha",
-        child: WebViewWidget(controller: _zerodhaWebController!),
+        child: Column(
+          children: [
+            Expanded(
+              child: WebViewWidget(controller: _zerodhaWebController!),
+            ),
+            Container(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.08),
+                    blurRadius: 10,
+                    offset: const Offset(0, -4),
+                  ),
+                ],
+              ),
+              child: SafeArea(
+                top: false,
+                child: SizedBox(
+                  width: double.infinity,
+                  height: 50,
+                  child: ElevatedButton.icon(
+                    onPressed: _handleZerodhaBasketSuccess,
+                    icon: const Icon(Icons.check_circle_outline, size: 20),
+                    label: const Text(
+                      "I've completed placing orders",
+                      style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
+                    ),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF2E7D32),
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                      elevation: 0,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
       );
     }
 

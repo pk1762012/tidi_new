@@ -17,6 +17,7 @@ class BrokerConnection {
   final bool tpinEnabled;
   final bool isAuthorizedForSell;
   final bool isPrimary;
+  final String? ddpiStatus;
 
   BrokerConnection({
     this.id,
@@ -37,6 +38,7 @@ class BrokerConnection {
     this.tpinEnabled = false,
     this.isAuthorizedForSell = false,
     this.isPrimary = false,
+    this.ddpiStatus,
   });
 
   factory BrokerConnection.fromJson(Map<String, dynamic> json) {
@@ -65,6 +67,7 @@ class BrokerConnection {
       tpinEnabled: json['tpin_enabled'] ?? false,
       isAuthorizedForSell: json['is_authorized_for_sell'] ?? false,
       isPrimary: json['is_primary'] ?? json['isPrimary'] ?? false,
+      ddpiStatus: json['ddpi_status'] as String?,
     );
   }
 
@@ -125,6 +128,7 @@ class BrokerConnection {
           tpinEnabled: conn.tpinEnabled,
           isAuthorizedForSell: conn.isAuthorizedForSell,
           isPrimary: true,
+          ddpiStatus: conn.ddpiStatus,
         );
       }
       return conn;
