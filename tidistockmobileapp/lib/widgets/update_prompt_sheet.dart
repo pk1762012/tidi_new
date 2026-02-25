@@ -1,37 +1,47 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
-import 'package:in_app_update/in_app_update.dart';
 import 'package:tidistockmobileapp/config/app_config.dart';
+import 'package:tidistockmobileapp/service/UpdateCheckService.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 class UpdatePromptSheet {
-  /// Checks Play Store for an available update and shows a bottom sheet if one exists.
-  /// Call this once after HomeScreen has built (via addPostFrameCallback).
+  /// Checks for an update and shows the prompt if one is available.
   static Future<void> checkAndShow(BuildContext context) async {
-    try {
-      final info = await InAppUpdate.checkForUpdate();
-      if (info.updateAvailability != UpdateAvailability.updateAvailable) return;
-      if (!context.mounted) return;
-      _show(context);
-    } catch (_) {
-      // Silently ignore — not on Play Store (debug/test builds) or no network
-    }
+    final result = await UpdateCheckService.checkForUpdate();
+    if (!result.updateAvailable) return;
+    if (!context.mounted) return;
+    await _show(context, result.storeUrl!);
   }
 
-  static void _show(BuildContext context) {
-    showModalBottomSheet(
+  /// Shows the update sheet directly from a pre-fetched result.
+  /// Used by SplashScreen which fires the check concurrently with the splash delay.
+  static Future<void> showIfNeeded(
+      BuildContext context, UpdateCheckResult result) async {
+    if (!result.updateAvailable) return;
+    if (!context.mounted) return;
+    await _show(context, result.storeUrl!);
+  }
+
+  static Future<void> _show(BuildContext context, String storeUrl) {
+    return showModalBottomSheet(
       context: context,
       isDismissible: !AppConfig.forceUpdate,
       enableDrag: !AppConfig.forceUpdate,
       backgroundColor: Colors.transparent,
-      builder: (_) => const _UpdateSheet(),
+      builder: (_) => _UpdateSheet(storeUrl: storeUrl),
     );
   }
 }
 
 class _UpdateSheet extends StatelessWidget {
-  const _UpdateSheet();
+  final String storeUrl;
+  const _UpdateSheet({required this.storeUrl});
 
   @override
   Widget build(BuildContext context) {
+    final storeName = Platform.isIOS ? 'App Store' : 'Play Store';
+
     return Container(
       decoration: const BoxDecoration(
         color: Colors.white,
@@ -80,7 +90,7 @@ class _UpdateSheet extends StatelessWidget {
 
           // Description
           Text(
-            'A newer version of TIDI Stock is available on the Play Store with improvements and new features.',
+            'A newer version of TIDI Stock is available on the $storeName with improvements and new features.',
             textAlign: TextAlign.center,
             style: TextStyle(
               fontSize: 14,
@@ -94,9 +104,12 @@ class _UpdateSheet extends StatelessWidget {
           SizedBox(
             width: double.infinity,
             child: ElevatedButton(
-              onPressed: () {
-                Navigator.pop(context);
-                InAppUpdate.performImmediateUpdate();
+              onPressed: () async {
+                final uri = Uri.parse(storeUrl);
+                if (await canLaunchUrl(uri)) {
+                  await launchUrl(uri, mode: LaunchMode.externalApplication);
+                }
+                if (context.mounted) Navigator.pop(context);
               },
               style: ElevatedButton.styleFrom(
                 backgroundColor: const Color(0xFF6A1B9A),

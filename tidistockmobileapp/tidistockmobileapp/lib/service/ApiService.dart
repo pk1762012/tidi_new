@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:image/image.dart' as img;
@@ -283,22 +284,28 @@ class ApiService {
   }
 
   void updateDeviceDetails() async {
-    String? token = await secureStorage.read(key: 'access_token');
-    String? fcmToken = await FirebaseMessaging.instance.getToken();
-    final String topic = dotenv.env['FIREBASE_TOPIC'] ?? 'test_all';
-    FirebaseMessaging.instance.subscribeToTopic(topic);
+    try {
+      String? token = await secureStorage.read(key: 'access_token');
+      String? fcmToken = await FirebaseMessaging.instance
+          .getToken()
+          .timeout(const Duration(seconds: 10), onTimeout: () => null);
+      final String topic = dotenv.env['FIREBASE_TOPIC'] ?? 'test_all';
+      FirebaseMessaging.instance.subscribeToTopic(topic);
 
-    http.post(
-        Uri.parse(apiUrl + 'api/user/update_device_details'),
-        headers: {
-          'Authorization': 'Bearer $token',
-          'Content-Type': 'application/json',
-        },
-        body: jsonEncode({
-          "fcmToken": fcmToken,
-          "deviceType": Platform.isIOS ? "IOS" : "ANDROID"
-        })
-    );
+      http.post(
+          Uri.parse(apiUrl + 'api/user/update_device_details'),
+          headers: {
+            'Authorization': 'Bearer $token',
+            'Content-Type': 'application/json',
+          },
+          body: jsonEncode({
+            "fcmToken": fcmToken,
+            "deviceType": Platform.isIOS ? "IOS" : "ANDROID"
+          })
+      );
+    } catch (e) {
+      debugPrint('[updateDeviceDetails] error: $e');
+    }
   }
 
   Future<http.StreamedResponse> uploadProfilePicture(imageFile) async {

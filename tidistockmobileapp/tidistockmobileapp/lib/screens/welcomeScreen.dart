@@ -299,9 +299,9 @@ class _WelcomeScreenState extends State<WelcomeScreen>
                             var responseData = jsonDecode(response.body);
                             String accessToken = responseData['data']['token'];
 
-                            secureStorage.deleteAll();
+                            await secureStorage.deleteAll();
                             await secureStorage.write(key: 'access_token', value: accessToken);
-                            apiService.updateDeviceDetails();
+                            apiService.updateDeviceDetails(); // fire-and-forget
 
                             setStatePopup(() => verifying = false);
                             timer?.cancel();

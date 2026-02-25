@@ -6,7 +6,9 @@ import '../../screens/homeScreen.dart';
 import '../../screens/welcomeScreen.dart';
 import '../../service/ApiService.dart';
 import '../../service/CacheService.dart';
+import '../../service/UpdateCheckService.dart';
 import '../../service/UserIdentityService.dart';
+import '../../widgets/update_prompt_sheet.dart';
 
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
@@ -27,9 +29,20 @@ class _SplashScreenState extends State<SplashScreen> {
   void preloadNextScreen() async {
     String? accessToken = await storage.read(key: 'access_token');
 
+    // Fire update check concurrently with splash delay (runs in parallel)
+    final updateCheck = UpdateCheckService.checkForUpdate();
+
     if (accessToken == null || accessToken.isEmpty) {
       await Future.delayed(const Duration(seconds: 2));
       if (!mounted) return;
+
+      // Show update prompt if available (blocks until user taps)
+      final updateResult = await updateCheck;
+      if (updateResult.updateAvailable && mounted) {
+        await UpdatePromptSheet.showIfNeeded(context, updateResult);
+      }
+      if (!mounted) return;
+
       _navigateTo(WelcomeScreen());
       return;
     }
@@ -40,6 +53,13 @@ class _SplashScreenState extends State<SplashScreen> {
 
     // Wait for minimum splash duration (no-op if already elapsed)
     await splashDelay;
+    if (!mounted) return;
+
+    // Show update prompt if available (blocks until user taps)
+    final updateResult = await updateCheck;
+    if (updateResult.updateAvailable && mounted) {
+      await UpdatePromptSheet.showIfNeeded(context, updateResult);
+    }
     if (!mounted) return;
 
     if (result == _FetchResult.unauthorized) {
