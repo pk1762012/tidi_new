@@ -301,59 +301,62 @@ class _WelcomeScreenState extends State<WelcomeScreen>
 
                           setStatePopup(() => verifying = true);
 
-                          final response = await apiService.verifyOtp(phone, otp);
+                          try {
+                            final response = await apiService.verifyOtp(phone, otp);
 
-                          if (response.statusCode == 202) {
-                            var responseData = jsonDecode(response.body);
-                            String accessToken = responseData['data']['token'];
+                            if (response.statusCode == 202) {
+                              var responseData = jsonDecode(response.body);
+                              String accessToken = responseData['data']['token'];
 
-                            await secureStorage.deleteAll();
-                            await secureStorage.write(key: 'access_token', value: accessToken);
-                            // Store phone early so SplashScreen can generate
-                            // a synthetic email if the backend doesn't return one.
-                            await secureStorage.write(key: 'phone_number', value: phone);
-                            ApiService.invalidateTokenCache();
-                            apiService.updateDeviceDetails();
+                              await secureStorage.deleteAll();
+                              await secureStorage.write(key: 'access_token', value: accessToken);
+                              // Store phone early so SplashScreen can generate
+                              // a synthetic email if the backend doesn't return one.
+                              await secureStorage.write(key: 'phone_number', value: phone);
+                              ApiService.invalidateTokenCache();
+                              apiService.updateDeviceDetails();
 
-                            setStatePopup(() => verifying = false);
-                            timer?.cancel();
-                            Navigator.pop(dialogCtx);
+                              setStatePopup(() => verifying = false);
+                              timer?.cancel();
+                              Navigator.pop(dialogCtx);
 
-                            /*ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(content: Text("OTP Verified Successfully!")),
-                            );*/
-
-                            Navigator.pushAndRemoveUntil(
-                              this.context,
-                              MaterialPageRoute(
-                                builder: (context) => DisclaimerScreen(
-                                  onAccept: () {
-                                    Navigator.pushAndRemoveUntil(
-                                      context,
-                                      MaterialPageRoute(
-                                        builder: (context) => SplashScreen(),
-                                      ),
-                                          (route) => false, // Remove all previous routes
-                                    );
-                                  },
-                                  onDecline: () async {
-                                    await secureStorage.deleteAll();
-                                    Navigator.pushAndRemoveUntil(
-                                      context,
-                                      MaterialPageRoute(builder: (context) => WelcomeScreen()),
-                                          (route) => false,
-                                    );
-                                  },
+                              Navigator.pushAndRemoveUntil(
+                                this.context,
+                                MaterialPageRoute(
+                                  builder: (context) => DisclaimerScreen(
+                                    onAccept: () {
+                                      Navigator.pushAndRemoveUntil(
+                                        context,
+                                        MaterialPageRoute(
+                                          builder: (context) => SplashScreen(),
+                                        ),
+                                            (route) => false,
+                                      );
+                                    },
+                                    onDecline: () async {
+                                      await secureStorage.deleteAll();
+                                      Navigator.pushAndRemoveUntil(
+                                        context,
+                                        MaterialPageRoute(builder: (context) => WelcomeScreen()),
+                                            (route) => false,
+                                      );
+                                    },
+                                  ),
                                 ),
-                              ),
-                                  (route) => false,
-                            );
-                          } else {
-                            var responseData = jsonDecode(response.body);
-                            String message = responseData['message'];
+                                    (route) => false,
+                              );
+                            } else {
+                              var responseData = jsonDecode(response.body);
+                              String message = responseData['message'];
+                              setStatePopup(() {
+                                verifying = false;
+                                otpError = message;
+                              });
+                            }
+                          } catch (e) {
                             setStatePopup(() {
                               verifying = false;
-                              otpError = message;
+                              otpError = "Network error. Please try again.";
                             });
                           }
                         },

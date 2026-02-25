@@ -1118,7 +1118,7 @@ class AqApiService {
         'userName': name ?? email.split('@')[0],
         'advisorName': advisorName,
       }),
-    );
+    ).timeout(const Duration(seconds: 10));
   }
 
   /// Create a model_portfolio_user document on ccxt-india
@@ -1162,7 +1162,7 @@ class AqApiService {
       final resp = await http.get(
         Uri.parse('${baseUrl}api/user/find-by-phone/$cleanPhone'),
         headers: _headers(),
-      );
+      ).timeout(const Duration(seconds: 8));
       if (resp.statusCode == 200) {
         final data = jsonDecode(resp.body);
         return data['email'] as String?;
@@ -1191,6 +1191,60 @@ class AqApiService {
       return email;
     }
     return null;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Deferred AQ registration (called after HomeScreen loads)
+  // ---------------------------------------------------------------------------
+
+  static bool _aqRegistrationDone = false;
+
+  /// Ensures the user exists on AQ backend. If the stored email is synthetic,
+  /// first checks if a real AQ email exists for this phone. If not, registers
+  /// the synthetic user on AQ. Safe to call multiple times — runs only once.
+  static Future<void> ensureAqRegistration() async {
+    if (_aqRegistrationDone) return;
+    _aqRegistrationDone = true;
+
+    try {
+      const storage = FlutterSecureStorage();
+      final email = await storage.read(key: 'user_email');
+      final phone = await storage.read(key: 'phone_number');
+
+      if (email == null || phone == null || phone.isEmpty) return;
+
+      // If user already has a real email, nothing to do
+      if (!UserIdentityService.isSyntheticEmail(email)) {
+        debugPrint('[AQ] Real email present, skipping AQ registration');
+        return;
+      }
+
+      // Try to find an existing AQ user by phone
+      final existingEmail = await instance.findEmailByPhone(phone);
+      if (existingEmail != null && existingEmail.isNotEmpty) {
+        await storage.write(key: 'user_email', value: existingEmail);
+        debugPrint('[AQ] Found real AQ email by phone: $existingEmail');
+        return;
+      }
+
+      // Register synthetic user on AQ so subscriptions/lookups work
+      final firstName = await storage.read(key: 'first_name') ?? '';
+      final lastName = await storage.read(key: 'last_name') ?? '';
+      final userName = '$firstName $lastName'.trim();
+      await instance.registerOrUpdateUser(
+        email: email,
+        phone: phone,
+        name: userName.isNotEmpty ? userName : null,
+      ).timeout(const Duration(seconds: 10));
+      debugPrint('[AQ] Registered synthetic user on AQ');
+    } catch (e) {
+      debugPrint('[AQ] ensureAqRegistration failed (non-blocking): $e');
+    }
+  }
+
+  /// Reset the registration flag (call on logout).
+  static void resetAqRegistration() {
+    _aqRegistrationDone = false;
   }
 
   /// Convert pricing tier name to duration in days

@@ -57,6 +57,8 @@ class HomeScreenState extends State<HomeScreen> {
     imageUrl = widget.userData?['profilePicture'];
     currentMenu = _menuMap[currentIndex];
     _loadRebalanceAlerts();
+    // Ensure AQ user exists in the background (non-blocking)
+    AqApiService.ensureAqRegistration();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       UpdatePromptSheet.checkAndShow(context);
     });

@@ -398,6 +398,7 @@ class ProfilePageState extends State<ProfilePage>
 
   Future<void> logout() async {
     ApiService.invalidateTokenCache();
+    AqApiService.resetAqRegistration();
     await CacheService.instance.clearAll();
     await secureStorage.deleteAll();
     if (!mounted) return;
