@@ -587,7 +587,10 @@ class _InvestInPlanSheetState extends State<InvestInPlanSheet>
     setState(() => _loading = true);
 
     try {
-      final strategyId = widget.portfolio.strategyId ?? widget.portfolio.id;
+      // strategyId for _saveLocalSubscription — prefer the AQ strategyId, fall back to id
+      final strategyId = (widget.portfolio.strategyId?.isNotEmpty == true)
+          ? widget.portfolio.strategyId!
+          : widget.portfolio.id;
       final email = _emailController.text.trim();
       final name = _nameController.text.trim();
       final phone = _phoneController.text.trim();
@@ -602,11 +605,28 @@ class _InvestInPlanSheetState extends State<InvestInPlanSheet>
 
       // PRIMARY: Use tidi_Front_back API (resolves master email internally from user_id in JWT)
       // This ensures subscription is linked to the correct user regardless of email entered
-      final portfolioId = widget.portfolio.id ?? widget.portfolio.strategyId;
+      // Note: portfolio.id is non-nullable String (defaults to '') so we must check isEmpty
+      final portfolioId = widget.portfolio.id.isNotEmpty
+          ? widget.portfolio.id
+          : (widget.portfolio.strategyId ?? '');
       debugPrint('[InvestInPlanSheet] Using portfolioId for API: $portfolioId');
+      if (portfolioId.isEmpty) {
+        debugPrint('[InvestInPlanSheet] ERROR: No valid portfolioId found, cannot subscribe');
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Unable to subscribe: portfolio ID not found. Please try again.'),
+              backgroundColor: Colors.red,
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+          setState(() => _loading = false);
+        }
+        return;
+      }
       final response = await ApiService().subscribeToModelPortfolio(
-        strategyId: portfolioId ?? '',
-        planId: portfolioId ?? '',
+        strategyId: portfolioId,
+        planId: portfolioId,
       ).timeout(const Duration(seconds: 30));
 
       debugPrint('[InvestInPlanSheet] TIDI subscribe response: ${response.statusCode} ${response.body}');

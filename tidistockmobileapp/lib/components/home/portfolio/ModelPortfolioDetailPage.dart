@@ -21,11 +21,11 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:tidistockmobileapp/models/broker_connection.dart';
 
 import 'BrokerSelectionPage.dart';
+import 'CurrentHoldingsPreviewPage.dart';
 import 'InvestInPlanSheet.dart';
 import 'InvestmentModal.dart';
 import 'PendingOrdersPage.dart';
 import 'PortfolioHoldingsPage.dart';
-import 'RebalanceReviewPage.dart';
 
 class ModelPortfolioDetailPage extends StatefulWidget {
   final ModelPortfolio portfolio;
@@ -217,12 +217,14 @@ class _ModelPortfolioDetailPageState extends State<ModelPortfolioDetailPage>
         debugPrint('[DetailPage] tidi strategies count=${strategies.length}');
         for (final s in strategies) {
           if (s is Map) {
-            final id = s['_id']?.toString();
+            final id = s['_id']?.toString() ?? '';
             final modelName = (s['model_name']?.toString() ?? s['name']?.toString() ?? '').toLowerCase().trim();
             debugPrint('[DetailPage] checking tidi strategy: id=$id, model_name=$modelName');
-            if (id == portfolio.strategyId ||
-                id == portfolio.id ||
-                modelName == portfolio.modelName.toLowerCase().trim()) {
+            // Only match by ID if both are non-empty (avoids false positive on empty '')
+            final idMatch = id.isNotEmpty && (
+                id == portfolio.strategyId ||
+                (portfolio.id.isNotEmpty && id == portfolio.id));
+            if (idMatch || modelName == portfolio.modelName.toLowerCase().trim()) {
               found = true;
               break;
             }
@@ -247,11 +249,12 @@ class _ModelPortfolioDetailPageState extends State<ModelPortfolioDetailPage>
                   : []);
           for (final s in strategies) {
             if (s is Map) {
-              final id = s['_id']?.toString();
+              final id = s['_id']?.toString() ?? '';
               final modelName = (s['model_name']?.toString() ?? '').toLowerCase().trim();
-              if (id == portfolio.strategyId ||
-                  id == portfolio.id ||
-                  modelName == portfolio.modelName.toLowerCase().trim()) {
+              final idMatch = id.isNotEmpty && (
+                  id == portfolio.strategyId ||
+                  (portfolio.id.isNotEmpty && id == portfolio.id));
+              if (idMatch || modelName == portfolio.modelName.toLowerCase().trim()) {
                 found = true;
                 break;
               }
@@ -895,7 +898,7 @@ class _ModelPortfolioDetailPageState extends State<ModelPortfolioDetailPage>
           Navigator.push(
             context,
             MaterialPageRoute(
-              builder: (_) => RebalanceReviewPage(
+              builder: (_) => CurrentHoldingsPreviewPage(
                 portfolio: portfolio,
                 email: userEmail!,
               ),
@@ -2636,7 +2639,7 @@ class _ModelPortfolioDetailPageState extends State<ModelPortfolioDetailPage>
           Navigator.push(
             context,
             MaterialPageRoute(
-              builder: (_) => RebalanceReviewPage(
+              builder: (_) => CurrentHoldingsPreviewPage(
                 portfolio: portfolio,
                 email: userEmail!,
               ),
@@ -2653,7 +2656,7 @@ class _ModelPortfolioDetailPageState extends State<ModelPortfolioDetailPage>
           Navigator.push(
             context,
             MaterialPageRoute(
-              builder: (_) => RebalanceReviewPage(
+              builder: (_) => CurrentHoldingsPreviewPage(
                 portfolio: portfolio,
                 email: userEmail!,
               ),

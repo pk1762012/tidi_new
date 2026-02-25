@@ -80,8 +80,14 @@ class _PortfolioHoldingsPageState extends State<PortfolioHoldingsPage> {
   }
 
   void _parseHoldings(Map<String, dynamic> subData) {
-    final userNetPf = subData['user_net_pf_model'] ?? [];
     final List<PortfolioHolding> parsed = [];
+
+    // Support multiple possible response shapes from the backend
+    final userNetPf = subData['user_net_pf_model'] ??
+        subData['net_pf_model'] ??
+        subData['holdings'] ??
+        subData['stocks'] ??
+        [];
 
     if (userNetPf is List && userNetPf.isNotEmpty) {
       // The latest entry contains current holdings
@@ -91,12 +97,26 @@ class _PortfolioHoldingsPageState extends State<PortfolioHoldingsPage> {
       if (latest is List) {
         stockList = latest;
       } else if (latest is Map) {
-        stockList = latest['stocks'] ?? latest['holdings'] ?? [];
+        stockList = latest['stocks'] ??
+            latest['holdings'] ??
+            latest['stock_list'] ??
+            latest['order_results'] ??
+            [];
       }
 
       for (final stock in stockList) {
         if (stock is Map<String, dynamic>) {
           parsed.add(PortfolioHolding.fromJson(stock));
+        }
+      }
+    } else if (userNetPf is Map) {
+      // Some backends return a map with a list inside
+      final list = userNetPf['stocks'] ?? userNetPf['holdings'] ?? [];
+      if (list is List) {
+        for (final stock in list) {
+          if (stock is Map<String, dynamic>) {
+            parsed.add(PortfolioHolding.fromJson(stock));
+          }
         }
       }
     }

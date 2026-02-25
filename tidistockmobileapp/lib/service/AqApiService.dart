@@ -578,6 +578,27 @@ class AqApiService {
 
   // ── EDIS / DDPI / TPIN Sell Authorization ───────────────────────
 
+  /// Zerodha: POST ccxt/zerodha/save-ddpi-status — refreshes DDPI/TPIN status
+  /// from Zerodha API and saves the result to the DB.
+  /// Returns updated { is_authorized_for_sell, ddpi_status } on success.
+  Future<http.Response> zerodhaSaveDdpiStatus({
+    required String email,
+    required String apiKey,
+    required String secretKey,
+    required String accessToken,
+  }) async {
+    return http.post(
+      Uri.parse('${ccxtUrl}zerodha/save-ddpi-status'),
+      headers: _headers(),
+      body: jsonEncode({
+        'userEmail': email,
+        'apiKey': apiKey,
+        'secretKey': secretKey,
+        'accessToken': accessToken,
+      }),
+    );
+  }
+
   /// Zerodha: POST ccxt/zerodha/auth-sell — initiates DDPI/TPIN sell authorization.
   /// Returns { status: 0, auth_url: "https://..." } on success.
   Future<http.Response> zerodhaAuthSell({required String accessToken}) async {

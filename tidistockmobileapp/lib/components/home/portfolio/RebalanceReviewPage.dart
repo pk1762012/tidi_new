@@ -76,8 +76,11 @@ class _RebalanceReviewPageState extends State<RebalanceReviewPage> {
       }
     }
 
-    // Also try to get user's actual current holdings
+    // Also try to get user's actual current holdings.
+    // holdingsFetched = true only when the API returned valid data, so we
+    // can safely trust qty == 0 means "not held" (not just "API failed").
     Map<String, double> currentHoldings = {};
+    bool holdingsFetched = false;
     try {
       final response = await AqApiService.instance.getSubscriptionRawAmount(
         email: widget.email,
@@ -100,6 +103,7 @@ class _RebalanceReviewPageState extends State<RebalanceReviewPage> {
                 if (symbol.isNotEmpty) currentHoldings[symbol] = qty;
               }
             }
+            holdingsFetched = true;
           }
         }
       }
@@ -156,7 +160,13 @@ class _RebalanceReviewPageState extends State<RebalanceReviewPage> {
         final weightDiff = newWeight - oldWeight;
 
         _ActionType type;
-        if (weightDiff > 0.01) {
+        // BUG FIX: If we have reliable holdings data and the user holds
+        // zero quantity of this stock, they never executed a previous
+        // rebalance that included it. Force BUY even if the advisor weight
+        // hasn't changed — the user still needs to acquire the stock.
+        if (holdingsFetched && currentQty <= 0 && newWeight > 0) {
+          type = _ActionType.buy;
+        } else if (weightDiff > 0.01) {
           type = _ActionType.buy;
         } else if (weightDiff < -0.01) {
           type = _ActionType.sell;
@@ -209,11 +219,16 @@ class _RebalanceReviewPageState extends State<RebalanceReviewPage> {
       }
     }
 
-    // Generate orders: sells first, then buys
+    // Generate orders: sells first, then buys.
+    // BUG FIX: Skip SELL orders where currentQty <= 0. We have no holdings to
+    // sell, so sending such orders would cause broker rejection (CDSL error).
+    // This is a pre-filter guard independent of the live holdings API call below.
     final orders = <Map<String, dynamic>>[];
 
     for (final action in actions) {
       if (action.type == _ActionType.hold) continue;
+
+      if (action.type == _ActionType.sell && action.currentQty <= 0) continue;
 
       orders.add({
         'symbol': action.symbol,
@@ -271,6 +286,12 @@ class _RebalanceReviewPageState extends State<RebalanceReviewPage> {
               ),
             );
           }
+        } else {
+          // BUG FIX: Non-200 from holdings API → log warning but don't block.
+          // The qty=0 guard above already filtered the worst cases.
+          debugPrint(
+              '[RebalanceReview] Holdings API returned ${holdingsResp.statusCode} '
+              'for ${connectedBroker.broker} — relying on qty=0 pre-filter only.');
         }
       } catch (e) {
         debugPrint('[RebalanceReview] Holdings validation error: $e');
@@ -295,11 +316,49 @@ class _RebalanceReviewPageState extends State<RebalanceReviewPage> {
     final needsEdisCheck = hasSellOrdersAfterFilter && brokerLower != 'dummybroker';
 
     if (needsEdisCheck) {
-      final canSell = connectedBroker.isAuthorizedForSell ||
-          connectedBroker.ddpiEnabled ||
-          connectedBroker.tpinEnabled ||
-          (connectedBroker.ddpiStatus != null &&
-              ['physical', 'ddpi'].contains(connectedBroker.ddpiStatus!.toLowerCase()));
+      // Work with a potentially-refreshed broker object.
+      BrokerConnection effectiveBroker = connectedBroker;
+
+      // For Zerodha: call save-ddpi-status so the server updates
+      // is_authorized_for_sell based on today's TPIN session, then re-fetch
+      // fresh broker data before deciding whether to show the auth page.
+      if (brokerLower == 'zerodha' &&
+          connectedBroker.apiKey != null &&
+          connectedBroker.secretKey != null &&
+          connectedBroker.jwtToken != null) {
+        try {
+          await AqApiService.instance.zerodhaSaveDdpiStatus(
+            email: widget.email,
+            apiKey: connectedBroker.apiKey!,
+            secretKey: connectedBroker.secretKey!,
+            accessToken: connectedBroker.jwtToken!,
+          );
+          // Re-fetch so we get the freshly-updated is_authorized_for_sell
+          // and ddpi_status from the DB.
+          final freshBroker = await _checkBrokerConnection();
+          if (freshBroker != null) effectiveBroker = freshBroker;
+        } catch (e) {
+          debugPrint('[RebalanceReview] zerodhaSaveDdpiStatus error: $e');
+          // Fall through with existing broker data — don't block the user.
+        }
+      }
+
+      // Permanent DDPI (physical demat or DDPI POA) never expires.
+      final hasPermanentDdpi = effectiveBroker.ddpiEnabled ||
+          (effectiveBroker.ddpiStatus != null &&
+              ['physical', 'ddpi'].contains(effectiveBroker.ddpiStatus!.toLowerCase()));
+
+      // TPIN authorization is valid for the entire trading day.
+      // We trust the fresh is_authorized_for_sell returned by the server
+      // after refreshing DDPI status above.
+      final bool canSell;
+      if (brokerLower == 'zerodha') {
+        canSell = hasPermanentDdpi || effectiveBroker.isAuthorizedForSell;
+      } else {
+        // All other brokers always route through DdpiAuthPage which handles
+        // broker-specific EDIS / TPIN flows (Angel One, Dhan, Fyers, etc.)
+        canSell = false;
+      }
 
       if (!canSell) {
         if (!mounted) return;
@@ -313,7 +372,7 @@ class _RebalanceReviewPageState extends State<RebalanceReviewPage> {
           context,
           MaterialPageRoute(
             builder: (_) => DdpiAuthPage(
-              broker: connectedBroker,
+              broker: effectiveBroker,
               sellOrders: sellOrderDetails,
             ),
           ),
