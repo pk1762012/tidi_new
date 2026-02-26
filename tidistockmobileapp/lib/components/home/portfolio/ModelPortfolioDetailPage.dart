@@ -2523,13 +2523,9 @@ class _ModelPortfolioDetailPageState extends State<ModelPortfolioDetailPage>
 
         if (connected.isNotEmpty) {
           if (connected.length == 1) return connected.first;
-          // Multiple brokers — let user pick (no portfolio = picker mode)
+          // Multiple brokers — let user pick via modal
           if (!mounted) return null;
-          final result = await Navigator.push<BrokerConnection>(
-            context,
-            MaterialPageRoute(
-                builder: (_) => BrokerSelectionPage(email: userEmail!)),
-          );
+          final result = await BrokerSelectionPage.show(context, email: userEmail!);
           return result;
         }
       }
@@ -2537,68 +2533,10 @@ class _ModelPortfolioDetailPageState extends State<ModelPortfolioDetailPage>
       debugPrint('[DetailPage] _ensureBrokerConnected error: $e');
     }
 
-    // No connected broker — show dialog with options
+    // No connected broker — open broker selection modal directly
     if (!mounted) return null;
-    final choice = await _showBrokerChoiceDialog();
-
-    if (choice == 'connect') {
-      if (!mounted) return null;
-      final result = await Navigator.push<BrokerConnection>(
-        context,
-        MaterialPageRoute(
-            builder: (_) => BrokerSelectionPage(email: userEmail!)),
-      );
-      return result;
-    } else if (choice == 'dummy') {
-      return BrokerConnection(broker: 'DummyBroker', status: 'connected');
-    }
-    return null; // cancelled
-  }
-
-  /// Returns 'connect', 'dummy', or null (cancelled).
-  Future<String?> _showBrokerChoiceDialog() {
-    return showDialog<String>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Text("No Broker Connected",
-            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
-        content: Text(
-          "You don't have a broker connected. You can either connect one now, "
-          "or continue without a broker and execute orders manually.",
-          style: TextStyle(fontSize: 14, color: Colors.grey.shade700, height: 1.4),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, null),
-            child: Text("Cancel",
-                style: TextStyle(color: Colors.grey.shade600)),
-          ),
-          OutlinedButton.icon(
-            onPressed: () => Navigator.pop(ctx, 'connect'),
-            icon: const Icon(Icons.account_balance, size: 18),
-            label: const Text("Connect Broker"),
-            style: OutlinedButton.styleFrom(
-              foregroundColor: const Color(0xFF1565C0),
-              side: const BorderSide(color: Color(0xFF1565C0)),
-              shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(10)),
-            ),
-          ),
-          ElevatedButton.icon(
-            onPressed: () => Navigator.pop(ctx, 'dummy'),
-            icon: const Icon(Icons.touch_app, size: 18),
-            label: const Text("Continue Without"),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF2E7D32),
-              foregroundColor: Colors.white,
-              shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(10)),
-            ),
-          ),
-        ],
-      ),
-    );
+    final result = await BrokerSelectionPage.show(context, email: userEmail!);
+    return result;
   }
 
   void _showPlanSelectionSheet() {
@@ -2690,10 +2628,22 @@ class _ModelPortfolioDetailPageState extends State<ModelPortfolioDetailPage>
           Navigator.push(
             context,
             MaterialPageRoute(
-              builder: (_) => InvestmentModal(
+              builder: (_) => CurrentHoldingsPreviewPage(
                 portfolio: portfolio,
                 email: userEmail!,
-                brokerName: broker.broker,
+                proceedLabel: 'Proceed to Invest',
+                onProceed: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => InvestmentModal(
+                        portfolio: portfolio,
+                        email: userEmail!,
+                        brokerName: broker.broker,
+                      ),
+                    ),
+                  );
+                },
               ),
             ),
           );

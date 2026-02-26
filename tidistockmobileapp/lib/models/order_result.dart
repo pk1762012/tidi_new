@@ -25,19 +25,26 @@ class OrderResult {
 
   factory OrderResult.fromJson(Map<String, dynamic> json) {
     return OrderResult(
-      symbol: json['tradingSymbol'] ?? json['symbol'] ?? '',
-      transactionType: json['transactionType'] ?? 'buy',
-      quantity: (json['quantity'] ?? json['tradedQty'] ?? 0).toInt(),
-      price: json['price']?.toDouble() ?? json['tradedPrice']?.toDouble(),
-      orderId: json['orderId'],
+      symbol: json['tradingSymbol'] ?? json['trading_symbol'] ?? json['symbol'] ?? '',
+      transactionType: json['transactionType'] ?? json['transaction_type'] ?? json['type'] ?? 'buy',
+      quantity: (json['quantity'] ?? json['filledQuantity'] ?? json['filled_quantity'] ?? json['tradedQty'] ?? json['qty'] ?? 0).toInt(),
+      price: _safeDouble(json['averageEntryPrice'] ?? json['averagePrice'] ?? json['average_price'] ?? json['avgPrice'] ?? json['avg_price'] ?? json['executedPrice'] ?? json['tradedPrice'] ?? json['price']),
+      orderId: (json['orderId'] ?? json['order_id'] ?? json['uniqueOrderId'] ?? '').toString(),
       // Check all possible status field names returned by different brokers
       status: _parseStatus(
-          json['orderStatus'] ?? json['trade_place_status'] ?? json['status']),
+          json['orderStatus'] ?? json['order_status'] ?? json['trade_place_status'] ?? json['status']),
       exchange: json['exchange'],
-      productType: json['productType'],
-      orderType: json['orderType'],
-      message: json['message'] ?? json['orderStatusMessage'] ?? json['message_aq'],
+      productType: json['productType'] ?? json['product_type'],
+      orderType: json['orderType'] ?? json['order_type'],
+      message: json['message'] ?? json['orderStatusMessage'] ?? json['message_aq'] ?? json['rejectionReason'] ?? json['status_message'],
     );
+  }
+
+  static double? _safeDouble(dynamic value) {
+    if (value == null) return null;
+    if (value is num) return value.toDouble();
+    if (value is String) return double.tryParse(value);
+    return null;
   }
 
   static String _parseStatus(dynamic status) {

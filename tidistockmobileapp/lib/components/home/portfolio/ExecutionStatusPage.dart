@@ -115,13 +115,20 @@ class _ExecutionStatusPageState extends State<ExecutionStatusPage> {
         );
         await Future.delayed(const Duration(seconds: 3));
         if (!mounted) return;
+        final brokerName = OrderExecutionService.instance.lastUsedBrokerName.isNotEmpty
+            ? OrderExecutionService.instance.lastUsedBrokerName
+            : null;
         final response = await AqApiService.instance.getLatestUserPortfolio(
           email: widget.email,
           modelName: _modelName,
+          broker: brokerName,
         );
+        debugPrint('[ExecutionStatus] _scheduleStatusPoll fetch status=${response.statusCode}');
         if (response.statusCode == 200 && mounted) {
           final data = jsonDecode(response.body);
           _updateResultsFromPoll(data);
+        } else {
+          debugPrint('[ExecutionStatus] _scheduleStatusPoll fetch failed: ${response.statusCode} body=${response.body}');
         }
       } catch (e) {
         debugPrint('[ExecutionStatus] _scheduleStatusPoll error: $e');
@@ -132,13 +139,38 @@ class _ExecutionStatusPageState extends State<ExecutionStatusPage> {
   void _updateResultsFromPoll(dynamic data) {
     List<dynamic> orderList = [];
     if (data is Map) {
+      final innerData = data['data'];
+
+      // Direct top-level order_results
       orderList = data['order_results'] ??
           data['orderResults'] ??
-          data['data']?['order_results'] ??
           [];
+
+      // Check inside data wrapper: data.data.order_results
+      if (orderList.isEmpty && innerData is Map) {
+        orderList = innerData['order_results'] ??
+            innerData['orderResults'] ??
+            [];
+
+        // Check data.data.user_net_pf_model.order_results (Map form — actual API shape)
+        if (orderList.isEmpty) {
+          final userNetPf = innerData['user_net_pf_model'];
+          if (userNetPf is Map) {
+            orderList = userNetPf['order_results'] ?? userNetPf['stocks'] ?? [];
+          } else if (userNetPf is List && userNetPf.isNotEmpty) {
+            final latest = userNetPf.last;
+            if (latest is List) orderList = latest;
+            if (latest is Map) orderList = latest['order_results'] ?? latest['stocks'] ?? [];
+          }
+        }
+      }
+
+      // Fallback: top-level user_net_pf_model
       if (orderList.isEmpty) {
-        final userNetPf = data['user_net_pf_model'] ?? data['data']?['user_net_pf_model'];
-        if (userNetPf is List && userNetPf.isNotEmpty) {
+        final userNetPf = data['user_net_pf_model'];
+        if (userNetPf is Map) {
+          orderList = userNetPf['order_results'] ?? userNetPf['stocks'] ?? [];
+        } else if (userNetPf is List && userNetPf.isNotEmpty) {
           final latest = userNetPf.last;
           if (latest is List) orderList = latest;
           if (latest is Map) orderList = latest['order_results'] ?? latest['stocks'] ?? [];
@@ -146,40 +178,28 @@ class _ExecutionStatusPageState extends State<ExecutionStatusPage> {
       }
     }
 
+    debugPrint('[ExecutionStatus] _updateResultsFromPoll: found ${orderList.length} orders');
+
     if (orderList.isEmpty) return;
 
+    // Rebuild results from poll data (matching rgx_app MPStatusModal approach).
+    // The poll data from user-portfolio/latest is the authoritative source.
+    final newResults = <OrderResult>[];
     for (final order in orderList) {
       if (order is! Map) continue;
-      final symbol = (order['symbol'] ?? order['tradingSymbol'] ?? '').toString();
-      final rawStatus = (order['orderStatus'] ??
-              order['status'] ??
-              order['order_status'] ??
-              order['trade_place_status'] ??
-              '')
-          .toString()
-          .toLowerCase();
-
-      final idx = results.indexWhere((r) => r.symbol == symbol);
-      if (idx >= 0) {
-        String newStatus = results[idx].status;
-        if (rawStatus.contains('complete') || rawStatus.contains('traded') || rawStatus.contains('filled')) {
-          newStatus = 'success';
-        } else if (rawStatus.contains('rejected') || rawStatus.contains('cancel') || rawStatus.contains('failed')) {
-          newStatus = 'failed';
-        }
-        if (newStatus != results[idx].status) {
-          results[idx] = OrderResult(
-            symbol: results[idx].symbol,
-            transactionType: results[idx].transactionType,
-            quantity: results[idx].quantity,
-            price: results[idx].price,
-            status: newStatus,
-            orderId: results[idx].orderId,
-            message: results[idx].message,
-          );
-        }
-      }
+      final map = Map<String, dynamic>.from(order);
+      newResults.add(OrderResult.fromJson(map));
     }
+
+    if (newResults.isNotEmpty) {
+      debugPrint('[ExecutionStatus] rebuilt ${newResults.length} results from poll '
+          '(success=${newResults.where((r) => r.isSuccess).length}, '
+          'failed=${newResults.where((r) => r.isFailed).length}, '
+          'pending=${newResults.where((r) => !r.isSuccess && !r.isFailed).length})');
+      results = newResults;
+      completedCount = newResults.length;
+    }
+
     if (mounted) setState(() {});
   }
 
@@ -643,12 +663,11 @@ class _ExecutionStatusPageState extends State<ExecutionStatusPage> {
                                     ),
                                   );
                                 } else {
-                                  result = await Navigator.push<bool>(
+                                  final connection = await BrokerSelectionPage.show(
                                     context,
-                                    MaterialPageRoute(
-                                      builder: (_) => BrokerSelectionPage(email: widget.email),
-                                    ),
+                                    email: widget.email,
                                   );
+                                  result = connection != null;
                                 }
                                 if (result == true && mounted) {
                                   CacheService.instance.invalidate('aq/user/brokers:${widget.email}');

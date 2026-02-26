@@ -49,13 +49,20 @@ class _ManageBrokersPageState extends State<ManageBrokersPage> {
     }
   }
 
+  /// Get set of connected broker names (lowercase) for filtering
+  Set<String> get _connectedBrokerNames =>
+      connectedBrokers.map((b) => b.broker.toLowerCase()).toSet();
+
+  /// All brokers from registry that are NOT currently connected
+  List<BrokerConfig> get _availableBrokers => BrokerRegistry.brokers
+      .where((config) => !_connectedBrokerNames.contains(config.name.toLowerCase()))
+      .toList();
+
   Future<void> _switchPrimary(BrokerConnection broker) async {
     HapticFeedback.mediumImpact();
     setState(() => _actionBroker = broker.broker);
 
     try {
-      // changeBrokerModelPortfolio is the correct CCXT endpoint
-      // switchPrimaryBroker delegates to it
       final resp = await AqApiService.instance.switchPrimaryBroker(
         email: widget.email,
         broker: broker.broker,
@@ -153,7 +160,17 @@ class _ManageBrokersPageState extends State<ManageBrokersPage> {
   void _reconnectBroker(BrokerConnection broker) async {
     final config = BrokerRegistry.getByName(broker.broker);
     if (config == null) return;
+    await _navigateToBrokerAuth(config);
+  }
 
+  /// Connect a new broker from the available list
+  void _connectNewBroker(BrokerConfig config) async {
+    HapticFeedback.mediumImpact();
+    await _navigateToBrokerAuth(config);
+  }
+
+  /// Shared navigation to broker auth/credential page
+  Future<void> _navigateToBrokerAuth(BrokerConfig config) async {
     bool? result;
     if (config.authType == BrokerAuthType.oauth) {
       result = await Navigator.push<bool>(
@@ -192,68 +209,104 @@ class _ManageBrokersPageState extends State<ManageBrokersPage> {
       menu: "Manage Connections",
       child: loading
           ? const Center(child: CircularProgressIndicator())
-          : connectedBrokers.isEmpty
-              ? _buildEmpty()
-              : _buildList(),
+          : _buildContent(),
     );
   }
 
-  Widget _buildEmpty() {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(32),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.account_balance_outlined,
-                size: 64, color: Colors.grey.shade300),
-            const SizedBox(height: 16),
-            const Text("No Brokers Connected",
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
-            const SizedBox(height: 8),
-            const Text(
-              "Connect a broker to start trading with model portfolios.",
-              style: TextStyle(fontSize: 14, color: Colors.grey),
-              textAlign: TextAlign.center,
-            ),
-          ],
-        ),
-      ),
-    );
-  }
+  Widget _buildContent() {
+    final available = _availableBrokers;
 
-  Widget _buildList() {
-    return ListView.builder(
+    return ListView(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
-      itemCount: connectedBrokers.length,
-      itemBuilder: (context, index) {
-        final broker = connectedBrokers[index];
-        return _brokerCard(broker);
-      },
+      children: [
+        // ── Connected Brokers Section ──
+        if (connectedBrokers.isNotEmpty) ...[
+          _sectionHeader("Connected Brokers", Icons.check_circle_outline, Colors.green),
+          const SizedBox(height: 8),
+          ...connectedBrokers.map((broker) => _connectedBrokerCard(broker)),
+          const SizedBox(height: 24),
+        ],
+
+        // ── Available Brokers Section ──
+        _sectionHeader("Add New Broker", Icons.add_circle_outline, Colors.blue.shade700),
+        const SizedBox(height: 4),
+        Padding(
+          padding: const EdgeInsets.only(bottom: 12),
+          child: Text(
+            "Connect a new broker to start trading",
+            style: TextStyle(fontSize: 13, color: Colors.grey.shade600),
+          ),
+        ),
+        if (available.isEmpty)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 24),
+            child: Center(
+              child: Text(
+                "All brokers are already connected",
+                style: TextStyle(fontSize: 14, color: Colors.grey.shade500),
+              ),
+            ),
+          )
+        else
+          GridView.builder(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: 4,
+              childAspectRatio: 0.85,
+              crossAxisSpacing: 10,
+              mainAxisSpacing: 12,
+            ),
+            itemCount: available.length,
+            itemBuilder: (context, index) =>
+                _availableBrokerCard(available[index]),
+          ),
+      ],
     );
   }
 
-  Widget _buildBrokerLogo(String brokerName) {
+  Widget _sectionHeader(String title, IconData icon, Color color) {
+    return Row(
+      children: [
+        Icon(icon, size: 20, color: color),
+        const SizedBox(width: 8),
+        Text(
+          title,
+          style: TextStyle(
+            fontSize: 16,
+            fontWeight: FontWeight.w700,
+            color: Colors.grey.shade800,
+          ),
+        ),
+      ],
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Connected broker card (existing functionality)
+  // ---------------------------------------------------------------------------
+
+  Widget _buildBrokerLogo(String brokerName, {double size = 42}) {
     final config = BrokerRegistry.getByName(brokerName);
     if (config != null) {
       return ClipRRect(
         borderRadius: BorderRadius.circular(10),
         child: Image.asset(
           config.logoAsset,
-          width: 42,
-          height: 42,
+          width: size,
+          height: size,
           fit: BoxFit.contain,
-          errorBuilder: (_, __, ___) => _letterIcon(brokerName),
+          errorBuilder: (_, __, ___) => _letterIcon(brokerName, size: size),
         ),
       );
     }
-    return _letterIcon(brokerName);
+    return _letterIcon(brokerName, size: size);
   }
 
-  Widget _letterIcon(String name) {
+  Widget _letterIcon(String name, {double size = 42}) {
     return Container(
-      width: 42,
-      height: 42,
+      width: size,
+      height: size,
       decoration: BoxDecoration(
         color: Colors.grey.shade100,
         borderRadius: BorderRadius.circular(10),
@@ -262,7 +315,7 @@ class _ManageBrokersPageState extends State<ManageBrokersPage> {
         child: Text(
           name.isNotEmpty ? name[0] : '?',
           style: TextStyle(
-              fontSize: 20,
+              fontSize: size * 0.48,
               fontWeight: FontWeight.w800,
               color: Colors.grey.shade700),
         ),
@@ -270,7 +323,7 @@ class _ManageBrokersPageState extends State<ManageBrokersPage> {
     );
   }
 
-  Widget _brokerCard(BrokerConnection broker) {
+  Widget _connectedBrokerCard(BrokerConnection broker) {
     final isActive = broker.isPrimary;
     final isActing = _actionBroker == broker.broker;
 
@@ -391,6 +444,66 @@ class _ManageBrokersPageState extends State<ManageBrokersPage> {
             ),
           ],
         ],
+      ),
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Available (not connected) broker card
+  // ---------------------------------------------------------------------------
+
+  Widget _availableBrokerCard(BrokerConfig config) {
+    return GestureDetector(
+      onTap: () => _connectNewBroker(config),
+      child: Container(
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: Colors.grey.shade200, width: 1.5),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.04),
+              blurRadius: 8,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            ClipRRect(
+              borderRadius: BorderRadius.circular(10),
+              child: Image.asset(
+                config.logoAsset,
+                width: 36,
+                height: 36,
+                fit: BoxFit.contain,
+                errorBuilder: (_, __, ___) => _letterIcon(config.name, size: 36),
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              config.name,
+              style: const TextStyle(
+                fontSize: 10,
+                fontWeight: FontWeight.w600,
+                color: Colors.black87,
+              ),
+              textAlign: TextAlign.center,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+            const SizedBox(height: 2),
+            Text(
+              "Connect",
+              style: TextStyle(
+                fontSize: 9,
+                fontWeight: FontWeight.w600,
+                color: Colors.blue.shade600,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

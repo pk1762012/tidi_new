@@ -1,3 +1,6 @@
+import 'dart:convert';
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:tidistockmobileapp/models/model_portfolio.dart';
@@ -10,14 +13,21 @@ import 'RebalanceReviewPage.dart';
 
 /// Shows the user's current holdings in this portfolio before they proceed
 /// to review and execute the rebalance orders.
+///
+/// When [onProceed] is provided, it is called instead of navigating to
+/// RebalanceReviewPage. [proceedLabel] customises the CTA button text.
 class CurrentHoldingsPreviewPage extends StatefulWidget {
   final ModelPortfolio portfolio;
   final String email;
+  final VoidCallback? onProceed;
+  final String? proceedLabel;
 
   const CurrentHoldingsPreviewPage({
     super.key,
     required this.portfolio,
     required this.email,
+    this.onProceed,
+    this.proceedLabel,
   });
 
   @override
@@ -41,6 +51,39 @@ class _CurrentHoldingsPreviewPageState
   }
 
   Future<void> _fetchHoldings() async {
+    // Primary: fetch from getLatestUserPortfolio (matches rgx_app MPStatusModal)
+    try {
+      final response = await AqApiService.instance.getLatestUserPortfolio(
+        email: widget.email,
+        modelName: widget.portfolio.modelName,
+      );
+      debugPrint('[HoldingsPreview] getLatestUserPortfolio status=${response.statusCode}');
+
+      if (response.statusCode == 200 && mounted) {
+        final data = jsonDecode(response.body);
+        final innerData = data is Map ? data['data'] : null;
+
+        if (innerData is Map) {
+          // Parse from user_net_pf_model.order_results (rgx_app shape)
+          final userNetPf = innerData['user_net_pf_model'];
+          List<dynamic> orderResults = [];
+          if (userNetPf is Map) {
+            orderResults = userNetPf['order_results'] ?? userNetPf['stocks'] ?? [];
+          }
+
+          if (orderResults.isNotEmpty) {
+            debugPrint('[HoldingsPreview] found ${orderResults.length} holdings from user-portfolio/latest');
+            _parseHoldingsFromOrderResults(orderResults);
+            if (mounted) setState(() => _loading = false);
+            return;
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('[HoldingsPreview] getLatestUserPortfolio error: $e');
+    }
+
+    // Fallback: fetch from getSubscriptionRawAmount
     try {
       final response = await AqApiService.instance.getSubscriptionRawAmount(
         email: widget.email,
@@ -54,9 +97,59 @@ class _CurrentHoldingsPreviewPageState
           _parseHoldings(subData);
         }
       }
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('[HoldingsPreview] getSubscriptionRawAmount error: $e');
+    }
 
     if (mounted) setState(() => _loading = false);
+  }
+
+  /// Parse holdings from user-portfolio/latest order_results array
+  /// (matches rgx_app MPStatusModal data shape)
+  void _parseHoldingsFromOrderResults(List<dynamic> orderResults) {
+    final parsed = <PortfolioHolding>[];
+    double invested = 0;
+    double current = 0;
+
+    for (final item in orderResults) {
+      if (item is! Map) continue;
+      final symbol = (item['symbol'] ?? item['tradingSymbol'] ?? item['trading_symbol'] ?? '').toString();
+      if (symbol.isEmpty || symbol.contains('CASH')) continue;
+
+      final qty = (item['quantity'] ?? item['qty'] ?? 0);
+      final quantity = qty is num ? qty.toInt() : int.tryParse(qty.toString()) ?? 0;
+      final avgPrice = _toDouble(item['averageEntryPrice'] ?? item['averagePrice'] ?? item['average_price'] ?? item['avgPrice'] ?? item['price'] ?? 0);
+      final ltp = _toDouble(item['ltp'] ?? item['lastPrice'] ?? item['last_price'] ?? item['currentPrice'] ?? 0);
+      final exchange = (item['exchange'] ?? 'NSE').toString();
+
+      final investedVal = avgPrice * quantity;
+      final currentVal = ltp > 0 ? ltp * quantity : investedVal;
+
+      final holding = PortfolioHolding(
+        symbol: symbol,
+        quantity: quantity,
+        avgPrice: avgPrice,
+        ltp: ltp > 0 ? ltp : null,
+        exchange: exchange,
+      );
+      invested += holding.investedValue;
+      current += holding.currentValue;
+
+      parsed.add(holding);
+    }
+
+    setState(() {
+      _holdings = parsed;
+      _totalInvested = invested;
+      _totalCurrent = current > 0 ? current : invested;
+    });
+  }
+
+  double _toDouble(dynamic value) {
+    if (value == null) return 0;
+    if (value is num) return value.toDouble();
+    if (value is String) return double.tryParse(value) ?? 0;
+    return 0;
   }
 
   void _parseHoldings(Map<String, dynamic> subData) {
@@ -112,15 +205,19 @@ class _CurrentHoldingsPreviewPageState
   }
 
   void _proceedToRebalance() {
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) => RebalanceReviewPage(
-          portfolio: widget.portfolio,
-          email: widget.email,
+    if (widget.onProceed != null) {
+      widget.onProceed!();
+    } else {
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => RebalanceReviewPage(
+            portfolio: widget.portfolio,
+            email: widget.email,
+          ),
         ),
-      ),
-    );
+      );
+    }
   }
 
   double get _totalPnl => _totalCurrent - _totalInvested;
@@ -544,10 +641,10 @@ class _CurrentHoldingsPreviewPageState
               height: 50,
               child: ElevatedButton.icon(
                 onPressed: _loading ? null : _proceedToRebalance,
-                icon: const Icon(Icons.sync_rounded, size: 20),
-                label: const Text(
-                  'Proceed to Review Rebalance',
-                  style: TextStyle(
+                icon: Icon(widget.onProceed != null ? Icons.arrow_forward_rounded : Icons.sync_rounded, size: 20),
+                label: Text(
+                  widget.proceedLabel ?? 'Proceed to Review Rebalance',
+                  style: const TextStyle(
                     fontSize: 15,
                     fontWeight: FontWeight.w700,
                   ),

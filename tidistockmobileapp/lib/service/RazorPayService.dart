@@ -140,11 +140,17 @@ class RazorpayService {
   }
 
   Future<bool> openWorkshopCheckout(String date, String branchId) async {
-    if (_isProcessing) return false;
+    debugPrint('[RazorpayService] openWorkshopCheckout called - date: $date, branchId: $branchId');
+    if (_isProcessing) {
+      debugPrint('[RazorpayService] openWorkshopCheckout - already processing');
+      return false;
+    }
     _isProcessing = true;
 
     try {
       final response = await ApiService().registerToWorkshop(date, branchId);
+      debugPrint('[RazorpayService] openWorkshopCheckout - API status: ${response.statusCode}');
+      debugPrint('[RazorpayService] openWorkshopCheckout - API body: ${response.body}');
 
       if (response.statusCode >= 200 && response.statusCode < 300) {
         try {
@@ -175,12 +181,14 @@ class RazorpayService {
         }
       } else {
         _isProcessing = false;
+        debugPrint('[RazorpayService] openWorkshopCheckout FAILED: ${response.statusCode} - ${response.body}');
         _showError(
             'Unable to create order (${response.statusCode}). Please try again later.');
         return false;
       }
     } catch (e) {
       _isProcessing = false;
+      debugPrint('[RazorpayService] openWorkshopCheckout network error: $e');
       _showError('Network error. Please check your connection and try again.');
       return false;
     }

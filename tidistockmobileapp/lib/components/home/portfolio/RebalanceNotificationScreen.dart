@@ -621,13 +621,9 @@ class _RebalanceNotificationScreenState extends State<RebalanceNotificationScree
         ),
       );
     } else {
-      // Unknown broker — go to selection page
-      result = await Navigator.push<bool>(
-        context,
-        MaterialPageRoute(
-          builder: (_) => BrokerSelectionPage(email: _userEmail!),
-        ),
-      );
+      // Unknown broker — open broker selection modal
+      final connection = await BrokerSelectionPage.show(context, email: _userEmail!);
+      result = connection != null;
     }
 
     if (result == true && _userEmail != null) {

@@ -729,14 +729,17 @@ class ProfilePageState extends State<ProfilePage>
                                     final hasBrokers = brokerCount > 0;
                                     return InkWell(
                                       onTap: () {
-                                        Navigator.push(
-                                          context,
-                                          MaterialPageRoute(
-                                            builder: (_) => hasBrokers
-                                                ? ManageBrokersPage(email: email)
-                                                : BrokerSelectionPage(email: email),
-                                          ),
-                                        ).then((_) => setState(() {}));
+                                        if (hasBrokers) {
+                                          Navigator.push(
+                                            context,
+                                            MaterialPageRoute(
+                                              builder: (_) => ManageBrokersPage(email: email),
+                                            ),
+                                          ).then((_) => setState(() {}));
+                                        } else {
+                                          BrokerSelectionPage.show(context, email: email)
+                                              .then((_) => setState(() {}));
+                                        }
                                       },
                                       borderRadius: BorderRadius.circular(12),
                                       child: Container(

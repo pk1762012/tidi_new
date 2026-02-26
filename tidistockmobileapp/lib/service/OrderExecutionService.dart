@@ -203,10 +203,16 @@ class OrderExecutionService {
 
     if (response.statusCode == 200) {
       final data = jsonDecode(response.body);
+      debugPrint('[OrderExecution] process-trade response keys: ${data is Map ? data.keys.toList() : 'not-map'}');
+
+      // Check nested data wrapper (API may return { data: { tradeDetails: [...] } })
+      final innerData = data is Map ? data['data'] : null;
       final tradeDetails = data['tradeDetails'] ??
           data['response'] ??
           data['order_results'] ??
           data['results'] ??
+          (innerData is Map ? (innerData['tradeDetails'] ?? innerData['order_results'] ?? innerData['results']) : null) ??
+          (innerData is Map && innerData['user_net_pf_model'] is Map ? innerData['user_net_pf_model']['order_results'] : null) ??
           [];
 
       if (tradeDetails is List && tradeDetails.isNotEmpty) {
@@ -224,15 +230,16 @@ class OrderExecutionService {
           onOrderUpdate(i + 1, orders.length, result);
         }
       } else {
-        // No detailed results — mark all as success if HTTP 200
+        // No detailed results — mark as pending (not success) since we
+        // have no trade confirmation from the broker.
         for (int i = 0; i < orders.length; i++) {
           final result = OrderResult(
             symbol: orders[i]['symbol'] ?? orders[i]['tradingSymbol'] ?? '',
             transactionType: orders[i]['transactionType'] ?? 'BUY',
             quantity: orders[i]['quantity'] ?? 0,
             price: (orders[i]['price'] as num?)?.toDouble(),
-            status: 'success',
-            message: 'Order placed successfully',
+            status: 'pending',
+            message: 'Order submitted — awaiting confirmation',
           );
           results.add(result);
           onOrderUpdate(i + 1, orders.length, result);

@@ -16,11 +16,38 @@ class BrokerSelectionPage extends StatefulWidget {
   final String email;
   final ModelPortfolio? portfolio;
 
+  /// When true, renders as modal content (no scaffold).
+  /// When false (default), renders as a full page with CustomScaffold.
+  final bool asModal;
+
   const BrokerSelectionPage({
     super.key,
     required this.email,
     this.portfolio,
+    this.asModal = false,
   });
+
+  /// Opens broker selection as a modal bottom sheet (matching rgx_app style).
+  /// Returns a [BrokerConnection] if the user successfully connects, or null.
+  static Future<BrokerConnection?> show(BuildContext context, {required String email, ModelPortfolio? portfolio}) {
+    return showModalBottomSheet<BrokerConnection>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      useSafeArea: true,
+      builder: (_) => DraggableScrollableSheet(
+        initialChildSize: 0.85,
+        minChildSize: 0.5,
+        maxChildSize: 0.95,
+        expand: false,
+        builder: (ctx, scrollController) => BrokerSelectionPage(
+          email: email,
+          portfolio: portfolio,
+          asModal: true,
+        ),
+      ),
+    );
+  }
 
   @override
   State<BrokerSelectionPage> createState() => _BrokerSelectionPageState();
@@ -63,18 +90,12 @@ class _BrokerSelectionPageState extends State<BrokerSelectionPage> {
     }
   }
 
-  bool get _hasExpiredBrokers =>
-      connectedBrokers.any((b) => b.isExpired || b.isTokenExpired);
-
-  bool get _hasConnectedBrokers =>
-      connectedBrokers.any((b) => b.isConnected);
-
   void _onBrokerTap(BrokerConfig brokerConfig) async {
     HapticFeedback.mediumImpact();
     final connection = _getConnection(brokerConfig.name);
 
     if (connection != null && connection.isEffectivelyConnected) {
-      // Connected with valid token — proceed to investment
+      // Connected with valid token — proceed to investment or return
       if (widget.portfolio != null) {
         Navigator.pushReplacement(
           context,
@@ -165,12 +186,17 @@ class _BrokerSelectionPageState extends State<BrokerSelectionPage> {
     _fetchConnectedBrokers();
   }
 
-  void _continueWithoutBroker() {
-    Navigator.pop(context, null);
-  }
-
   @override
   Widget build(BuildContext context) {
+    if (widget.asModal) return _buildModalContent();
+    return _buildFullPage();
+  }
+
+  // ---------------------------------------------------------------------------
+  // Full-page version (used from profile page / direct navigation)
+  // ---------------------------------------------------------------------------
+
+  Widget _buildFullPage() {
     return CustomScaffold(
       allowBackNavigation: true,
       displayActions: false,
@@ -181,42 +207,13 @@ class _BrokerSelectionPageState extends State<BrokerSelectionPage> {
           : ListView(
               padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
               children: [
-                // Token expired warning banner
-                if (_hasExpiredBrokers)
-                  Container(
-                    margin: const EdgeInsets.only(bottom: 12),
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: Colors.orange.shade50,
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: Colors.orange.shade200),
-                    ),
-                    child: Row(
-                      children: [
-                        Icon(Icons.warning_amber_rounded,
-                            size: 20, color: Colors.orange.shade700),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: Text(
-                            "Some broker sessions have expired. Please reconnect to continue trading.",
-                            style: TextStyle(
-                                fontSize: 12,
-                                color: Colors.orange.shade800,
-                                height: 1.3),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-
                 // Manage Connected Brokers link
-                if (_hasConnectedBrokers)
+                if (connectedBrokers.any((b) => b.isConnected))
                   GestureDetector(
                     onTap: _openManageBrokers,
                     child: Container(
                       margin: const EdgeInsets.only(bottom: 12),
-                      padding: const EdgeInsets.symmetric(
-                          vertical: 12, horizontal: 16),
+                      padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
                       decoration: BoxDecoration(
                         color: Colors.white,
                         borderRadius: BorderRadius.circular(12),
@@ -224,8 +221,7 @@ class _BrokerSelectionPageState extends State<BrokerSelectionPage> {
                       ),
                       child: Row(
                         children: [
-                          Icon(Icons.settings,
-                              size: 18, color: Colors.blue.shade600),
+                          Icon(Icons.settings, size: 18, color: Colors.blue.shade600),
                           const SizedBox(width: 10),
                           Expanded(
                             child: Text(
@@ -236,8 +232,7 @@ class _BrokerSelectionPageState extends State<BrokerSelectionPage> {
                                   color: Colors.blue.shade700),
                             ),
                           ),
-                          Icon(Icons.chevron_right,
-                              size: 20, color: Colors.blue.shade400),
+                          Icon(Icons.chevron_right, size: 20, color: Colors.blue.shade400),
                         ],
                       ),
                     ),
@@ -268,7 +263,7 @@ class _BrokerSelectionPageState extends State<BrokerSelectionPage> {
                   ),
                 ),
 
-                // Broker grid using BrokerRegistry
+                // Broker grid
                 GridView.builder(
                   shrinkWrap: true,
                   physics: const NeverScrollableScrollPhysics(),
@@ -281,63 +276,171 @@ class _BrokerSelectionPageState extends State<BrokerSelectionPage> {
                   itemCount: BrokerRegistry.brokers.length,
                   itemBuilder: (context, index) {
                     final config = BrokerRegistry.brokers[index];
-                    return _brokerCard(config);
+                    return _brokerCard(config, darkMode: false);
                   },
                 ),
-
-                // Continue without broker button (portfolio flow only)
-                if (widget.portfolio != null) ...[
-                  const SizedBox(height: 20),
-                  Center(
-                    child: TextButton(
-                      onPressed: _continueWithoutBroker,
-                      child: const Text(
-                        "Continue without broker",
-                        style: TextStyle(
-                            fontSize: 14,
-                            color: Colors.grey,
-                            decoration: TextDecoration.underline),
-                      ),
-                    ),
-                  ),
-                ],
               ],
             ),
     );
   }
 
-  Widget _brokerCard(BrokerConfig config) {
+  // ---------------------------------------------------------------------------
+  // Modal bottom sheet version (matching rgx_app BrokerSelectionModal)
+  // ---------------------------------------------------------------------------
+
+  Widget _buildModalContent() {
+    return Container(
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [
+            Color(0xFF002651),
+            Color(0xFF003572),
+            Color(0xFF0053B1),
+          ],
+        ),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      child: loading
+          ? const Center(
+              child: Padding(
+                padding: EdgeInsets.all(60),
+                child: CircularProgressIndicator(color: Colors.white),
+              ),
+            )
+          : Column(
+              children: [
+                // Drag handle
+                Padding(
+                  padding: const EdgeInsets.only(top: 12, bottom: 4),
+                  child: Container(
+                    width: 40,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.3),
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                ),
+
+                // Header
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(8, 10, 16, 0),
+                  child: Row(
+                    children: [
+                      IconButton(
+                        onPressed: () => Navigator.pop(context),
+                        icon: const Icon(Icons.chevron_left, color: Colors.white, size: 28),
+                      ),
+                      const Expanded(
+                        child: Text(
+                          "Select your broker for connection",
+                          style: TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.w700,
+                            color: Colors.white,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+
+                // Scrollable content
+                Expanded(
+                  child: ListView(
+                    padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
+                    children: [
+                      // Important notice box (amber border)
+                      Container(
+                        padding: const EdgeInsets.all(16),
+                        margin: const EdgeInsets.only(bottom: 20),
+                        decoration: BoxDecoration(
+                          color: Colors.black.withOpacity(0.3),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: const Color(0xFFFFB800), width: 2),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              "Important:",
+                              style: TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w700,
+                                color: Color(0xFFFFB800),
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            ...[
+                              "Actions and decisions are solely yours.",
+                              "RA doesn't control or influence your action.",
+                              "RA isn't responsible for your outcome.",
+                              "You act independently on the broker platform.",
+                            ].map((text) => Padding(
+                                  padding: const EdgeInsets.only(bottom: 4),
+                                  child: Text(
+                                    "• $text",
+                                    style: const TextStyle(
+                                      fontSize: 13,
+                                      color: Colors.white,
+                                      height: 1.5,
+                                    ),
+                                  ),
+                                )),
+                          ],
+                        ),
+                      ),
+
+                      // 4-column broker grid
+                      GridView.builder(
+                        shrinkWrap: true,
+                        physics: const NeverScrollableScrollPhysics(),
+                        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: 4,
+                          childAspectRatio: 0.85,
+                          crossAxisSpacing: 12,
+                          mainAxisSpacing: 14,
+                        ),
+                        itemCount: BrokerRegistry.brokers.length,
+                        itemBuilder: (context, index) {
+                          final config = BrokerRegistry.brokers[index];
+                          return _brokerCard(config, darkMode: true);
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Broker card widget
+  // ---------------------------------------------------------------------------
+
+  Widget _brokerCard(BrokerConfig config, {bool darkMode = false}) {
     final connection = _getConnection(config.name);
     final isConnected = connection?.isEffectivelyConnected ?? false;
-    final isExpired = connection?.isExpired ?? false;
-    final isTokenExpired = connection != null &&
-        connection.isConnected &&
-        connection.isTokenExpired;
-
-    Color borderColor = Colors.grey.shade200;
-    Color statusColor = Colors.grey;
-    String statusText = "Connect";
-    if (isConnected) {
-      borderColor = Colors.green.shade300;
-      statusColor = Colors.green;
-      statusText = "Connected";
-    } else if (isExpired || isTokenExpired) {
-      borderColor = Colors.orange.shade300;
-      statusColor = Colors.orange;
-      statusText = "Reconnect";
-    }
 
     return GestureDetector(
       onTap: () => _onBrokerTap(config),
       child: Container(
         decoration: BoxDecoration(
           color: Colors.white,
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: borderColor, width: 1.5),
+          borderRadius: BorderRadius.circular(darkMode ? 16 : 14),
+          border: darkMode
+              ? null
+              : Border.all(
+                  color: isConnected ? Colors.green.shade300 : Colors.grey.shade200,
+                  width: 1.5,
+                ),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withOpacity(0.04),
-              blurRadius: 8,
+              color: Colors.black.withOpacity(darkMode ? 0.15 : 0.04),
+              blurRadius: darkMode ? 6 : 8,
               offset: const Offset(0, 2),
             ),
           ],
@@ -349,12 +452,12 @@ class _BrokerSelectionPageState extends State<BrokerSelectionPage> {
               borderRadius: BorderRadius.circular(10),
               child: Image.asset(
                 config.logoAsset,
-                width: 42,
-                height: 42,
+                width: darkMode ? 36 : 42,
+                height: darkMode ? 36 : 42,
                 fit: BoxFit.contain,
                 errorBuilder: (_, __, ___) => Container(
-                  width: 42,
-                  height: 42,
+                  width: darkMode ? 36 : 42,
+                  height: darkMode ? 36 : 42,
                   decoration: BoxDecoration(
                     color: isConnected
                         ? Colors.green.withOpacity(0.1)
@@ -365,7 +468,7 @@ class _BrokerSelectionPageState extends State<BrokerSelectionPage> {
                     child: Text(
                       config.iconLetter,
                       style: TextStyle(
-                        fontSize: 20,
+                        fontSize: darkMode ? 16 : 20,
                         fontWeight: FontWeight.w800,
                         color: isConnected ? Colors.green : Colors.grey.shade700,
                       ),
@@ -374,19 +477,41 @@ class _BrokerSelectionPageState extends State<BrokerSelectionPage> {
                 ),
               ),
             ),
-            const SizedBox(height: 8),
+            SizedBox(height: darkMode ? 6 : 8),
             Text(
               config.name,
-              style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600),
+              style: TextStyle(
+                fontSize: darkMode ? 10 : 11,
+                fontWeight: FontWeight.w600,
+                color: Colors.black87,
+              ),
               textAlign: TextAlign.center,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
             ),
-            const SizedBox(height: 4),
-            Text(
-              statusText,
-              style: TextStyle(fontSize: 10, color: statusColor, fontWeight: FontWeight.w600),
-            ),
+            if (!darkMode) ...[
+              const SizedBox(height: 4),
+              Text(
+                isConnected
+                    ? "Connected"
+                    : (connection != null &&
+                            connection.isConnected &&
+                            connection.isTokenExpired)
+                        ? "Reconnect"
+                        : "Connect",
+                style: TextStyle(
+                  fontSize: 10,
+                  color: isConnected
+                      ? Colors.green
+                      : (connection != null &&
+                              connection.isConnected &&
+                              connection.isTokenExpired)
+                          ? Colors.orange
+                          : Colors.grey,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
           ],
         ),
       ),

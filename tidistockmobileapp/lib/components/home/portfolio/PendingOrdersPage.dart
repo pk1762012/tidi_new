@@ -60,8 +60,10 @@ class _PendingOrdersPageState extends State<PendingOrdersPage> {
       final response = await AqApiService.instance.getLatestUserPortfolio(
         email: widget.email,
         modelName: _modelName,
+        broker: widget.broker,
       );
 
+      debugPrint('[PendingOrders] getLatestUserPortfolio status=${response.statusCode}');
       if (response.statusCode == 200 && mounted) {
         final data = jsonDecode(response.body);
         final orders = _parseOrders(data);
@@ -72,6 +74,7 @@ class _PendingOrdersPageState extends State<PendingOrdersPage> {
         });
         _startAutoPollingIfNeeded();
       } else {
+        debugPrint('[PendingOrders] getLatestUserPortfolio error body: ${response.body}');
         if (mounted) {
           setState(() {
             _loading = false;
@@ -93,40 +96,63 @@ class _PendingOrdersPageState extends State<PendingOrdersPage> {
   List<_OrderStatus> _parseOrders(dynamic data) {
     final orders = <_OrderStatus>[];
 
-    // Try multiple possible shapes
+    // Try multiple possible shapes — actual API returns:
+    // { data: { user_net_pf_model: { order_results: [...] } } }
     List<dynamic> orderList = [];
     if (data is Map) {
+      final innerData = data['data'];
+
+      // Direct top-level
       orderList = data['order_results'] ??
           data['orderResults'] ??
           data['orders'] ??
-          data['data']?['order_results'] ??
-          data['data']?['orders'] ??
           [];
 
-      // If nested in user_net_pf_model
-      if (orderList.isEmpty) {
-        final userNetPf = data['user_net_pf_model'] ?? data['data']?['user_net_pf_model'];
-        if (userNetPf is List && userNetPf.isNotEmpty) {
-          final latest = userNetPf.last;
-          if (latest is List) {
-            orderList = latest;
-          } else if (latest is Map) {
-            orderList = latest['order_results'] ?? latest['stocks'] ?? latest['holdings'] ?? [];
+      // Inside data wrapper
+      if (orderList.isEmpty && innerData is Map) {
+        orderList = innerData['order_results'] ??
+            innerData['orderResults'] ??
+            innerData['orders'] ??
+            [];
+
+        // data.data.user_net_pf_model.order_results (Map form — actual API shape)
+        if (orderList.isEmpty) {
+          final userNetPf = innerData['user_net_pf_model'];
+          if (userNetPf is Map) {
+            orderList = userNetPf['order_results'] ?? userNetPf['stocks'] ?? userNetPf['holdings'] ?? [];
+          } else if (userNetPf is List && userNetPf.isNotEmpty) {
+            final latest = userNetPf.last;
+            if (latest is List) orderList = latest;
+            if (latest is Map) orderList = latest['order_results'] ?? latest['stocks'] ?? latest['holdings'] ?? [];
           }
+        }
+      }
+
+      // Fallback: top-level user_net_pf_model
+      if (orderList.isEmpty) {
+        final userNetPf = data['user_net_pf_model'];
+        if (userNetPf is Map) {
+          orderList = userNetPf['order_results'] ?? userNetPf['stocks'] ?? userNetPf['holdings'] ?? [];
+        } else if (userNetPf is List && userNetPf.isNotEmpty) {
+          final latest = userNetPf.last;
+          if (latest is List) orderList = latest;
+          if (latest is Map) orderList = latest['order_results'] ?? latest['stocks'] ?? latest['holdings'] ?? [];
         }
       }
     } else if (data is List) {
       orderList = data;
     }
 
+    debugPrint('[PendingOrders] _parseOrders: found ${orderList.length} orders');
+
     for (final order in orderList) {
       if (order is! Map) continue;
       final symbol = (order['symbol'] ?? order['tradingSymbol'] ?? order['trading_symbol'] ?? '').toString();
       if (symbol.isEmpty) continue;
 
-      final rawStatus = (order['status'] ?? order['order_status'] ?? '').toString().toUpperCase();
-      final quantity = (order['quantity'] ?? order['qty'] ?? 0);
-      final price = _safeDouble(order['averagePrice'] ?? order['avgPrice'] ?? order['avg_price'] ?? order['price']);
+      final rawStatus = (order['orderStatus'] ?? order['order_status'] ?? order['status'] ?? order['trade_place_status'] ?? '').toString().toUpperCase();
+      final quantity = (order['quantity'] ?? order['filledQuantity'] ?? order['filled_quantity'] ?? order['qty'] ?? 0);
+      final price = _safeDouble(order['averageEntryPrice'] ?? order['averagePrice'] ?? order['average_price'] ?? order['avgPrice'] ?? order['avg_price'] ?? order['executedPrice'] ?? order['price']);
       final transactionType = (order['transactionType'] ?? order['transaction_type'] ?? order['type'] ?? '').toString().toUpperCase();
       final orderId = (order['orderId'] ?? order['order_id'] ?? '').toString();
       final message = (order['message'] ?? order['status_message'] ?? order['rejectionReason'] ?? '').toString();
@@ -186,6 +212,7 @@ class _PendingOrdersPageState extends State<PendingOrdersPage> {
       final response = await AqApiService.instance.getLatestUserPortfolio(
         email: widget.email,
         modelName: _modelName,
+        broker: widget.broker,
       );
 
       if (response.statusCode == 200 && mounted) {
@@ -328,34 +355,46 @@ class _PendingOrdersPageState extends State<PendingOrdersPage> {
   }
 
   Widget _headerCard() {
+    final hasError = _error != null && _orders.isEmpty;
+
+    final List<Color> gradientColors;
+    final IconData headerIcon;
+    final String headerTitle;
+
+    if (hasError) {
+      gradientColors = [Colors.red.shade600, Colors.red.shade400];
+      headerIcon = Icons.error_outline;
+      headerTitle = "Unable to Fetch Orders";
+    } else if (_pendingCount > 0) {
+      gradientColors = [Colors.amber.shade600, Colors.amber.shade400];
+      headerIcon = Icons.hourglass_top;
+      headerTitle = "Orders in Progress";
+    } else if (_rejectedCount > 0) {
+      gradientColors = [Colors.red.shade600, Colors.red.shade400];
+      headerIcon = Icons.warning_rounded;
+      headerTitle = "Some Orders Failed";
+    } else if (_orders.isEmpty) {
+      gradientColors = [Colors.amber.shade600, Colors.amber.shade400];
+      headerIcon = Icons.hourglass_top;
+      headerTitle = "Awaiting Order Status";
+    } else {
+      gradientColors = [const Color(0xFF2E7D32), const Color(0xFF43A047)];
+      headerIcon = Icons.check_circle;
+      headerTitle = "All Orders Complete";
+    }
+
     return Container(
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: _pendingCount > 0
-              ? [Colors.amber.shade600, Colors.amber.shade400]
-              : (_rejectedCount > 0
-                  ? [Colors.red.shade600, Colors.red.shade400]
-                  : [const Color(0xFF2E7D32), const Color(0xFF43A047)]),
-        ),
+        gradient: LinearGradient(colors: gradientColors),
         borderRadius: BorderRadius.circular(16),
       ),
       child: Column(
         children: [
-          Icon(
-            _pendingCount > 0
-                ? Icons.hourglass_top
-                : (_rejectedCount > 0 ? Icons.warning_rounded : Icons.check_circle),
-            size: 40,
-            color: Colors.white,
-          ),
+          Icon(headerIcon, size: 40, color: Colors.white),
           const SizedBox(height: 10),
           Text(
-            _pendingCount > 0
-                ? "Orders in Progress"
-                : (_rejectedCount > 0
-                    ? "Some Orders Failed"
-                    : "All Orders Complete"),
+            headerTitle,
             style: const TextStyle(
                 fontSize: 18, fontWeight: FontWeight.w700, color: Colors.white),
           ),

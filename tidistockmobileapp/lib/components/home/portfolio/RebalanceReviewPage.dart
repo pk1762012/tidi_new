@@ -437,14 +437,9 @@ class _RebalanceReviewPageState extends State<RebalanceReviewPage> {
       debugPrint('[RebalanceReview] _checkBrokerConnection error: $e');
     }
 
-    // No connected broker — navigate to BrokerSelectionPage
+    // No connected broker — open broker selection modal
     if (!mounted) return null;
-    final result = await Navigator.push<BrokerConnection>(
-      context,
-      MaterialPageRoute(
-        builder: (_) => BrokerSelectionPage(email: widget.email),
-      ),
-    );
+    final result = await BrokerSelectionPage.show(context, email: widget.email);
     return result;
   }
 

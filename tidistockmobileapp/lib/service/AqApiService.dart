@@ -978,7 +978,7 @@ class AqApiService {
   }) async {
     return http.put(
       Uri.parse('${ccxtUrl}rebalance/update/subscriber-execution'),
-      headers: {'Content-Type': 'application/json'},
+      headers: _headers(),
       body: jsonEncode({
         'user_email': email,
         'user_broker': broker,
@@ -1002,7 +1002,7 @@ class AqApiService {
   }) async {
     return http.post(
       Uri.parse('${ccxtUrl}order/cancel'),
-      headers: {'Content-Type': 'application/json'},
+      headers: _headers(),
       body: jsonEncode({
         'user_email': email,
         'order_id': orderId,
@@ -1020,13 +1020,13 @@ class AqApiService {
   Future<http.Response> getLatestUserPortfolio({
     required String email,
     required String modelName,
+    String? broker,
   }) async {
     final encodedEmail = Uri.encodeComponent(email);
     final encodedModel = Uri.encodeComponent(modelName);
-    return http.get(
-      Uri.parse('${ccxtUrl}rebalance/user-portfolio/latest/$encodedEmail/$encodedModel'),
-      headers: {'Content-Type': 'application/json'},
-    );
+    final uri = Uri.parse('${ccxtUrl}rebalance/user-portfolio/latest/$encodedEmail/$encodedModel')
+        .replace(queryParameters: broker != null ? {'broker': broker} : null);
+    return http.get(uri, headers: _headers());
   }
 
   /// Reset execution status to 'toExecute' for retry flow.
@@ -1054,7 +1054,7 @@ class AqApiService {
   }) async {
     return http.post(
       Uri.parse('${ccxtUrl}rebalance/add-user/status-check-queue'),
-      headers: {'Content-Type': 'application/json'},
+      headers: _headers(),
       body: jsonEncode({
         'userEmail': email,
         'modelName': modelName,
@@ -1132,7 +1132,7 @@ class AqApiService {
   }) async {
     return http.post(
       Uri.parse('${ccxtUrl}rebalance/insert-user-doc'),
-      headers: {'Content-Type': 'application/json'},
+      headers: _headers(),
       body: jsonEncode({
         'userEmail': email,
         'model': model,

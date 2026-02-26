@@ -392,35 +392,99 @@ class _AcademyPageState extends State<AcademyPage>
 
 
   Widget _freeWorkshopInfoCard(BuildContext context) {
-    return GestureDetector(
-      onTap: () {
-        Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (_) => const WorkshopPage(),
+    return Container(
+      margin: const EdgeInsets.only(bottom: 30),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.08),
+            blurRadius: 12,
+            offset: const Offset(0, 6),
           ),
-        );
-      },
-      child: Container(
-        margin: const EdgeInsets.only(bottom: 30),
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(20),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.08),
-              blurRadius: 12,
-              offset: const Offset(0, 6),
+        ],
+      ),
+      child: Column(
+        children: [
+          // Banner image — crop bottom ~35% to hide baked-in fee/register text
+          ClipRRect(
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+            child: SizedBox(
+              height: 200,
+              width: double.infinity,
+              child: FittedBox(
+                fit: BoxFit.cover,
+                alignment: Alignment.topCenter,
+                clipBehavior: Clip.hardEdge,
+                child: Image.asset(
+                  "assets/images/tidi_workshop.png",
+                ),
+              ),
             ),
-          ],
-        ),
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(20),
-          child: Image.asset(
-            "assets/images/tidi_workshop.png",
-            width: double.infinity,
-            fit: BoxFit.cover,
           ),
-        ),
+          // Fee ₹1 badge + View & Register button — outside the image
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
+            decoration: const BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.vertical(bottom: Radius.circular(20)),
+            ),
+            child: Column(
+              children: [
+                // Fee badge
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFFF3E0),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: Colors.orange.shade300),
+                  ),
+                  child: const Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text("🔥", style: TextStyle(fontSize: 18)),
+                      SizedBox(width: 8),
+                      Text(
+                        "Fee: ₹1 Only",
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w800,
+                          color: Color(0xFFE65100),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 12),
+                // View & Register Now button — opens Razorpay workshop payment
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    onPressed: _openWorkshopRegisterSheet,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF1B5E20),
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                      elevation: 0,
+                    ),
+                    child: const Text(
+                      "VIEW & REGISTER NOW",
+                      style: TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 0.5,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -611,6 +675,196 @@ class _AcademyPageState extends State<AcademyPage>
     ],
   };
 
+
+  DateTime _getNextSunday() {
+    DateTime d = DateTime.now();
+    while (d.weekday != DateTime.sunday) {
+      d = d.add(const Duration(days: 1));
+    }
+    return DateTime(d.year, d.month, d.day);
+  }
+
+  void _openWorkshopRegisterSheet() {
+    DateTime tempDate = _getNextSunday();
+    String? selectedBranchId;
+    bool isRegistering = false;
+
+    showDialog(
+      context: context,
+      barrierDismissible: true,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (ctx, setDialog) {
+            return Dialog(
+              backgroundColor: Colors.white,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(24),
+              ),
+              insetPadding: const EdgeInsets.symmetric(horizontal: 20),
+              child: Padding(
+                padding: const EdgeInsets.all(20),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Text(
+                      "Register for Workshop",
+                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      "Fee: ₹1 Only",
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.orange.shade800,
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+
+                    // Date picker
+                    ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.white,
+                        foregroundColor: Colors.black,
+                        elevation: 0,
+                        side: const BorderSide(color: Colors.grey),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                      ),
+                      icon: const Icon(Icons.calendar_month),
+                      label: Text(
+                        "Date: ${tempDate.toString().substring(0, 10)}",
+                      ),
+                      onPressed: isRegistering
+                          ? null
+                          : () async {
+                              final picked = await showDatePicker(
+                                context: ctx,
+                                initialDate: tempDate,
+                                firstDate: tempDate,
+                                lastDate: tempDate.add(const Duration(days: 90)),
+                                selectableDayPredicate: (d) =>
+                                    d.weekday == DateTime.sunday,
+                                builder: (context, child) {
+                                  return Theme(
+                                    data: Theme.of(context).copyWith(
+                                      colorScheme: const ColorScheme.light(
+                                        surface: Colors.white,
+                                        primary: Colors.black,
+                                        onPrimary: Colors.white,
+                                        onSurface: Colors.black,
+                                      ),
+                                      dialogBackgroundColor: Colors.white,
+                                    ),
+                                    child: child!,
+                                  );
+                                },
+                              );
+                              if (picked != null) {
+                                setDialog(() => tempDate = picked);
+                              }
+                            },
+                    ),
+
+                    const SizedBox(height: 16),
+
+                    // Branch dropdown
+                    DropdownButtonFormField<String>(
+                      hint: const Text("Select Branch"),
+                      value: selectedBranchId,
+                      dropdownColor: Colors.white,
+                      items: _branches.map<DropdownMenuItem<String>>((b) {
+                        return DropdownMenuItem<String>(
+                          value: b['id'].toString(),
+                          child: Text(
+                            b['name'].toString(),
+                            style: const TextStyle(color: Colors.black),
+                          ),
+                        );
+                      }).toList(),
+                      onChanged: isRegistering
+                          ? null
+                          : (String? v) {
+                              setDialog(() => selectedBranchId = v);
+                            },
+                      decoration: InputDecoration(
+                        filled: true,
+                        fillColor: Colors.white,
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                        enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(14),
+                          borderSide: const BorderSide(color: Colors.grey),
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(14),
+                          borderSide: const BorderSide(color: Colors.black),
+                        ),
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 16, vertical: 14,
+                        ),
+                      ),
+                    ),
+
+                    const SizedBox(height: 24),
+
+                    // Confirm & Pay button
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton(
+                        onPressed: (selectedBranchId == null || isRegistering)
+                            ? null
+                            : () async {
+                                setDialog(() => isRegistering = true);
+                                final date =
+                                    tempDate.toIso8601String().substring(0, 10);
+                                final opened =
+                                    await razorpayService.openWorkshopCheckout(
+                                        date, selectedBranchId!);
+                                if (!opened) {
+                                  setDialog(() => isRegistering = false);
+                                }
+                              },
+                        style: ElevatedButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                        ),
+                        child: isRegistering
+                            ? const SizedBox(
+                                width: 20,
+                                height: 20,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2, color: Colors.white),
+                              )
+                            : const Text("Confirm & Pay ₹1"),
+                      ),
+                    ),
+
+                    const SizedBox(height: 8),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.lock_outline, size: 14,
+                            color: Colors.grey.shade500),
+                        const SizedBox(width: 4),
+                        Text('Secured by Razorpay',
+                            style: TextStyle(
+                                fontSize: 12, color: Colors.grey.shade500)),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
 
   void _onBookCourse(BuildContext context, dynamic course) {
     showModalBottomSheet(
