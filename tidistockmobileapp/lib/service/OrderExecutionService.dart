@@ -5,6 +5,7 @@ import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:tidistockmobileapp/models/broker_connection.dart';
 import 'package:tidistockmobileapp/models/order_result.dart';
 import 'package:tidistockmobileapp/service/AqApiService.dart';
+import 'package:tidistockmobileapp/service/BrokerSessionService.dart';
 
 /// Exception thrown when broker is Zerodha and requires WebView basket flow.
 /// ExecutionStatusPage catches this and switches to WebView mode.
@@ -27,6 +28,37 @@ class OrderExecutionService {
   String _lastUsedBrokerName = '';
   String get lastUsedBrokerName => _lastUsedBrokerName;
 
+  /// Canonical broker name map — ensures consistent naming across the app.
+  /// Matches RGX connectBroker.js broker identifiers.
+  static const Map<String, String> _brokerAliases = {
+    'zerodha': 'Zerodha',
+    'angel one': 'Angel One',
+    'angelone': 'Angel One',
+    'groww': 'Groww',
+    'upstox': 'Upstox',
+    'icicidirect': 'ICICI Direct',
+    'icici direct': 'ICICI Direct',
+    'icici': 'ICICI Direct',
+    'hdfc': 'Hdfc Securities',
+    'hdfc securities': 'Hdfc Securities',
+    'fyers': 'Fyers',
+    'motilal': 'Motilal Oswal',
+    'motilal oswal': 'Motilal Oswal',
+    'dhan': 'Dhan',
+    'aliceblue': 'AliceBlue',
+    'alice blue': 'AliceBlue',
+    'kotak': 'Kotak',
+    'iifl': 'IIFL Securities',
+    'iifl securities': 'IIFL Securities',
+    'dummybroker': 'DummyBroker',
+  };
+
+  /// Normalize broker name to canonical form for consistent API calls.
+  static String normalizeBrokerName(String name) {
+    final lower = name.toLowerCase().trim();
+    return _brokerAliases[lower] ?? name;
+  }
+
   /// Select the best broker for execution.
   /// Priority: primary + effectively connected > effectively connected > connected.
   BrokerConnection? _selectBroker(List<BrokerConnection> connections) {
@@ -40,6 +72,37 @@ class OrderExecutionService {
       if (c.isConnected) return c;
     }
     return null;
+  }
+
+  /// Pre-flight broker session validation (matching RGX validateBrokerSession).
+  /// Checks if the broker token is still valid and session is fresh.
+  Future<void> _validateBrokerSession(BrokerConnection broker) async {
+    // Check token expiry
+    if (broker.isTokenExpired) {
+      throw Exception('session expired for ${broker.broker}. Please reconnect.');
+    }
+
+    // Check if session was established today (IST) — brokers like Angel One,
+    // AliceBlue, Dhan require daily re-authentication
+    final brokerLower = broker.broker.toLowerCase();
+    final needsDailyAuth = ['angel one', 'angelone', 'aliceblue', 'alice blue', 'dhan']
+        .contains(brokerLower);
+
+    if (needsDailyAuth) {
+      final isFresh = await BrokerSessionService.instance.isSessionFresh(broker.broker);
+      if (!isFresh) {
+        debugPrint('[OrderExecution] Session for ${broker.broker} is stale (not today)');
+        // Don't block execution — the CCXT server will validate the actual token
+        // Just log a warning for debugging
+      }
+    }
+
+    // Validate that essential credentials exist
+    final hasToken = (broker.jwtToken != null && broker.jwtToken!.isNotEmpty) ||
+        (broker.apiKey != null && broker.apiKey!.isNotEmpty);
+    if (!hasToken) {
+      throw Exception('No credentials found for ${broker.broker}. Please reconnect.');
+    }
   }
 
   /// Execute a list of orders through the connected broker via CCXT
@@ -90,13 +153,14 @@ class OrderExecutionService {
     if (selected == null) {
       throw Exception('No connected broker found. Please reconnect your broker.');
     }
-    if (selected.isTokenExpired) {
-      throw Exception('session expired for ${selected.broker}. Please reconnect.');
-    }
+
+    // Pre-flight session validation (matching RGX validateBrokerSession)
+    await _validateBrokerSession(selected);
 
     debugPrint('[OrderExecution] Selected broker: ${selected.broker} (primary=${selected.isPrimary})');
 
-    final brokerName = selected.broker;
+    // Normalize broker name for consistent API calls
+    final brokerName = normalizeBrokerName(selected.broker);
     _lastUsedBrokerName = brokerName;
     final apiKey = selected.apiKey ?? '';
     final jwtToken = selected.jwtToken ?? '';

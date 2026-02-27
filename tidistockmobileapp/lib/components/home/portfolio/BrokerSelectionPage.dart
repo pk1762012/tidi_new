@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -65,7 +66,9 @@ class _BrokerSelectionPageState extends State<BrokerSelectionPage> {
 
   Future<void> _fetchConnectedBrokers() async {
     try {
-      final response = await AqApiService.instance.getConnectedBrokers(widget.email);
+      final response = await AqApiService.instance
+          .getConnectedBrokers(widget.email)
+          .timeout(const Duration(seconds: 15));
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
         setState(() {

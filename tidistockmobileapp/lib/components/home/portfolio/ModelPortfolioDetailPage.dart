@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:fl_chart/fl_chart.dart';
@@ -71,6 +72,7 @@ class _ModelPortfolioDetailPageState extends State<ModelPortfolioDetailPage>
   double _totalCurrent = 0;
   PortfolioRebalanceStatus? _rebalanceStatus;
   bool _disclaimerAccepted = false;
+  bool _brokerLoading = false;
 
   static const Map<String, String> _indexSymbols = {
     'Nifty 50': '^NSEI',
@@ -708,16 +710,15 @@ class _ModelPortfolioDetailPageState extends State<ModelPortfolioDetailPage>
                     Navigator.push(
                       context,
                       MaterialPageRoute(
-                        builder: (_) => InvestmentModal(
+                        builder: (_) => CurrentHoldingsPreviewPage(
                           portfolio: portfolio,
                           email: userEmail!,
-                          brokerName: broker.broker,
                         ),
                       ),
-                    );
+                    ).then((_) => _checkPendingRebalance());
                   },
-                  icon: const Icon(Icons.add_circle_outline, size: 18),
-                  label: const Text("Invest More"),
+                  icon: const Icon(Icons.sync_rounded, size: 18),
+                  label: const Text("View & Rebalance"),
                   style: OutlinedButton.styleFrom(
                     foregroundColor: const Color(0xFF1565C0),
                     side: const BorderSide(color: Color(0xFF1565C0)),
@@ -2499,12 +2500,17 @@ class _ModelPortfolioDetailPageState extends State<ModelPortfolioDetailPage>
   Future<BrokerConnection?> _ensureBrokerConnected() async {
     if (userEmail == null) return null;
 
-    // Invalidate cache to get fresh broker status
-    CacheService.instance.invalidate('aq/user/brokers:$userEmail');
+    // Show loading indicator while checking broker status
+    if (mounted) setState(() => _brokerLoading = true);
 
     try {
-      final response =
-          await AqApiService.instance.getConnectedBrokers(userEmail!);
+      // Invalidate cache to get fresh broker status
+      CacheService.instance.invalidate('aq/user/brokers:$userEmail');
+
+      final response = await AqApiService.instance
+          .getConnectedBrokers(userEmail!)
+          .timeout(const Duration(seconds: 15));
+      if (!mounted) return null;
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
         final rawData = data['data'];
@@ -2522,6 +2528,7 @@ class _ModelPortfolioDetailPageState extends State<ModelPortfolioDetailPage>
             .toList();
 
         if (connected.isNotEmpty) {
+          if (mounted) setState(() => _brokerLoading = false);
           if (connected.length == 1) return connected.first;
           // Multiple brokers — let user pick via modal
           if (!mounted) return null;
@@ -2531,6 +2538,22 @@ class _ModelPortfolioDetailPageState extends State<ModelPortfolioDetailPage>
       }
     } catch (e) {
       debugPrint('[DetailPage] _ensureBrokerConnected error: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              e.toString().contains('TimeoutException')
+                  ? 'Broker check timed out. Please try again.'
+                  : 'Could not check broker status. Please try again.',
+            ),
+            backgroundColor: Colors.orange.shade700,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    } finally {
+      // Always hide loading when done checking
+      if (mounted) setState(() => _brokerLoading = false);
     }
 
     // No connected broker — open broker selection modal directly
@@ -2619,8 +2642,8 @@ class _ModelPortfolioDetailPageState extends State<ModelPortfolioDetailPage>
           ).then((_) => _checkPendingRebalance());
         };
       } else {
-        label = "Invest More";
-        icon = Icons.add_circle_outline_rounded;
+        label = "View & Rebalance";
+        icon = Icons.sync_rounded;
         bgColor = const Color(0xFF1565C0);
         onPressed = () async {
           final broker = await _ensureBrokerConnected();
@@ -2631,22 +2654,9 @@ class _ModelPortfolioDetailPageState extends State<ModelPortfolioDetailPage>
               builder: (_) => CurrentHoldingsPreviewPage(
                 portfolio: portfolio,
                 email: userEmail!,
-                proceedLabel: 'Proceed to Invest',
-                onProceed: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => InvestmentModal(
-                        portfolio: portfolio,
-                        email: userEmail!,
-                        brokerName: broker.broker,
-                      ),
-                    ),
-                  );
-                },
               ),
             ),
-          );
+          ).then((_) => _checkPendingRebalance());
         };
       }
     } else {
@@ -2672,29 +2682,53 @@ class _ModelPortfolioDetailPageState extends State<ModelPortfolioDetailPage>
           width: double.infinity,
           height: 50,
           child: ElevatedButton.icon(
-            onPressed: onPressed,
+            onPressed: _brokerLoading ? null : onPressed,
             style: ElevatedButton.styleFrom(
               backgroundColor: bgColor,
+              disabledBackgroundColor: bgColor.withOpacity(0.7),
               shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(14)),
               elevation: 0,
             ),
             icon: const SizedBox.shrink(),
-            label: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  label,
-                  style: const TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w700,
-                    color: Colors.white,
+            label: _brokerLoading
+                ? const Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Colors.white,
+                        ),
+                      ),
+                      SizedBox(width: 10),
+                      Text(
+                        'Connecting broker...',
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w700,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ],
+                  )
+                : Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        label,
+                        style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w700,
+                          color: Colors.white,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Icon(icon, color: Colors.white, size: 20),
+                    ],
                   ),
-                ),
-                const SizedBox(width: 8),
-                Icon(icon, color: Colors.white, size: 20),
-              ],
-            ),
           ),
         ),
       ),

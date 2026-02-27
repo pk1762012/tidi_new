@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:tidistockmobileapp/models/broker_config.dart';
 import 'package:tidistockmobileapp/service/AqApiService.dart';
+import 'package:tidistockmobileapp/service/BrokerCryptoService.dart';
 import 'package:tidistockmobileapp/service/BrokerSessionService.dart';
 import 'package:tidistockmobileapp/service/CacheService.dart';
 import 'package:tidistockmobileapp/widgets/customScaffold.dart';
@@ -184,7 +185,7 @@ class _BrokerCredentialPageState extends State<BrokerCredentialPage> {
       uid: uid,
       apiKey: values['apiKey']!,
       secretKey: values['secretKey']!,
-      redirectUri: 'https://prod.alphaquark.in/stock-recommendation',
+      redirectUri: AqApiService.instance.brokerRedirectUrl,
     );
 
     if (resp.statusCode == 200) {
@@ -203,7 +204,7 @@ class _BrokerCredentialPageState extends State<BrokerCredentialPage> {
       uid: uid,
       clientCode: values['clientCode']!,
       secretKey: values['secretKey']!,
-      redirectUrl: 'https://prod.alphaquark.in/stock-recommendation',
+      redirectUrl: AqApiService.instance.brokerRedirectUrl,
     );
 
     if (resp.statusCode == 200) {
@@ -275,8 +276,7 @@ class _BrokerCredentialPageState extends State<BrokerCredentialPage> {
       uid: uid,
       apiKey: values['apiKey']!,
       clientCode: values['clientCode']!,
-      redirectUrl: widget.brokerConfig.redirectUrl ??
-          'https://ccxt.alphaquark.in/motilal-oswal/callback',
+      redirectUrl: AqApiService.instance.brokerRedirectUrl,
     );
 
     if (resp.statusCode == 200) {
@@ -390,10 +390,23 @@ class _BrokerCredentialPageState extends State<BrokerCredentialPage> {
           data['response'];
 
       if (url != null && url is String && url.startsWith('http')) {
+        // Upstox: check for error_code in the auth URL (matching RGX upstoxModal.js)
+        if (widget.brokerConfig.key == 'upstox' &&
+            (url.contains('error_code') || url.contains('error_message'))) {
+          final errorUri = Uri.tryParse(url);
+          final errorMsg = errorUri?.queryParameters['error_message'] ?? '';
+          debugPrint('[Upstox] OAuth error in URL: $errorMsg');
+          setState(() {
+            _status = 'error';
+            _errorMessage = errorMsg.isNotEmpty
+                ? Uri.decodeComponent(errorMsg)
+                : 'Please check your API Key, Secret Key and Redirect URI in your Upstox app settings.';
+          });
+          return;
+        }
         setState(() => _status = 'webview');
         _setupWebView(url);
       } else {
-        // No valid URL in response
         debugPrint('[BrokerCredential] No valid OAuth URL in response: $data');
         setState(() {
           _status = 'error';
@@ -430,13 +443,14 @@ class _BrokerCredentialPageState extends State<BrokerCredentialPage> {
   /// Called on successful broker connection.
   Future<void> _onConnectionSuccess() async {
     CacheService.instance.invalidate('aq/user/brokers:${widget.email}');
+    AqApiService.instance.invalidateUserCache();
     await BrokerSessionService.instance
         .saveSessionTime(widget.brokerConfig.name);
-    // Non-critical: sync model portfolio broker
+    // Non-critical: sync model portfolio broker (use apiBrokerName for API calls)
     AqApiService.instance
         .changeBrokerModelPortfolio(
           email: widget.email,
-          broker: widget.brokerConfig.name,
+          broker: widget.brokerConfig.apiBrokerName,
         )
         .catchError((_) {});
     setState(() => _status = 'success');
@@ -474,7 +488,12 @@ class _BrokerCredentialPageState extends State<BrokerCredentialPage> {
   bool _isCallbackUrl(String url) {
     return url.contains('broker-callback') ||
         url.contains('request_token') ||
+        url.contains('requestToken=') ||
         url.contains('auth_code') ||
+        url.contains('code=') ||
+        url.contains('apisession=') ||
+        url.contains('accessToken=') ||
+        url.contains('access_token=') ||
         url.contains('stock-recommendation') ||
         url.contains('zerodha/callback') ||
         url.contains('motilal-oswal/callback') ||
@@ -487,12 +506,68 @@ class _BrokerCredentialPageState extends State<BrokerCredentialPage> {
 
     try {
       final uri = Uri.parse(callbackUrl);
+
+      // Broker-specific callback handlers (matching RGX per-modal flows)
+      switch (widget.brokerConfig.key) {
+        case 'upstox':
+          final code = uri.queryParameters['code'] ??
+              uri.queryParameters['auth_code'] ??
+              uri.queryParameters['request_token'];
+          if (code != null) {
+            await _handleUpstoxAuthCallback(code);
+            return;
+          }
+          break;
+
+        case 'icicidirect':
+          final apisession = uri.queryParameters['apisession'] ??
+              uri.queryParameters['auth_code'] ??
+              uri.queryParameters['code'];
+          if (apisession != null) {
+            await _handleIciciAuthCallback(apisession);
+            return;
+          }
+          break;
+
+        case 'hdfc':
+          // HDFC returns camelCase requestToken
+          final requestToken = uri.queryParameters['requestToken'] ??
+              uri.queryParameters['request_token'] ??
+              uri.queryParameters['code'];
+          if (requestToken != null) {
+            await _handleHdfcAuthCallback(requestToken);
+            return;
+          }
+          break;
+
+        case 'motilal':
+          // Motilal returns accessToken directly
+          final accessToken = uri.queryParameters['accessToken'] ??
+              uri.queryParameters['access_token'] ??
+              uri.queryParameters['request_token'];
+          if (accessToken != null) {
+            await _handleMotilalAuthCallback(accessToken);
+            return;
+          }
+          break;
+
+        case 'fyers':
+          final authCode = uri.queryParameters['auth_code'] ??
+              uri.queryParameters['code'] ??
+              uri.queryParameters['request_token'];
+          if (authCode != null) {
+            await _handleFyersAuthCallback(authCode);
+            return;
+          }
+          break;
+      }
+
+      // Generic fallback for other brokers
       final requestToken = uri.queryParameters['request_token'] ??
           uri.queryParameters['auth_code'] ??
           uri.queryParameters['code'];
 
       if (requestToken != null) {
-        // Send the token to the server to complete connection
         final uid = await AqApiService.instance.getUserObjectId(widget.email);
         http.Response response;
 
@@ -532,9 +607,285 @@ class _BrokerCredentialPageState extends State<BrokerCredentialPage> {
         _errorMessage = 'Authentication failed. Please try again.';
       });
     } catch (e) {
+      debugPrint('[BrokerCredential] callback error: $e');
       setState(() {
         _status = 'error';
         _errorMessage = 'Failed to complete broker authentication.';
+      });
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────────────
+  // Broker-specific OAuth callback handlers (matching RGX per-modal flows)
+  // ─────────────────────────────────────────────────────────────────────
+
+  /// Upstox: exchange code → access_token via ccxt/upstox/gen-access-token,
+  /// then save with full credentials. Matches RGX upstoxModal.js.
+  Future<void> _handleUpstoxAuthCallback(String code) async {
+    final values = _collectFieldValues();
+    final apiKey = values['apiKey'] ?? '';
+    final secretKey = values['secretKey'] ?? '';
+    final redirectUrl = AqApiService.instance.brokerRedirectUrl;
+
+    debugPrint('[Upstox] Exchanging code for access_token...');
+
+    final tokenResp = await AqApiService.instance.exchangeUpstoxToken(
+      apiKey: apiKey,
+      apiSecret: secretKey,
+      code: code,
+      redirectUri: redirectUrl,
+    );
+
+    debugPrint('[Upstox] gen-access-token status=${tokenResp.statusCode}');
+
+    if (tokenResp.statusCode == 200) {
+      final tokenData = jsonDecode(tokenResp.body);
+      final accessToken = tokenData['access_token'] ??
+          tokenData['accessToken'] ??
+          tokenData['jwtToken'] ??
+          code;
+
+      final uid = await AqApiService.instance.getUserObjectId(widget.email);
+      final crypto = BrokerCryptoService.instance;
+      if (uid != null) {
+        await AqApiService.instance.connectCredentialBroker(
+          uid: uid,
+          userBroker: 'Upstox',
+          credentials: {
+            'jwtToken': accessToken,
+            'apiKey': crypto.encryptCredential(apiKey),
+            'secretKey': crypto.encryptCredential(secretKey),
+          },
+        );
+      }
+
+      await AqApiService.instance.connectBrokerByEmail(
+        email: widget.email,
+        broker: 'Upstox',
+        brokerData: {
+          'jwtToken': accessToken,
+          'status': 'connected',
+        },
+      );
+
+      await _onConnectionSuccess();
+    } else {
+      debugPrint('[Upstox] gen-access-token failed: ${tokenResp.body}');
+      setState(() {
+        _status = 'error';
+        _errorMessage = 'Failed to get Upstox access token. Please try again.';
+      });
+    }
+  }
+
+  /// ICICI: exchange apisession → session_token via ccxt/icici/customer-details,
+  /// then save with full credentials. Matches RGX icicimodal.js.
+  Future<void> _handleIciciAuthCallback(String apisession) async {
+    final values = _collectFieldValues();
+    final apiKey = values['apiKey'] ?? '';
+    final secretKey = values['secretKey'] ?? '';
+
+    debugPrint('[ICICI] Exchanging apisession for session_token...');
+
+    final tokenResp = await AqApiService.instance.exchangeIciciToken(
+      apiKey: apiKey,
+      accessToken: apisession,
+    );
+
+    debugPrint('[ICICI] customer-details status=${tokenResp.statusCode}');
+
+    if (tokenResp.statusCode == 200) {
+      final tokenData = jsonDecode(tokenResp.body);
+      // RGX checks: response.data.Status === 200 && response.data.Success.session_token
+      final sessionToken = tokenData['Success']?['session_token'] ??
+          tokenData['session_token'] ??
+          tokenData['sessionToken'] ??
+          tokenData['jwtToken'] ??
+          apisession;
+
+      final uid = await AqApiService.instance.getUserObjectId(widget.email);
+      final crypto = BrokerCryptoService.instance;
+      if (uid != null) {
+        await AqApiService.instance.connectCredentialBroker(
+          uid: uid,
+          userBroker: 'ICICI Direct',
+          credentials: {
+            'jwtToken': sessionToken,
+            'apiKey': crypto.encryptCredential(apiKey),
+            'secretKey': crypto.encryptCredential(secretKey),
+          },
+        );
+      }
+
+      await AqApiService.instance.connectBrokerByEmail(
+        email: widget.email,
+        broker: 'ICICI Direct',
+        brokerData: {
+          'jwtToken': sessionToken,
+          'status': 'connected',
+        },
+      );
+
+      await _onConnectionSuccess();
+    } else {
+      debugPrint('[ICICI] customer-details failed: ${tokenResp.body}');
+      setState(() {
+        _status = 'error';
+        _errorMessage = 'ICICI authentication failed. Please try again.';
+      });
+    }
+  }
+
+  /// HDFC: exchange requestToken → accessToken via ccxt/hdfc/access-token,
+  /// then save with full credentials. Matches RGX HDFCconnectModal.js.
+  Future<void> _handleHdfcAuthCallback(String requestToken) async {
+    final values = _collectFieldValues();
+    final apiKey = values['apiKey'] ?? '';
+    final secretKey = values['secretKey'] ?? '';
+
+    debugPrint('[HDFC] Exchanging requestToken for accessToken...');
+
+    final tokenResp = await AqApiService.instance.exchangeHdfcToken(
+      apiKey: apiKey,
+      apiSecret: secretKey,
+      requestToken: requestToken,
+    );
+
+    debugPrint('[HDFC] access-token status=${tokenResp.statusCode}');
+
+    if (tokenResp.statusCode == 200) {
+      final tokenData = jsonDecode(tokenResp.body);
+      final accessToken = tokenData['accessToken'] ??
+          tokenData['access_token'] ??
+          tokenData['jwtToken'] ??
+          requestToken;
+
+      final uid = await AqApiService.instance.getUserObjectId(widget.email);
+      final crypto = BrokerCryptoService.instance;
+      if (uid != null) {
+        await AqApiService.instance.connectCredentialBroker(
+          uid: uid,
+          userBroker: 'Hdfc Securities',
+          credentials: {
+            'jwtToken': accessToken,
+            'apiKey': crypto.encryptCredential(apiKey),
+            'secretKey': crypto.encryptCredential(secretKey),
+          },
+        );
+      }
+
+      await AqApiService.instance.connectBrokerByEmail(
+        email: widget.email,
+        broker: 'Hdfc Securities',
+        brokerData: {
+          'jwtToken': accessToken,
+          'status': 'connected',
+        },
+      );
+
+      await _onConnectionSuccess();
+    } else {
+      debugPrint('[HDFC] access-token failed: ${tokenResp.body}');
+      setState(() {
+        _status = 'error';
+        _errorMessage = 'HDFC authentication failed. Please try again.';
+      });
+    }
+  }
+
+  /// Motilal: save accessToken directly with full credentials.
+  /// Matches RGX MotilalModal.js connectBrokerDbUpdate().
+  Future<void> _handleMotilalAuthCallback(String accessToken) async {
+    final values = _collectFieldValues();
+    final apiKey = values['apiKey'] ?? '';
+    final clientCode = values['clientCode'] ?? '';
+    final redirectUrl = AqApiService.instance.brokerRedirectUrl;
+
+    debugPrint('[Motilal] Saving accessToken with credentials...');
+
+    final uid = await AqApiService.instance.getUserObjectId(widget.email);
+    final crypto = BrokerCryptoService.instance;
+    if (uid != null) {
+      await AqApiService.instance.connectCredentialBroker(
+        uid: uid,
+        userBroker: 'Motilal Oswal',
+        credentials: {
+          'jwtToken': accessToken,
+          'apiKey': crypto.encryptCredential(apiKey),
+          'clientCode': clientCode,
+          'redirectUrl': redirectUrl,
+        },
+      );
+    }
+
+    await AqApiService.instance.connectBrokerByEmail(
+      email: widget.email,
+      broker: 'Motilal Oswal',
+      brokerData: {
+        'jwtToken': accessToken,
+        'clientCode': clientCode,
+        'status': 'connected',
+      },
+    );
+
+    await _onConnectionSuccess();
+  }
+
+  /// Fyers: exchange auth_code for access_token via ccxt/fyers/gen-access-token,
+  /// then save full credentials (jwtToken, clientCode, secretKey) to connect-broker.
+  /// Matches RGX FyersConnect.js flow exactly.
+  Future<void> _handleFyersAuthCallback(String authCode) async {
+    final values = _collectFieldValues();
+    final clientCode = values['clientCode'] ?? '';
+    final secretKey = values['secretKey'] ?? '';
+
+    debugPrint('[Fyers] Exchanging auth_code for access_token...');
+
+    final tokenResp = await AqApiService.instance.exchangeFyersToken(
+      clientId: clientCode,
+      clientSecret: secretKey,
+      authCode: authCode,
+    );
+
+    debugPrint('[Fyers] gen-access-token status=${tokenResp.statusCode}');
+
+    if (tokenResp.statusCode == 200) {
+      final tokenData = jsonDecode(tokenResp.body);
+      final accessToken = tokenData['accessToken'] ??
+          tokenData['access_token'] ??
+          tokenData['jwtToken'] ??
+          authCode;
+
+      final uid = await AqApiService.instance.getUserObjectId(widget.email);
+      final crypto = BrokerCryptoService.instance;
+      if (uid != null) {
+        await AqApiService.instance.connectCredentialBroker(
+          uid: uid,
+          userBroker: 'Fyers',
+          credentials: {
+            'jwtToken': accessToken,
+            'clientCode': clientCode,
+            'secretKey': crypto.encryptCredential(secretKey),
+          },
+        );
+      }
+
+      await AqApiService.instance.connectBrokerByEmail(
+        email: widget.email,
+        broker: 'Fyers',
+        brokerData: {
+          'jwtToken': accessToken,
+          'clientCode': clientCode,
+          'status': 'connected',
+        },
+      );
+
+      await _onConnectionSuccess();
+    } else {
+      debugPrint('[Fyers] gen-access-token failed: ${tokenResp.body}');
+      setState(() {
+        _status = 'error';
+        _errorMessage = 'Failed to get Fyers access token. Please try again.';
       });
     }
   }

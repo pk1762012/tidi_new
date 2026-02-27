@@ -11,6 +11,7 @@ import '../../../service/ApiService.dart';
 import '../../../service/AqApiService.dart';
 import '../../../service/CacheService.dart';
 import '../../../service/RazorPayService.dart';
+import '../../../service/SubscriptionService.dart';
 
 // ---------------------------------------------------------------------------
 // Country code data
@@ -144,6 +145,8 @@ class _InvestInPlanSheetState extends State<InvestInPlanSheet>
   String? _selectedTier;
   bool _consentChecked = false;
   bool _loading = false;
+  bool _isTrialActive = false;
+  String? _subscribeError;
   late RazorpayService _razorpayService;
 
   // Animation
@@ -201,6 +204,16 @@ class _InvestInPlanSheetState extends State<InvestInPlanSheet>
     _expandControllers[0]!.value = 1.0;
 
     _loadUserData();
+    _loadTrialStatus();
+  }
+
+  Future<void> _loadTrialStatus() async {
+    final status = await SubscriptionService.getStatus();
+    if (mounted) {
+      setState(() {
+        _isTrialActive = status.isTrial;
+      });
+    }
   }
 
   @override
@@ -373,7 +386,7 @@ class _InvestInPlanSheetState extends State<InvestInPlanSheet>
     }
   }
 
-  bool get _isFree => widget.portfolio.pricing.isEmpty;
+  bool get _isFree => widget.portfolio.pricing.isEmpty || _isTrialActive;
 
   int get _selectedAmount =>
       _selectedTier != null ? (widget.portfolio.pricing[_selectedTier] ?? 0) : 0;
@@ -571,20 +584,19 @@ class _InvestInPlanSheetState extends State<InvestInPlanSheet>
 
     if (token == null || token.isEmpty) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(storedEmail != null && storedEmail.isNotEmpty
-                ? 'Session expired. Please log in again.'
-                : 'Please log in to subscribe.'),
-            backgroundColor: Colors.red.shade700,
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
+        setState(() {
+          _subscribeError = storedEmail != null && storedEmail.isNotEmpty
+              ? 'Session expired. Please log in again.'
+              : 'Please log in to subscribe.';
+        });
       }
       return;
     }
 
-    setState(() => _loading = true);
+    setState(() {
+      _loading = true;
+      _subscribeError = null;
+    });
 
     try {
       // strategyId for _saveLocalSubscription — prefer the AQ strategyId, fall back to id
@@ -610,23 +622,33 @@ class _InvestInPlanSheetState extends State<InvestInPlanSheet>
           ? widget.portfolio.id
           : (widget.portfolio.strategyId ?? '');
       debugPrint('[InvestInPlanSheet] Using portfolioId for API: $portfolioId');
+
+      // Ensure email & PAN are saved to backend profile before subscribing
+      // (backend looks up email from user profile, not request body)
+      try {
+        final updateResp = await ApiService().savePanDetails(
+          pan.isNotEmpty ? pan : null,
+          email.isNotEmpty ? email : null,
+        );
+        debugPrint('[InvestInPlanSheet] savePanDetails response: ${updateResp.statusCode}');
+      } catch (e) {
+        debugPrint('[InvestInPlanSheet] savePanDetails error (non-blocking): $e');
+      }
+
       if (portfolioId.isEmpty) {
         debugPrint('[InvestInPlanSheet] ERROR: No valid portfolioId found, cannot subscribe');
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Unable to subscribe: portfolio ID not found. Please try again.'),
-              backgroundColor: Colors.red,
-              behavior: SnackBarBehavior.floating,
-            ),
-          );
-          setState(() => _loading = false);
+          setState(() {
+            _loading = false;
+            _subscribeError = 'Unable to subscribe: portfolio ID not found. Please try again.';
+          });
         }
         return;
       }
-      final response = await ApiService().subscribeToModelPortfolio(
-        strategyId: portfolioId,
+      final response = await ApiService().subscribeFreeModelPortfolio(
+        strategyId: strategyId,
         planId: portfolioId,
+        email: email,
       ).timeout(const Duration(seconds: 30));
 
       debugPrint('[InvestInPlanSheet] TIDI subscribe response: ${response.statusCode} ${response.body}');
@@ -688,13 +710,10 @@ class _InvestInPlanSheetState extends State<InvestInPlanSheet>
           ),
         );
       } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: const Text('Subscription failed. Please try again.'),
-            backgroundColor: Colors.red.shade700,
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
+        debugPrint('[InvestInPlanSheet] Subscribe failed: ${response.statusCode} ${response.body}');
+        setState(() {
+          _subscribeError = 'Subscription failed (${response.statusCode}). Please try again.';
+        });
       }
     } catch (e, stackTrace) {
       debugPrint('[InvestInPlanSheet] _handleFreeSubscribe FULL ERROR: $e');
@@ -714,13 +733,9 @@ class _InvestInPlanSheetState extends State<InvestInPlanSheet>
           message = 'Invalid response from server. Please try again.';
         }
 
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(message),
-            backgroundColor: Colors.red.shade700,
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
+        setState(() {
+          _subscribeError = message;
+        });
       }
     } finally {
       if (mounted) setState(() => _loading = false);
@@ -1817,16 +1832,26 @@ class _InvestInPlanSheetState extends State<InvestInPlanSheet>
               ),
               child: Row(
                 children: [
-                  const Icon(Icons.check_circle_outline,
-                      color: Color(0xFF2E7D32), size: 28),
+                  Icon(
+                    _isTrialActive && widget.portfolio.pricing.isNotEmpty
+                        ? Icons.access_time
+                        : Icons.check_circle_outline,
+                    color: const Color(0xFF2E7D32), size: 28),
                   const SizedBox(width: 12),
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Text('Free Portfolio', style: TextStyle(
-                          fontSize: 16, fontWeight: FontWeight.w700, color: Color(0xFF2E7D32))),
-                        Text('No subscription fee required',
+                        Text(
+                          _isTrialActive && widget.portfolio.pricing.isNotEmpty
+                              ? 'Free Trial Access'
+                              : 'Free Portfolio',
+                          style: const TextStyle(
+                            fontSize: 16, fontWeight: FontWeight.w700, color: Color(0xFF2E7D32))),
+                        Text(
+                          _isTrialActive && widget.portfolio.pricing.isNotEmpty
+                              ? 'Included in your free trial period'
+                              : 'No subscription fee required',
                           style: TextStyle(fontSize: 13, color: Colors.grey.shade600)),
                       ],
                     ),
@@ -1906,6 +1931,29 @@ class _InvestInPlanSheetState extends State<InvestInPlanSheet>
             dense: true,
             activeColor: const Color(0xFF2E7D32),
           ),
+          if (_subscribeError != null) ...[
+            const SizedBox(height: 8),
+            Container(
+              padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 14),
+              decoration: BoxDecoration(
+                color: Colors.red.shade50,
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: Colors.red.shade200),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.error_outline, color: Colors.red.shade700, size: 18),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      _subscribeError!,
+                      style: TextStyle(color: Colors.red.shade700, fontSize: 13),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
           const SizedBox(height: 16),
           // Pay / Subscribe button
           SizedBox(

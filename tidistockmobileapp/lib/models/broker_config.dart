@@ -24,6 +24,9 @@ class BrokerConfig {
   final List<String> instructionSteps;
   final String? instructionNote;
   final String? redirectUrl;
+  /// Broker name used in API calls (e.g., 'Kotak Neo' for model portfolio).
+  /// Falls back to [name] if not specified.
+  final String? _apiBrokerName;
 
   const BrokerConfig({
     required this.name,
@@ -35,7 +38,11 @@ class BrokerConfig {
     this.instructionSteps = const [],
     this.instructionNote,
     this.redirectUrl,
-  });
+    String? apiBrokerName,
+  }) : _apiBrokerName = apiBrokerName;
+
+  /// The broker name to use in API calls (change_broker_model_pf, etc.)
+  String get apiBrokerName => _apiBrokerName ?? name;
 
   String get iconLetter => name.isNotEmpty ? name[0] : '?';
 }
@@ -295,6 +302,7 @@ class BrokerRegistry {
     // ── Kotak ───────────────────────────────────────────────────────────
     BrokerConfig(
       name: 'Kotak',
+      apiBrokerName: 'Kotak Neo',
       key: 'kotak',
       logoAsset: 'assets/images/brokers/kotak.png',
       authType: BrokerAuthType.credential,

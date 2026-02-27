@@ -11,6 +11,7 @@ import 'package:tidistockmobileapp/theme/theme.dart';
 import 'package:tidistockmobileapp/widgets/customScaffold.dart';
 import 'package:tidistockmobileapp/service/ApiService.dart';
 import 'package:tidistockmobileapp/service/CacheService.dart';
+import 'package:tidistockmobileapp/service/SubscriptionService.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../../widgets/SubscriptionPromptDialog.dart';
@@ -42,9 +43,9 @@ class _IpoListingPageState extends State<IpoListingPage> {
   }
 
   Future<void> loadSubscriptionStatus() async {
-    final value = await secureStorage.read(key: 'is_subscribed');
+    final hasAccess = await SubscriptionService.hasAccess();
     setState(() {
-      isSubscribed = value == 'true';
+      isSubscribed = hasAccess;
     });
   }
 

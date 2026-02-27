@@ -21,6 +21,11 @@ class AqApiService {
   final String _apiKey = dotenv.env['AQ_API_KEY'] ?? '';
   final String _apiSecret = dotenv.env['AQ_API_SECRET'] ?? '';
 
+  /// Configurable broker redirect URL matching RGX REACT_APP_BROKER_CONNECT_REDIRECT_URL.
+  /// Derived from advisor subdomain (e.g., "https://prod.alphaquark.in/stock-recommendation").
+  String get brokerRedirectUrl =>
+      'https://$advisorSubdomain.alphaquark.in/stock-recommendation';
+
   /// Generates request headers matching prod-alphaquark's pattern:
   ///   Content-Type: application/json
   ///   X-Advisor-Subdomain: <subdomain>
@@ -220,29 +225,52 @@ class AqApiService {
     );
   }
 
-  // ── User ObjectId lookup ────────────────────────────────────────────
+  // ── User lookup ─────────────────────────────────────────────────────
   String? _cachedObjectId;
+  Map<String, dynamic>? _cachedUserDetails;
 
   /// Get the user's AQ MongoDB ObjectId from their email.
   /// Required by broker-specific endpoints (update-key, connect-broker).
   Future<String?> getUserObjectId(String email) async {
     if (_cachedObjectId != null) return _cachedObjectId;
+    final details = await getUserDetails(email);
+    return details?['_id'] as String?;
+  }
+
+  /// Get full user details from AQ backend.
+  /// Matches RGX getUserDeatils(): GET api/user/getUser/{email}.
+  /// Returns user object with fields like _id, ddpi_status, apiKey, secretKey, etc.
+  Future<Map<String, dynamic>?> getUserDetails(String email) async {
+    if (_cachedUserDetails != null) return _cachedUserDetails;
     try {
-      final resp = await http.post(
-        Uri.parse('${baseUrl}api/user/getUser'),
+      final encodedEmail = Uri.encodeComponent(email);
+      final resp = await http.get(
+        Uri.parse('${baseUrl}api/user/getUser/$encodedEmail'),
         headers: _headers(),
-        body: jsonEncode({'email': email}),
-      );
+      ).timeout(const Duration(seconds: 10));
       if (resp.statusCode == 200) {
         final data = jsonDecode(resp.body);
-        _cachedObjectId = data['_id'] as String?;
-        debugPrint('[AqApiService] getUserObjectId: $_cachedObjectId');
-        return _cachedObjectId;
+        // Backend may return { User: {...} } or the user object directly
+        final user = data is Map && data.containsKey('User')
+            ? Map<String, dynamic>.from(data['User'])
+            : (data is Map ? Map<String, dynamic>.from(data) : null);
+        if (user != null) {
+          _cachedUserDetails = user;
+          _cachedObjectId = user['_id'] as String?;
+          debugPrint('[AqApiService] getUserDetails: id=$_cachedObjectId');
+          return user;
+        }
       }
     } catch (e) {
-      debugPrint('[AqApiService] getUserObjectId error: $e');
+      debugPrint('[AqApiService] getUserDetails error: $e');
     }
     return null;
+  }
+
+  /// Clear cached user details (call after broker reconnect).
+  void invalidateUserCache() {
+    _cachedUserDetails = null;
+    _cachedObjectId = null;
   }
 
   // ── Multi-broker connect (email-based fallback) ───────────────────
@@ -277,24 +305,30 @@ class AqApiService {
 
   // ── Zerodha (Publisher Login / OAuth) ─────────────────────────────
   /// POST ccxt/zerodha/login-url — gets Kite login URL using company API key.
+  /// Matches RGX: sends { apiKey, site } to CCXT.
   Future<http.Response> getZerodhaLoginUrl() async {
+    final zerodhaApiKey = dotenv.env['ZERODHA_API_KEY'] ?? '';
     return http.post(
       Uri.parse('${ccxtUrl}zerodha/login-url'),
       headers: _headers(),
       body: jsonEncode({
+        'apiKey': zerodhaApiKey,
         'site': advisorSubdomain,
       }),
     );
   }
 
   /// POST ccxt/zerodha/gen-access-token — exchanges request_token for access_token.
+  /// Matches RGX: sends { apiKey, requestToken } to CCXT.
   Future<http.Response> exchangeZerodhaToken({
     required String requestToken,
   }) async {
+    final zerodhaApiKey = dotenv.env['ZERODHA_API_KEY'] ?? '';
     return http.post(
       Uri.parse('${ccxtUrl}zerodha/gen-access-token'),
       headers: _headers(),
       body: jsonEncode({
+        'apiKey': zerodhaApiKey,
         'requestToken': requestToken,
       }),
     );
@@ -343,6 +377,26 @@ class AqApiService {
     );
   }
 
+  /// POST ccxt/upstox/gen-access-token — exchanges OAuth code for access_token.
+  /// Matches RGX upstoxModal.js connectUpstox() flow.
+  Future<http.Response> exchangeUpstoxToken({
+    required String apiKey,
+    required String apiSecret,
+    required String code,
+    required String redirectUri,
+  }) async {
+    return http.post(
+      Uri.parse('${ccxtUrl}upstox/gen-access-token'),
+      headers: _headers(),
+      body: jsonEncode({
+        'apiKey': apiKey,
+        'apiSecret': apiSecret,
+        'code': code,
+        'redirectUri': redirectUri,
+      }),
+    ).timeout(const Duration(seconds: 15));
+  }
+
   // ── Fyers ─────────────────────────────────────────────────────────
   /// POST api/fyers/update-key — sends credentials, returns OAuth URL.
   Future<http.Response> connectFyers({
@@ -364,6 +418,24 @@ class AqApiService {
     );
   }
 
+  /// POST ccxt/fyers/gen-access-token — exchanges auth_code for access_token.
+  /// Matches RGX FyersConnect.js connectFyers() flow.
+  Future<http.Response> exchangeFyersToken({
+    required String clientId,
+    required String clientSecret,
+    required String authCode,
+  }) async {
+    return http.post(
+      Uri.parse('${ccxtUrl}fyers/gen-access-token'),
+      headers: _headers(),
+      body: jsonEncode({
+        'clientId': clientId,
+        'clientSecret': clientSecret,
+        'authCode': authCode,
+      }),
+    ).timeout(const Duration(seconds: 15));
+  }
+
   // ── HDFC Securities ───────────────────────────────────────────────
   /// POST api/hdfc/update-key — sends encrypted credentials, returns OAuth URL.
   Future<http.Response> connectHdfc({
@@ -383,9 +455,28 @@ class AqApiService {
     );
   }
 
+  /// POST ccxt/hdfc/access-token — exchanges requestToken for accessToken.
+  /// Matches RGX HDFCconnectModal.js connectHdfc() flow.
+  Future<http.Response> exchangeHdfcToken({
+    required String apiKey,
+    required String apiSecret,
+    required String requestToken,
+  }) async {
+    return http.post(
+      Uri.parse('${ccxtUrl}hdfc/access-token'),
+      headers: _headers(),
+      body: jsonEncode({
+        'apiKey': apiKey,
+        'apiSecret': apiSecret,
+        'requestToken': requestToken,
+      }),
+    ).timeout(const Duration(seconds: 15));
+  }
+
   // ── ICICI Direct ──────────────────────────────────────────────────
   /// PUT api/icici/update-key — sends encrypted credentials.
   /// After success, redirects to ICICI login page.
+  /// Matches RGX icicimodal.js initiateAuth(): no user_broker in payload.
   Future<http.Response> connectIcici({
     required String uid,
     required String apiKey,
@@ -397,15 +488,31 @@ class AqApiService {
       headers: _headers(),
       body: jsonEncode({
         'uid': uid,
-        'user_broker': 'ICICI Direct',
         'apiKey': crypto.encryptCredential(apiKey),
         'secretKey': crypto.encryptCredential(secretKey),
       }),
     );
   }
 
+  /// POST ccxt/icici/customer-details — exchanges apisession for session_token.
+  /// Matches RGX icicimodal.js customer-details flow.
+  Future<http.Response> exchangeIciciToken({
+    required String apiKey,
+    required String accessToken,
+  }) async {
+    return http.post(
+      Uri.parse('${ccxtUrl}icici/customer-details'),
+      headers: _headers(),
+      body: jsonEncode({
+        'apiKey': apiKey,
+        'accessToken': accessToken,
+      }),
+    ).timeout(const Duration(seconds: 15));
+  }
+
   // ── Motilal Oswal ─────────────────────────────────────────────────
   /// PUT api/motilal-oswal/update-key — sends encrypted credentials, returns OAuth URL.
+  /// Matches RGX MotilalModal.js initiateAuth(): no user_broker, redirect_url without https://.
   Future<http.Response> connectMotilal({
     required String uid,
     required String apiKey,
@@ -413,15 +520,16 @@ class AqApiService {
     required String redirectUrl,
   }) async {
     final crypto = BrokerCryptoService.instance;
+    // RGX strips 'https://' from redirect_url before sending
+    final strippedUrl = redirectUrl.replaceFirst('https://', '');
     return http.put(
       Uri.parse('${baseUrl}api/motilal-oswal/update-key'),
       headers: _headers(),
       body: jsonEncode({
         'uid': uid,
         'apiKey': crypto.encryptCredential(apiKey),
-        'user_broker': 'Motilal Oswal',
-        'redirect_url': redirectUrl,
         'clientCode': clientCode,
+        'redirect_url': strippedUrl,
       }),
     );
   }
@@ -472,10 +580,9 @@ class AqApiService {
 
   // ── Groww OAuth ───────────────────────────────────────────────────
   /// GET ccxt/groww/login/oauth — returns OAuth redirect URL.
+  /// Matches RGX: uses brokerRedirectUrl with https:// stripped.
   Future<http.Response> getGrowwOAuthUrl() async {
-    final redirectUri = advisorSubdomain == 'prod'
-        ? 'prod.alphaquark.in/stock-recommendation'
-        : 'dev.alphaquark.in/stock-recommendation';
+    final redirectUri = brokerRedirectUrl.replaceFirst('https://', '');
     return http.get(
       Uri.parse('${ccxtUrl}groww/login/oauth?redirectUri=$redirectUri'),
       headers: _headers(),
@@ -1062,6 +1169,22 @@ class AqApiService {
         'broker': broker,
       }),
     );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Angel One Surveillance Check (matching RGX ReviewTradeModal.js)
+  // ---------------------------------------------------------------------------
+
+  /// Check Angel One surveillance status for a list of stocks.
+  /// Returns data with `surveillance` array containing { symbol, found, surveillance }.
+  /// Stocks with surveillance != 'N' and found == true may be rejected via API.
+  Future<http.Response> checkAngelOneSurveillance(
+      List<Map<String, String>> symbols) async {
+    return http.post(
+      Uri.parse('${ccxtUrl}angelone/equity/surveillance'),
+      headers: _headers(),
+      body: jsonEncode(symbols),
+    ).timeout(const Duration(seconds: 15));
   }
 
   // ---------------------------------------------------------------------------

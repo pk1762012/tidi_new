@@ -501,18 +501,23 @@ class ApiService {
   Future<http.Response> subscribeFreeModelPortfolio({
     required String planId,
     required String strategyId,
+    String? email,
   }) async {
     String? token = await _getToken();
+    final body = <String, dynamic>{
+      'planId': planId,
+      'strategyId': strategyId,
+    };
+    if (email != null && email.isNotEmpty) {
+      body['email'] = email;
+    }
     return http.post(
       Uri.parse(apiUrl + 'api/user/model-portfolio/subscribe-free'),
       headers: {
         'Authorization': 'Bearer $token',
         'Content-Type': 'application/json',
       },
-      body: jsonEncode({
-        'planId': planId,
-        'strategyId': strategyId,
-      }),
+      body: jsonEncode(body),
     ).timeout(const Duration(seconds: 15));
   }
 

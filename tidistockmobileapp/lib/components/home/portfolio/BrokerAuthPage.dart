@@ -131,9 +131,8 @@ class _BrokerAuthPageState extends State<BrokerAuthPage> {
   ///   https://markets.iiflcapital.com/?v=1&appkey={appkey}&redirect_url={redirect}
   String _getIiflLoginUrl() {
     const appKey = 'nHjYctmzvrHrYWA';
-    final redirectUrl = AqApiService.instance.advisorSubdomain == 'prod'
-        ? 'prod.alphaquark.in/stock-recommendation'
-        : 'dev.alphaquark.in/stock-recommendation';
+    // Use configurable redirect URL matching RGX (strip https://)
+    final redirectUrl = AqApiService.instance.brokerRedirectUrl.replaceFirst('https://', '');
     return 'https://markets.iiflcapital.com/?v=1&appkey=$appKey&redirect_url=$redirectUrl';
   }
 
@@ -395,13 +394,17 @@ class _BrokerAuthPageState extends State<BrokerAuthPage> {
   }
 
   /// Angel One: save auth_token via PUT /api/user/connect-broker.
-  /// Matches RGX connectBroker.js Angel One flow.
+  /// Matches RGX AngleoneBookingModal.js: fetches userDetails for ddpi_status.
   Future<void> _handleAngelOneCallback(String authToken) async {
     debugPrint('[BrokerAuth:AngelOne] saving auth_token...');
     final apiKey = dotenv.env['ANGEL_ONE_API_KEY'] ?? 'MSthREMz';
 
+    // Fetch user details for dynamic ddpi_status (matching RGX)
+    final userDetails = await AqApiService.instance.getUserDetails(widget.email);
+    final ddpiStatus = userDetails?['ddpi_status'] ?? 'empty';
+
     // Save via ObjectId-based connect (primary method)
-    final uid = await AqApiService.instance.getUserObjectId(widget.email);
+    final uid = userDetails?['_id'] as String?;
     if (uid != null) {
       final saveResp = await AqApiService.instance.connectCredentialBroker(
         uid: uid,
@@ -409,6 +412,7 @@ class _BrokerAuthPageState extends State<BrokerAuthPage> {
         credentials: {
           'jwtToken': authToken,
           'apiKey': apiKey,
+          'ddpi_status': ddpiStatus,
         },
       );
       debugPrint('[BrokerAuth:AngelOne] connect-broker status=${saveResp.statusCode}');
@@ -421,6 +425,7 @@ class _BrokerAuthPageState extends State<BrokerAuthPage> {
       brokerData: {
         'jwtToken': authToken,
         'apiKey': apiKey,
+        'ddpi_status': ddpiStatus,
         'status': 'connected',
       },
     );
@@ -531,6 +536,7 @@ class _BrokerAuthPageState extends State<BrokerAuthPage> {
 
   Future<void> _onConnectionSuccess() async {
     CacheService.instance.invalidate('aq/user/brokers:${widget.email}');
+    AqApiService.instance.invalidateUserCache();
     await BrokerSessionService.instance.saveSessionTime(widget.brokerName);
     AqApiService.instance.changeBrokerModelPortfolio(
       email: widget.email,

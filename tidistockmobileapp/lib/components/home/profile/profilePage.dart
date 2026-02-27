@@ -15,6 +15,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:flutter/services.dart';
 
 import '../../../main.dart';
+import '../../../service/SubscriptionService.dart';
 import '../../../theme/theme.dart';
 import '../../../widgets/customScaffold.dart';
 import '../../login/splash.dart';
@@ -41,6 +42,7 @@ class ProfilePageState extends State<ProfilePage>
   String? phoneNumber;
   String? lastName;
   bool? isSubscribed;
+  bool isTrial = false;
   String? subscriptionEndDate;
   bool isLoading = true;
 
@@ -89,7 +91,6 @@ class ProfilePageState extends State<ProfilePage>
           firstName = data['firstName'] ?? '';
           phoneNumber = data['username'] ?? '';
           lastName = data['lastName'] ?? '';
-          isSubscribed = data['isSubscribed'] ?? false;
           subscriptionEndDate = data['subscriptionEndDate']?.toString() ?? '';
 
           await secureStorage.write(key: 'user_id', value: data['id']?.toString());
@@ -112,8 +113,15 @@ class ProfilePageState extends State<ProfilePage>
             );
           }
 
+          // Check subscription via centralized service (covers paid + trial)
+          final subStatus = await SubscriptionService.getStatus();
+
           if (mounted) {
-            setState(() => isLoading = false);
+            setState(() {
+              isSubscribed = subStatus.hasAccess;
+              isTrial = subStatus.isTrial;
+              isLoading = false;
+            });
             _controller.forward();
           }
         },
@@ -896,6 +904,9 @@ class ProfilePageState extends State<ProfilePage>
     if (isSubscribed != true) return SizedBox();
 
     final daysLeft = getDaysLeft();
+    final title = isTrial ? "Free Trial Active" : "TIDI Wealth Membership Active";
+    final icon = isTrial ? Icons.access_time : Icons.verified;
+    final iconColor = isTrial ? Colors.orange : Colors.greenAccent.shade700;
 
     return Container(
       margin: const EdgeInsets.only(top: 12),
@@ -903,18 +914,18 @@ class ProfilePageState extends State<ProfilePage>
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(18),
         color: scheme.surface,
-        border: Border.all(color: scheme.primary.withOpacity(0.4), width: 1),
+        border: Border.all(color: isTrial ? Colors.orange.withOpacity(0.4) : scheme.primary.withOpacity(0.4), width: 1),
       ),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-            Icon(Icons.verified, color: Colors.greenAccent.shade700, size: 20),
+            Icon(icon, color: iconColor, size: 20),
           const SizedBox(width: 10),
           Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                "TIDI Wealth Membership Active",
+                title,
                 style: TextStyle(
                   color: Colors.black,
                   fontSize: 14,

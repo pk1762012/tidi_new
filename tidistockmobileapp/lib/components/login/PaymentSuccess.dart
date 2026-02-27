@@ -68,6 +68,7 @@ class _SuccessSplashScreenState extends State<SuccessSplashScreen> {
         await storage.write(key: 'is_subscribed', value: data['isSubscribed'].toString());
         await storage.write(key: 'is_paid', value: data['isPaid'].toString());
         await storage.write(key: 'subscription_end_date', value: data['subscriptionEndDate']?.toString());
+        await storage.write(key: 'is_stock_analysis_trial_active', value: data['isStockAnalysisTrialActive']?.toString());
         await storage.write(key: 'pan', value: data['pan']?.toString());
 
 

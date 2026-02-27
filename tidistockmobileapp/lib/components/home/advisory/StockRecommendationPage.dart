@@ -11,6 +11,7 @@ import 'package:tidistockmobileapp/widgets/customScaffold.dart';
 
 import 'package:tidistockmobileapp/theme/theme.dart';
 import 'package:tidistockmobileapp/service/ApiService.dart';
+import 'package:tidistockmobileapp/service/SubscriptionService.dart';
 
 import '../../../widgets/SubscriptionPromptDialog.dart';
 
@@ -69,10 +70,9 @@ class _StockRecommendationsPageState extends State<StockRecommendationsPage> {
   }
 
   Future<void> loadSubscriptionStatus() async {
-    String? subscribed = await secureStorage.read(key: 'is_subscribed');
-    String? isPaid = await secureStorage.read(key: 'is_paid');
+    final hasAccess = await SubscriptionService.hasAccess();
     setState(() {
-      isSubscribed = ((subscribed == 'true') && (isPaid == 'true'));
+      isSubscribed = hasAccess;
     });
   }
 

@@ -11,8 +11,10 @@ import 'package:tidistockmobileapp/service/CacheService.dart';
 import 'package:tidistockmobileapp/widgets/customScaffold.dart';
 
 import '../../../service/RebalanceStatusService.dart';
+import 'CurrentHoldingsPreviewPage.dart';
 import 'ModelPortfolioDetailPage.dart';
 import 'InvestedPortfoliosPage.dart';
+import 'PendingOrdersPage.dart';
 import 'RebalanceReviewPage.dart';
 
 class ModelPortfolioListPage extends StatefulWidget {
@@ -35,6 +37,7 @@ class _ModelPortfolioListPageState extends State<ModelPortfolioListPage>
   bool _showingAllPortfolios = false;
 
   // Rebalance tracking
+  Map<String, PortfolioRebalanceStatus> _rebalanceStatusMap = {};
   List<Map<String, dynamic>> _pendingRebalances = [];
   bool _loadingRebalances = true;
 
@@ -96,20 +99,26 @@ class _ModelPortfolioListPageState extends State<ModelPortfolioListPage>
 
     try {
       final connectedBroker = await RebalanceStatusService.fetchConnectedBrokerName(userEmail!);
-      final pending = await RebalanceStatusService.fetchPendingRebalances(
+      final statusMap = await RebalanceStatusService.fetchAllRebalanceStatuses(
         userEmail!,
         connectedBroker: connectedBroker,
       );
       if (mounted) {
         setState(() {
-          _pendingRebalances = pending.map((p) => <String, dynamic>{
-            'modelName': p.modelName,
-            'modelId': p.modelId,
-            'rebalanceDate': p.rebalanceDate,
-            'executionStatus': p.executionStatus,
-            'broker': p.broker,
-            'advisor': p.advisor,
-          }).toList();
+          _rebalanceStatusMap = statusMap;
+          // Derive _pendingRebalances from statusMap for backward compat
+          _pendingRebalances = statusMap.entries
+              .where((e) =>
+                  e.value.cardState != RebalanceCardState.executed)
+              .map((e) => <String, dynamic>{
+                    'modelName': e.value.modelName,
+                    'modelId': e.value.modelId,
+                    'rebalanceDate': e.value.rebalanceDate,
+                    'executionStatus': e.value.executionStatus,
+                    'broker': e.value.broker,
+                    'advisor': e.value.advisor,
+                  })
+              .toList();
           _loadingRebalances = false;
         });
       }
@@ -159,6 +168,8 @@ class _ModelPortfolioListPageState extends State<ModelPortfolioListPage>
             });
           }
           await _pruneLocalSubscriptions(ids, names);
+          // Also merge local subscriptions for recently subscribed portfolios not yet in API
+          await _loadLocalSubscriptions();
           return; // Success - no need to fall back
         }
       }
@@ -203,15 +214,16 @@ class _ModelPortfolioListPageState extends State<ModelPortfolioListPage>
               _subscribedModelNames = names;
             });
           }
-          await _pruneLocalSubscriptions(ids, names);
-          return;
+          if (ids.isNotEmpty || names.isNotEmpty) {
+            await _pruneLocalSubscriptions(ids, names);
+          }
         }
       } catch (e) {
         debugPrint('[ModelPortfolio] AlphaQuark fallback error: $e');
       }
     }
 
-    // Merge any remaining local subscriptions not yet reflected by API
+    // Always merge local subscriptions — APIs may not yet reflect recent subscribe actions
     await _loadLocalSubscriptions();
   }
 
@@ -242,6 +254,7 @@ class _ModelPortfolioListPageState extends State<ModelPortfolioListPage>
           _subscribedStrategyIds = {..._subscribedStrategyIds, ...localIds};
           _subscribedModelNames = {..._subscribedModelNames, ...localNames};
         });
+        debugPrint('[ModelPortfolio] MERGED subscriptions: ids=$_subscribedStrategyIds, names=$_subscribedModelNames');
       }
     } catch (e) {
       debugPrint('[ModelPortfolio] _loadLocalSubscriptions error: $e');
@@ -1035,6 +1048,117 @@ class _ModelPortfolioListPageState extends State<ModelPortfolioListPage>
     );
   }
 
+  Widget _rebalanceActionRow(ModelPortfolio portfolio) {
+    final status = _rebalanceStatusMap[portfolio.modelName] ??
+        _rebalanceStatusMap[portfolio.modelName.toLowerCase()];
+
+    String label;
+    Color color;
+    IconData icon;
+    bool enabled = true;
+
+    if (status == null) {
+      label = 'View Portfolio';
+      color = Colors.blue;
+      icon = Icons.arrow_forward;
+    } else {
+      switch (status.cardState) {
+        case RebalanceCardState.pending:
+          label = 'View & Execute';
+          color = Colors.orange;
+          icon = Icons.sync;
+          break;
+        case RebalanceCardState.partiallyExecuted:
+          label = 'Retry Rebalance';
+          color = Colors.orange;
+          icon = Icons.refresh;
+          break;
+        case RebalanceCardState.pendingVerification:
+          label = 'Check Order Status';
+          color = Colors.amber.shade700;
+          icon = Icons.hourglass_top;
+          break;
+        case RebalanceCardState.failed:
+          label = 'Action Required';
+          color = Colors.red;
+          icon = Icons.error_outline;
+          break;
+        case RebalanceCardState.executed:
+          label = 'No action due';
+          color = Colors.grey;
+          icon = Icons.check_circle;
+          enabled = false;
+          break;
+      }
+    }
+
+    return GestureDetector(
+      onTap: enabled
+          ? () async {
+              HapticFeedback.mediumImpact();
+              if (status == null) {
+                await Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => ModelPortfolioDetailPage(portfolio: portfolio),
+                  ),
+                );
+              } else if (status.cardState == RebalanceCardState.pendingVerification) {
+                await Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => PendingOrdersPage(
+                      portfolio: portfolio,
+                      email: userEmail!,
+                      broker: status.broker,
+                      advisor: status.advisor,
+                    ),
+                  ),
+                );
+              } else {
+                await Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => CurrentHoldingsPreviewPage(
+                      portfolio: portfolio,
+                      email: userEmail!,
+                    ),
+                  ),
+                );
+              }
+              // Refresh status on return
+              await _fetchRebalanceStatus();
+            }
+          : null,
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 14),
+        decoration: BoxDecoration(
+          color: color.withOpacity(enabled ? 0.1 : 0.06),
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Row(
+          children: [
+            Icon(icon, size: 18, color: enabled ? color : Colors.grey.shade400),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                label,
+                style: TextStyle(
+                  fontSize: 13.5,
+                  fontWeight: FontWeight.w600,
+                  color: enabled ? color : Colors.grey.shade400,
+                ),
+              ),
+            ),
+            if (enabled)
+              Icon(Icons.chevron_right, size: 18, color: color.withOpacity(0.7)),
+          ],
+        ),
+      ),
+    );
+  }
+
   Color _riskColor(String? risk) {
     switch (risk?.toLowerCase()) {
       case 'aggressive':
@@ -1185,6 +1309,12 @@ class _ModelPortfolioListPageState extends State<ModelPortfolioListPage>
                           ],
                         ],
                       ),
+
+                      // Rebalance action button for subscribed portfolios
+                      if (showSubscribedBadge) ...[
+                        const SizedBox(height: 12),
+                        _rebalanceActionRow(portfolio),
+                      ],
                     ],
                   ),
                 ),

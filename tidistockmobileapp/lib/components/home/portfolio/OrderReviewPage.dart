@@ -1,6 +1,9 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:tidistockmobileapp/models/model_portfolio.dart';
+import 'package:tidistockmobileapp/service/AqApiService.dart';
 import 'package:tidistockmobileapp/widgets/customScaffold.dart';
 
 import 'DummyBrokerConfirmationPage.dart';
@@ -29,6 +32,61 @@ class OrderReviewPage extends StatefulWidget {
 class _OrderReviewPageState extends State<OrderReviewPage> {
   bool _termsAccepted = false;
   final _currencyFormat = NumberFormat('#,##,###');
+
+  // Angel One surveillance state (matching RGX ReviewTradeModal.js)
+  List<Map<String, dynamic>> _surveillanceStocks = [];
+  bool _surveillanceLoading = false;
+  bool _surveillanceChecked = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _checkSurveillance();
+  }
+
+  /// Check Angel One surveillance for stocks (matching RGX checkAngelOneSurveillance).
+  /// Stocks flagged with surveillance may be rejected via API.
+  Future<void> _checkSurveillance() async {
+    if (widget.brokerName?.toLowerCase() != 'angel one') return;
+    if (_surveillanceLoading || _surveillanceChecked) return;
+    if (widget.allocations.isEmpty) return;
+
+    setState(() => _surveillanceLoading = true);
+
+    try {
+      final symbols = widget.allocations.map((o) => <String, String>{
+        'symbol': o['symbol'] ?? o['tradingSymbol'] ?? '',
+        'exchange': o['exchange'] ?? 'NSE',
+      }).toList();
+
+      final response = await AqApiService.instance.checkAngelOneSurveillance(symbols);
+      if (response.statusCode == 200 && mounted) {
+        final data = jsonDecode(response.body);
+        final surveillance = data['surveillance'];
+        if (surveillance is List) {
+          final flagged = surveillance
+              .where((s) =>
+                  s is Map &&
+                  s['found'] == true &&
+                  s['surveillance'] != null &&
+                  s['surveillance'] != '' &&
+                  s['surveillance'] != 'N')
+              .map((s) => Map<String, dynamic>.from(s))
+              .toList();
+          setState(() => _surveillanceStocks = flagged);
+        }
+      }
+    } catch (e) {
+      debugPrint('[OrderReview] surveillance check error: $e');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _surveillanceLoading = false;
+          _surveillanceChecked = true;
+        });
+      }
+    }
+  }
 
   void _placeOrders() {
     if (!_termsAccepted) {
@@ -241,6 +299,64 @@ class _OrderReviewPageState extends State<OrderReviewPage> {
                     ],
                   ),
                 ),
+
+                // Angel One Surveillance Alert (matching RGX ReviewTradeModal.js)
+                if (_surveillanceStocks.isNotEmpty) ...[
+                  const SizedBox(height: 16),
+                  Container(
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFEF2F2),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: const Color(0xFFDC2626), width: 0.5),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Icon(Icons.warning_rounded, size: 18, color: Colors.red.shade700),
+                            const SizedBox(width: 8),
+                            Text("Surveillance Alert",
+                              style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: Colors.red.shade700)),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          "The following stocks are under Angel One surveillance measures "
+                          "and may be rejected via API:",
+                          style: TextStyle(fontSize: 12, color: Colors.red.shade900, height: 1.4),
+                        ),
+                        const SizedBox(height: 6),
+                        ..._surveillanceStocks.map((stock) => Padding(
+                          padding: const EdgeInsets.only(left: 8, bottom: 2),
+                          child: Text(
+                            "\u2022 ${stock['symbol']} (Surveillance: ${stock['surveillance']})",
+                            style: TextStyle(fontSize: 12, color: Colors.red.shade800),
+                          ),
+                        )),
+                        const SizedBox(height: 6),
+                        Text(
+                          "Please trade these stocks manually through the Angel One mobile app or web platform.",
+                          style: TextStyle(fontSize: 11, color: Colors.red.shade700, fontStyle: FontStyle.italic),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+
+                if (_surveillanceLoading) ...[
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      const SizedBox(width: 16, height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2)),
+                      const SizedBox(width: 8),
+                      Text("Checking surveillance status...",
+                        style: TextStyle(fontSize: 12, color: Colors.grey.shade600)),
+                    ],
+                  ),
+                ],
 
                 const SizedBox(height: 16),
 

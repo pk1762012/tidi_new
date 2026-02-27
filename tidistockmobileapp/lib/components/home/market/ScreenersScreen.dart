@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:url_launcher/url_launcher.dart';
+import '../../../service/SubscriptionService.dart';
 import '../../../widgets/SubscriptionPromptDialog.dart';
 import '../../../widgets/customScaffold.dart';
 import 'BrowserPage.dart';
@@ -106,9 +107,9 @@ class _ScreenersScreenState extends State<ScreenersScreen>
   }
 
   Future<void> loadSubscriptionStatus() async {
-    String? value = await secureStorage.read(key: 'is_subscribed');
+    final hasAccess = await SubscriptionService.hasAccess();
     setState(() {
-      isSubscribed =  value == 'true';
+      isSubscribed = hasAccess;
     });
   }
 

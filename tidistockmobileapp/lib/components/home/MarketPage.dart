@@ -16,6 +16,7 @@ import 'market/StockScanner.dart';
 import 'news/NewsScreen.dart';
 import '../../widgets/PortfolioSummaryCard.dart';
 import '../../service/AqApiService.dart';
+import '../../service/SubscriptionService.dart';
 import '../../config/app_config.dart';
 
 
@@ -134,8 +135,8 @@ class MarketPageState extends State<MarketPage> with TickerProviderStateMixin, W
   }
 
   Future<void> loadSubscriptionStatus() async {
-    String? value = await secureStorage.read(key: 'is_subscribed');
-    isSubscribed = value == 'true';
+    final hasAccess = await SubscriptionService.hasAccess();
+    isSubscribed = hasAccess;
   }
 
   Future<void> verifyDeviceFcmIfNeeded(BuildContext context) async {

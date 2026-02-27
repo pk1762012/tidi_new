@@ -1,19 +1,19 @@
-import 'package:flutter/foundation.dart';
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:intl/intl.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:tidistockmobileapp/service/AqApiService.dart';
-import 'package:tidistockmobileapp/service/DataRepository.dart';
 
+import '../components/home/portfolio/CurrentHoldingsPreviewPage.dart';
+import '../components/home/portfolio/ModelPortfolioDetailPage.dart';
 import '../components/home/portfolio/ModelPortfolioListPage.dart';
-import '../components/home/portfolio/RebalanceReviewPage.dart';
+import '../components/home/portfolio/PendingOrdersPage.dart';
 import '../models/model_portfolio.dart';
 import '../service/RebalanceStatusService.dart';
 
-/// Compact card for the Market page showing:
-/// - Count of subscribed model portfolios
-/// - Aggregate invested / current value & P&L
-/// - Pending rebalance alerts with a "Review" CTA
+/// Shows each subscribed portfolio as an individual card on the Market page,
+/// with a color-coded rebalance action button.
 class PortfolioSummaryCard extends StatefulWidget {
   final String email;
 
@@ -24,12 +24,9 @@ class PortfolioSummaryCard extends StatefulWidget {
 }
 
 class _PortfolioSummaryCardState extends State<PortfolioSummaryCard> {
-  final _fmt = NumberFormat('#,##,###');
   bool _loading = true;
   int _portfolioCount = 0;
-  double _totalInvested = 0;
-  double _totalCurrent = 0;
-  List<PendingRebalance> _pendingRebalances = [];
+  Map<String, PortfolioRebalanceStatus> _rebalanceStatusMap = {};
   List<ModelPortfolio> _subscribedPortfolios = [];
 
   @override
@@ -41,7 +38,7 @@ class _PortfolioSummaryCardState extends State<PortfolioSummaryCard> {
   Future<void> _loadData() async {
     await Future.wait([
       _fetchSubscribedStrategies(),
-      _fetchPendingRebalances(),
+      _fetchRebalanceStatuses(),
     ]);
     if (mounted) setState(() => _loading = false);
   }
@@ -65,72 +62,93 @@ class _PortfolioSummaryCardState extends State<PortfolioSummaryCard> {
             _subscribedPortfolios = portfolios;
             _portfolioCount = portfolios.length;
           });
-          // Fetch summaries in parallel
-          for (final p in portfolios) {
-            _fetchPortfolioSummary(p.modelName);
-          }
         },
       );
     } catch (e) {
       debugPrint('[PortfolioSummaryCard] fetchSubscribed error: $e');
     }
-  }
 
-  Future<void> _fetchPortfolioSummary(String modelName) async {
-    try {
-      final response = await AqApiService.instance.getSubscriptionRawAmount(
-        email: widget.email,
-        modelName: modelName,
-      );
-      if (response.statusCode == 200 && mounted) {
-        final data = await DataRepository.parseJsonMap(response.body);
-        final subData = data['data'];
-        if (subData == null) return;
-
-        final rawAmounts = subData['subscription_amount_raw'] ?? subData['subscriptionAmountRaw'] ?? [];
-        double invested = 0;
-        double current = 0;
-
-        if (rawAmounts is List && rawAmounts.isNotEmpty) {
-          final latest = rawAmounts.last;
-          if (latest is Map) {
-            invested = (latest['totalInvestment'] ?? latest['invested'] ?? 0).toDouble();
-            current = (latest['currentValue'] ?? latest['current'] ?? invested).toDouble();
-          }
-        }
-
-        if (invested == 0 && subData.containsKey('totalInvestment')) {
-          invested = (subData['totalInvestment'] ?? 0).toDouble();
-          current = (subData['currentValue'] ?? subData['current'] ?? invested).toDouble();
-        }
-
-        setState(() {
-          _totalInvested += invested;
-          _totalCurrent += current;
-        });
-      }
-    } catch (_) {}
-  }
-
-  Future<void> _fetchPendingRebalances() async {
-    try {
-      final connectedBroker = await RebalanceStatusService.fetchConnectedBrokerName(widget.email);
-      final pending = await RebalanceStatusService.fetchPendingRebalances(
-        widget.email,
-        connectedBroker: connectedBroker,
-      );
-      if (mounted) setState(() => _pendingRebalances = pending);
-    } catch (e) {
-      debugPrint('[PortfolioSummaryCard] fetchRebalances error: $e');
+    // If AQ API returned nothing, check local subscriptions
+    if (_portfolioCount == 0) {
+      await _mergeLocalSubscriptions();
     }
   }
 
-  double get _pnl => _totalCurrent - _totalInvested;
-  double get _pnlPct => _totalInvested > 0 ? (_pnl / _totalInvested * 100) : 0;
+  /// Load locally-saved subscriptions (from subscribe-free flow) so they
+  /// appear immediately even before the backend APIs reflect them.
+  Future<void> _mergeLocalSubscriptions() async {
+    try {
+      final raw = await const FlutterSecureStorage().read(key: 'local_subscribed_portfolios');
+      if (raw == null || raw.isEmpty) return;
+      final List<dynamic> entries = json.decode(raw);
+      if (entries.isEmpty) return;
+
+      final localNames = <String>{};
+      for (final e in entries) {
+        if (e is Map) {
+          final name = e['modelName']?.toString();
+          if (name != null && name.isNotEmpty) localNames.add(name);
+        }
+      }
+      if (localNames.isEmpty) return;
+
+      debugPrint('[PortfolioSummaryCard] found ${localNames.length} local subscriptions: $localNames');
+
+      // Try to match local subscriptions against the full portfolio list from API
+      try {
+        final response = await AqApiService.instance.getPortfolios(email: widget.email);
+        if (response.statusCode >= 200 && response.statusCode < 300) {
+          final body = json.decode(response.body);
+          final List<dynamic> allPlans = body is List
+              ? body
+              : (body is Map ? (body['data'] ?? body['plans'] ?? []) : []);
+          final matched = <ModelPortfolio>[];
+          for (final plan in allPlans) {
+            if (plan is Map<String, dynamic>) {
+              final p = ModelPortfolio.fromJson(plan);
+              if (localNames.contains(p.modelName)) {
+                matched.add(p);
+              }
+            }
+          }
+          if (matched.isNotEmpty && mounted) {
+            setState(() {
+              _subscribedPortfolios = matched;
+              _portfolioCount = matched.length;
+            });
+            debugPrint('[PortfolioSummaryCard] matched ${matched.length} local subs to portfolios');
+          }
+        }
+      } catch (e) {
+        debugPrint('[PortfolioSummaryCard] portfolio match error: $e');
+      }
+
+      // Even if we can't match full portfolio objects, show the count
+      if (_portfolioCount == 0 && localNames.isNotEmpty && mounted) {
+        setState(() {
+          _portfolioCount = localNames.length;
+        });
+      }
+    } catch (e) {
+      debugPrint('[PortfolioSummaryCard] _mergeLocalSubscriptions error: $e');
+    }
+  }
+
+  Future<void> _fetchRebalanceStatuses() async {
+    try {
+      final connectedBroker = await RebalanceStatusService.fetchConnectedBrokerName(widget.email);
+      final statuses = await RebalanceStatusService.fetchAllRebalanceStatuses(
+        widget.email,
+        connectedBroker: connectedBroker,
+      );
+      if (mounted) setState(() => _rebalanceStatusMap = statuses);
+    } catch (e) {
+      debugPrint('[PortfolioSummaryCard] fetchRebalanceStatuses error: $e');
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
-    // Don't show anything while loading or if user has no subscribed portfolios
     if (_loading) {
       return const SizedBox(
         height: 80,
@@ -139,190 +157,243 @@ class _PortfolioSummaryCardState extends State<PortfolioSummaryCard> {
     }
     if (_portfolioCount == 0) return const SizedBox.shrink();
 
-    final isProfit = _pnl >= 0;
-    final hasFinancialData = _totalInvested > 0 || _totalCurrent > 0;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Header row
+        Padding(
+          padding: const EdgeInsets.fromLTRB(18, 12, 18, 8),
+          child: Row(
+            children: [
+              Icon(Icons.dashboard_rounded, color: Colors.indigo.shade800, size: 22),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  "My Portfolios ($_portfolioCount)",
+                  style: TextStyle(
+                    color: Colors.indigo.shade900,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+              GestureDetector(
+                onTap: () {
+                  HapticFeedback.mediumImpact();
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const ModelPortfolioListPage()),
+                  );
+                },
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: Colors.indigo.shade50,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text("View All",
+                    style: TextStyle(color: Colors.indigo.shade700, fontSize: 12, fontWeight: FontWeight.w600)),
+                ),
+              ),
+            ],
+          ),
+        ),
 
+        // Individual portfolio cards
+        ..._subscribedPortfolios.map((p) => _portfolioCard(p)),
+      ],
+    );
+  }
+
+  Widget _portfolioCard(ModelPortfolio portfolio) {
     return GestureDetector(
       onTap: () {
         HapticFeedback.mediumImpact();
         Navigator.push(
           context,
-          MaterialPageRoute(builder: (_) => const ModelPortfolioListPage()),
-        );
+          MaterialPageRoute(
+            builder: (_) => ModelPortfolioDetailPage(portfolio: portfolio),
+          ),
+        ).then((_) => _fetchRebalanceStatuses());
       },
       child: Container(
-        margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
         decoration: BoxDecoration(
           gradient: LinearGradient(
             colors: [const Color(0xFF1A237E), const Color(0xFF283593)],
           ),
-          borderRadius: BorderRadius.circular(18),
+          borderRadius: BorderRadius.circular(14),
           boxShadow: [
             BoxShadow(
-              color: const Color(0xFF1A237E).withOpacity(0.25),
-              blurRadius: 12,
-              offset: const Offset(0, 6),
+              color: const Color(0xFF1A237E).withOpacity(0.2),
+              blurRadius: 8,
+              offset: const Offset(0, 4),
             ),
           ],
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Header row
+            // Portfolio name + risk badge + stock count
             Padding(
-              padding: const EdgeInsets.fromLTRB(18, 16, 18, 0),
+              padding: const EdgeInsets.fromLTRB(14, 12, 14, 8),
               child: Row(
                 children: [
-                  const Icon(Icons.dashboard_rounded, color: Colors.white, size: 22),
-                  const SizedBox(width: 10),
                   Expanded(
                     child: Text(
-                      "My Portfolios ($_portfolioCount)",
+                      portfolio.modelName,
                       style: const TextStyle(
                         color: Colors.white,
-                        fontSize: 16,
+                        fontSize: 14.5,
                         fontWeight: FontWeight.w700,
                       ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                     ),
                   ),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: Colors.white.withOpacity(0.15),
-                      borderRadius: BorderRadius.circular(8),
+                  if (portfolio.riskProfile != null && portfolio.riskProfile!.isNotEmpty)
+                    Container(
+                      margin: const EdgeInsets.only(left: 8),
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: _riskColor(portfolio.riskProfile).withOpacity(0.2),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Text(
+                        portfolio.riskProfile!,
+                        style: TextStyle(
+                          color: _riskColor(portfolio.riskProfile),
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
                     ),
-                    child: const Text("View All",
-                      style: TextStyle(color: Colors.white70, fontSize: 12, fontWeight: FontWeight.w600)),
-                  ),
+                  if (portfolio.stocks.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(left: 8),
+                      child: Text(
+                        "${portfolio.stocks.length} stocks",
+                        style: const TextStyle(
+                          color: Colors.white54,
+                          fontSize: 11,
+                        ),
+                      ),
+                    ),
                 ],
               ),
             ),
 
-            // P&L summary (only when financial data exists)
-            if (hasFinancialData)
-              Padding(
-                padding: const EdgeInsets.fromLTRB(18, 12, 18, 0),
-                child: Row(
-                  children: [
-                    _miniStat("Invested", "\u20B9${_fmt.format(_totalInvested.round())}"),
-                    const SizedBox(width: 20),
-                    _miniStat("Current", "\u20B9${_fmt.format(_totalCurrent.round())}"),
-                    const Spacer(),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                      decoration: BoxDecoration(
-                        color: (isProfit ? Colors.green : Colors.red).withOpacity(0.2),
-                        borderRadius: BorderRadius.circular(6),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(
-                            isProfit ? Icons.trending_up : Icons.trending_down,
-                            color: Colors.white, size: 14,
-                          ),
-                          const SizedBox(width: 4),
-                          Text(
-                            "${isProfit ? '+' : ''}${_pnlPct.toStringAsFixed(1)}%",
-                            style: const TextStyle(
-                              color: Colors.white, fontSize: 13, fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-
-            // Pending rebalance alerts
-            if (_pendingRebalances.isNotEmpty) ...[
-              const SizedBox(height: 10),
-              Container(
-                width: double.infinity,
-                decoration: BoxDecoration(
-                  color: Colors.orange.withOpacity(0.15),
-                  borderRadius: const BorderRadius.only(
-                    bottomLeft: Radius.circular(18),
-                    bottomRight: Radius.circular(18),
-                  ),
-                ),
-                child: Column(
-                  children: _pendingRebalances.map((r) {
-                    return InkWell(
-                      onTap: () => _navigateToRebalance(r),
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
-                        child: Row(
-                          children: [
-                            Icon(Icons.sync_alt_rounded, color: Colors.orange.shade300, size: 18),
-                            const SizedBox(width: 10),
-                            Expanded(
-                              child: Text(
-                                "${r.modelName} - New Rebalance",
-                                style: const TextStyle(
-                                  color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                            ),
-                            Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                              decoration: BoxDecoration(
-                                color: Colors.orange,
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                              child: const Text("Review",
-                                style: TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w700)),
-                            ),
-                          ],
-                        ),
-                      ),
-                    );
-                  }).toList(),
-                ),
-              ),
-            ] else
-              const SizedBox(height: 16),
+            // Rebalance action row
+            Padding(
+              padding: const EdgeInsets.fromLTRB(14, 0, 14, 12),
+              child: _rebalanceActionRow(portfolio),
+            ),
           ],
         ),
       ),
     );
   }
 
-  Widget _miniStat(String label, String value) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(label, style: const TextStyle(color: Colors.white54, fontSize: 11)),
-        Text(value, style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w700)),
-      ],
+  Widget _rebalanceActionRow(ModelPortfolio portfolio) {
+    final status = _rebalanceStatusMap[portfolio.modelName] ??
+        _rebalanceStatusMap[portfolio.modelName.toLowerCase()];
+
+    String label;
+    Color color;
+    IconData icon;
+
+    if (status == null) {
+      label = 'View & Rebalance';
+      color = Colors.blue;
+      icon = Icons.sync;
+    } else {
+      switch (status.cardState) {
+        case RebalanceCardState.pending:
+        case RebalanceCardState.partiallyExecuted:
+        case RebalanceCardState.failed:
+          label = 'View & Rebalance';
+          color = Colors.orange;
+          icon = Icons.sync;
+          break;
+        case RebalanceCardState.pendingVerification:
+          label = 'Check Order Status';
+          color = Colors.amber.shade700;
+          icon = Icons.hourglass_top;
+          break;
+        case RebalanceCardState.executed:
+          label = 'View & Rebalance';
+          color = Colors.blue;
+          icon = Icons.sync;
+          break;
+      }
+    }
+
+    return GestureDetector(
+      onTap: () async {
+        HapticFeedback.mediumImpact();
+        if (status != null && status.cardState == RebalanceCardState.pendingVerification) {
+          await Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => PendingOrdersPage(
+                portfolio: portfolio,
+                email: widget.email,
+                broker: status.broker,
+                advisor: status.advisor,
+              ),
+            ),
+          );
+        } else {
+          // All other states → rebalance flow
+          await Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => CurrentHoldingsPreviewPage(
+                portfolio: portfolio,
+                email: widget.email,
+              ),
+            ),
+          );
+        }
+        // Refresh status on return
+        await _fetchRebalanceStatuses();
+      },
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
+        decoration: BoxDecoration(
+          color: color.withOpacity(0.1),
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Row(
+          children: [
+            Icon(icon, size: 16, color: color),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                label,
+                style: TextStyle(
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w600,
+                  color: color,
+                ),
+              ),
+            ),
+            Icon(Icons.chevron_right, size: 16, color: color.withOpacity(0.7)),
+          ],
+        ),
+      ),
     );
   }
 
-  void _navigateToRebalance(PendingRebalance rebalance) {
-    HapticFeedback.mediumImpact();
-    // Find the matching portfolio
-    final portfolio = _subscribedPortfolios.cast<ModelPortfolio?>().firstWhere(
-      (p) => p?.modelName == rebalance.modelName,
-      orElse: () => null,
-    );
-
-    if (portfolio != null) {
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (_) => RebalanceReviewPage(
-            portfolio: portfolio,
-            email: widget.email,
-          ),
-        ),
-      );
-    } else {
-      // Fallback: navigate to list page
-      Navigator.push(
-        context,
-        MaterialPageRoute(builder: (_) => const ModelPortfolioListPage()),
-      );
+  Color _riskColor(String? risk) {
+    switch (risk?.toLowerCase()) {
+      case 'aggressive':
+        return Colors.red.shade400;
+      case 'moderate':
+        return Colors.orange.shade400;
+      default:
+        return Colors.green.shade400;
     }
   }
 }

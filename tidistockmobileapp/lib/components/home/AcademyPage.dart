@@ -393,7 +393,7 @@ class _AcademyPageState extends State<AcademyPage>
 
   Widget _freeWorkshopInfoCard(BuildContext context) {
     return Container(
-      margin: const EdgeInsets.only(bottom: 30),
+      margin: EdgeInsets.zero,
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(20),
         boxShadow: [
@@ -406,11 +406,11 @@ class _AcademyPageState extends State<AcademyPage>
       ),
       child: Column(
         children: [
-          // Banner image — crop bottom ~35% to hide baked-in fee/register text
+          // Banner image — crop bottom to hide baked-in fee/register text
           ClipRRect(
             borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
             child: SizedBox(
-              height: 200,
+              height: 165,
               width: double.infinity,
               child: FittedBox(
                 fit: BoxFit.cover,
@@ -422,66 +422,31 @@ class _AcademyPageState extends State<AcademyPage>
               ),
             ),
           ),
-          // Fee ₹1 badge + View & Register button — outside the image
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
-            decoration: const BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.vertical(bottom: Radius.circular(20)),
-            ),
-            child: Column(
-              children: [
-                // Fee badge
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFFFF3E0),
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: Colors.orange.shade300),
+          // View & Register Now button — outside the image
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 15, 16, 15),
+            child: SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: _openWorkshopRegisterSheet,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF43A047),
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 6),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14),
                   ),
-                  child: const Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text("🔥", style: TextStyle(fontSize: 18)),
-                      SizedBox(width: 8),
-                      Text(
-                        "Fee: ₹1 Only",
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w800,
-                          color: Color(0xFFE65100),
-                        ),
-                      ),
-                    ],
+                  elevation: 0,
+                ),
+                child: const Text(
+                  "VIEW & REGISTER NOW",
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0.5,
                   ),
                 ),
-                const SizedBox(height: 12),
-                // View & Register Now button — opens Razorpay workshop payment
-                SizedBox(
-                  width: double.infinity,
-                  child: ElevatedButton(
-                    onPressed: _openWorkshopRegisterSheet,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF1B5E20),
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 14),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(14),
-                      ),
-                      elevation: 0,
-                    ),
-                    child: const Text(
-                      "VIEW & REGISTER NOW",
-                      style: TextStyle(
-                        fontSize: 15,
-                        fontWeight: FontWeight.w700,
-                        letterSpacing: 0.5,
-                      ),
-                    ),
-                  ),
-                ),
-              ],
+              ),
             ),
           ),
         ],
