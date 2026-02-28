@@ -559,9 +559,9 @@ class _StockScannerState extends State<StockScanner> {
                         duration: const Duration(milliseconds: 250),
                         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                         decoration: BoxDecoration(
-                          color: isSelected ? color.withOpacity(0.8) : lightColorScheme.secondary.withOpacity(0.3),
+                          color: isSelected ? color.withOpacity(0.8) : color.withOpacity(0.1),
                           borderRadius: BorderRadius.circular(20),
-                          border: Border.all(color: color.withOpacity(isSelected ? 1.0 : 0.6), width: 1.2),
+                          border: Border.all(color: color.withOpacity(isSelected ? 1.0 : 0.4), width: 1.2),
                         ),
                         child: Center(
                           child: AnimatedDefaultTextStyle(
@@ -728,7 +728,7 @@ class _StockScannerState extends State<StockScanner> {
                               end: Alignment.bottomRight,
                             )
                                 : null,
-                            color: isSelected ? null : lightColorScheme.secondary.withValues(alpha: .3),
+                            color: isSelected ? null : color.withOpacity(0.1),
                             borderRadius: BorderRadius.circular(24),
                             border: Border.all(
                               color: color.withOpacity(1.0), // visible border always
@@ -842,9 +842,9 @@ class _StockScannerState extends State<StockScanner> {
                   duration: const Duration(milliseconds: 250),
                   padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                   decoration: BoxDecoration(
-                    color: isSelected ? color.withOpacity(0.8) : lightColorScheme.secondary.withOpacity(0.3),
+                    color: isSelected ? color.withOpacity(0.8) : color.withOpacity(0.1),
                     borderRadius: BorderRadius.circular(20),
-                    border: Border.all(color: color.withOpacity(isSelected ? 1.0 : 0.6), width: 1.2),
+                    border: Border.all(color: color.withOpacity(isSelected ? 1.0 : 0.4), width: 1.2),
                   ),
                   child: Center(
                     child: Text(

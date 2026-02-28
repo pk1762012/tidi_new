@@ -431,8 +431,7 @@ class _IpoListingPageState extends State<IpoListingPage> {
                     ),
                   ),
 
-                  if ((ipo['status'] ?? '').toString().toLowerCase() == 'open')
-                    Align(
+                  Align(
                       alignment: Alignment.centerRight,
                       child: TextButton.icon(
                         onPressed: () => _openIpoDetailsSheet(ipo),
@@ -529,6 +528,11 @@ class _IpoListingPageState extends State<IpoListingPage> {
                       controller: controller,
                       padding: const EdgeInsets.all(16),
                       children: [
+                        // --- Key Metrics ---
+                        if (ipo['type'] != null)
+                          _infoRow("Type", ipo['type']),
+                        if (ipo['symbol'] != null)
+                          _infoRow("Symbol", ipo['symbol']),
                         _infoRow("Price Range",
                             ipo['priceRange'] ?? "-"),
                         /// GMP (LOCKED)
@@ -542,15 +546,46 @@ class _IpoListingPageState extends State<IpoListingPage> {
                           _infoRow("Issue Size",
                               ipo['issueSize']
                           ),
-
+                        if (ipo['lotSize'] != null)
+                          _infoRow("Lot Size",
+                              "${ipo['lotSize']} shares"),
                         if (ipo['minQty'] != null)
                           _infoRow(
                               "Minimum Quantity",
                               "${ipo['minQty']} shares"),
+                        if (ipo['minAmount'] != null)
+                          _infoRow("Min Amount",
+                              "₹${ipo['minAmount']}"),
+
+                        // --- Dates ---
+                        if (ipo['startDate'] != null)
+                          _infoRow("Open Date",
+                              _fmt(ipo['startDate'])),
+                        if (ipo['endDate'] != null)
+                          _infoRow("Close Date",
+                              _fmt(ipo['endDate'])),
                         if (ipo['listingDate'] != null)
                           _infoRow(
                               "Listing Date",
                               _fmt(ipo['listingDate'])),
+                        if (ipo['allotmentDate'] != null)
+                          _infoRow("Allotment Date",
+                              _fmt(ipo['allotmentDate'])),
+
+                        // --- Listing Performance (for listed IPOs) ---
+                        if (ipo['listingPrice'] != null)
+                          _infoRow("Listing Price",
+                              "₹${ipo['listingPrice']}"),
+                        if (ipo['listingGain'] != null)
+                          _infoRow("Listing Gain",
+                              "${ipo['listingGain']}"),
+
+                        // --- Subscription Data ---
+                        if (ipo['subscriptionStatus'] != null)
+                          _infoRow("Subscription",
+                              ipo['subscriptionStatus'].toString()),
+
+                        const SizedBox(height: 8),
 
                         _textSection("About", ipo['about']),
                         _listSection(
