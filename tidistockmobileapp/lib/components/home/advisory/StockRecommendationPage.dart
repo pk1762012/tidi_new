@@ -13,6 +13,8 @@ import 'package:tidistockmobileapp/theme/theme.dart';
 import 'package:tidistockmobileapp/service/ApiService.dart';
 import 'package:tidistockmobileapp/service/SubscriptionService.dart';
 
+import 'package:tidistockmobileapp/mixins/ScreenProtectionMixin.dart';
+
 import '../../../widgets/SubscriptionPromptDialog.dart';
 
 class StockRecommendationsPage extends StatefulWidget {
@@ -22,7 +24,8 @@ class StockRecommendationsPage extends StatefulWidget {
   State<StockRecommendationsPage> createState() => _StockRecommendationsPageState();
 }
 
-class _StockRecommendationsPageState extends State<StockRecommendationsPage> {
+class _StockRecommendationsPageState extends State<StockRecommendationsPage>
+    with ScreenProtectionMixin {
   final FlutterSecureStorage secureStorage = const FlutterSecureStorage();
 
   List<dynamic> recommendations = [];

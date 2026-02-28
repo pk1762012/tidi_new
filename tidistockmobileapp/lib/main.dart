@@ -1,5 +1,6 @@
 import 'package:tidistockmobileapp/components/login/splash.dart';
 import 'package:tidistockmobileapp/service/CacheService.dart';
+import 'package:tidistockmobileapp/service/ScreenProtectionService.dart';
 import 'package:tidistockmobileapp/theme/theme.dart';
 import 'package:tidistockmobileapp/widgets/FCMHandler.dart';
 import 'package:tidistockmobileapp/firebase_options.dart';
@@ -14,6 +15,7 @@ final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  ScreenProtectionService.instance.disableProtection();
   await dotenv.load(fileName: kReleaseMode ? ".env.prod" : ".env.test");
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,

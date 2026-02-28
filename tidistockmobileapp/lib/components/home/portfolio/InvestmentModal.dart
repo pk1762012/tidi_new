@@ -5,6 +5,8 @@ import 'package:tidistockmobileapp/models/model_portfolio.dart';
 import 'package:tidistockmobileapp/models/portfolio_stock.dart';
 import 'package:tidistockmobileapp/widgets/customScaffold.dart';
 
+import 'package:tidistockmobileapp/mixins/ScreenProtectionMixin.dart';
+
 import 'OrderReviewPage.dart';
 
 class InvestmentModal extends StatefulWidget {
@@ -23,7 +25,8 @@ class InvestmentModal extends StatefulWidget {
   State<InvestmentModal> createState() => _InvestmentModalState();
 }
 
-class _InvestmentModalState extends State<InvestmentModal> {
+class _InvestmentModalState extends State<InvestmentModal>
+    with ScreenProtectionMixin {
   final TextEditingController _amountController = TextEditingController();
   final _currencyFormat = NumberFormat('#,##,###');
   List<_AllocationItem> allocations = [];

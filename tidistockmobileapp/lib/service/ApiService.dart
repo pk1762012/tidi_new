@@ -320,9 +320,6 @@ class ApiService {
 
   Future<http.Response> registerToWorkshop(String date, String branchId) async {
     String? token = await _getToken();
-    // Ensure branchId is in proper UUID format (8-4-4-4-12 with hyphens)
-    final formattedBranchId = _toUuid(branchId);
-    debugPrint('[ApiService] registerToWorkshop - raw: $branchId, formatted: $formattedBranchId');
     return http.post(
       Uri.parse(apiUrl + 'api/workshop/register'),
       headers: {
@@ -331,20 +328,9 @@ class ApiService {
       },
       body: jsonEncode({
         "date": date,
-        "branchId": formattedBranchId,
+        "branchId": branchId,
       }),
     );
-  }
-
-  /// Formats a 32-char hex string into standard UUID format (8-4-4-4-12).
-  /// If already formatted or not 32 chars, returns as-is.
-  String _toUuid(String id) {
-    final clean = id.replaceAll('-', '');
-    if (clean.length != 32) return id;
-    if (id.contains('-')) return id;
-    return '${clean.substring(0, 8)}-${clean.substring(8, 12)}-'
-        '${clean.substring(12, 16)}-${clean.substring(16, 20)}-'
-        '${clean.substring(20)}';
   }
 
   Future<http.Response> getRegisteredWorkshops() async {

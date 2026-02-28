@@ -21,6 +21,8 @@ import 'package:url_launcher/url_launcher.dart';
 
 import 'package:tidistockmobileapp/models/broker_connection.dart';
 
+import 'package:tidistockmobileapp/mixins/ScreenProtectionMixin.dart';
+
 import 'BrokerSelectionPage.dart';
 import 'CurrentHoldingsPreviewPage.dart';
 import 'InvestInPlanSheet.dart';
@@ -41,7 +43,7 @@ class ModelPortfolioDetailPage extends StatefulWidget {
 }
 
 class _ModelPortfolioDetailPageState extends State<ModelPortfolioDetailPage>
-    with SingleTickerProviderStateMixin {
+    with SingleTickerProviderStateMixin, ScreenProtectionMixin {
   late ModelPortfolio portfolio;
   bool _loadingStrategy = true;
   String? userEmail;

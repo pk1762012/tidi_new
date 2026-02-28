@@ -10,6 +10,8 @@ import 'package:tidistockmobileapp/service/AqApiService.dart';
 import 'package:tidistockmobileapp/service/CacheService.dart';
 import 'package:tidistockmobileapp/widgets/customScaffold.dart';
 
+import 'package:tidistockmobileapp/mixins/ScreenProtectionMixin.dart';
+
 import '../../../service/RebalanceStatusService.dart';
 import 'CurrentHoldingsPreviewPage.dart';
 import 'ModelPortfolioDetailPage.dart';
@@ -25,7 +27,7 @@ class ModelPortfolioListPage extends StatefulWidget {
 }
 
 class _ModelPortfolioListPageState extends State<ModelPortfolioListPage>
-    with SingleTickerProviderStateMixin {
+    with SingleTickerProviderStateMixin, ScreenProtectionMixin {
   List<ModelPortfolio> portfolios = [];
   Set<String> _subscribedStrategyIds = {};
   Set<String> _subscribedModelNames = {};

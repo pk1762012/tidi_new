@@ -37,6 +37,7 @@ class _RebalanceReviewPageState extends State<RebalanceReviewPage> {
   // Execution status tracking
   bool _alreadyExecuted = false;
   bool _partiallyExecuted = false;
+  bool _serverCalculated = false; // true when actions came from POST /rebalance/calculate
   String? _researchReportLink;
 
   @override
@@ -46,8 +47,17 @@ class _RebalanceReviewPageState extends State<RebalanceReviewPage> {
   }
 
   Future<void> _computeRebalanceActions() async {
-    final history = widget.portfolio.rebalanceHistory;
+    var history = widget.portfolio.rebalanceHistory;
+
+    // Plans API may return rebalanceHistory without adviceEntries.
+    // Fetch full strategy data (which includes adviceEntries) if needed.
+    if (history.isEmpty || history.last.adviceEntries.isEmpty) {
+      debugPrint('[RebalanceReview] rebalanceHistory empty or no adviceEntries — fetching strategy details for "${widget.portfolio.modelName}"');
+      history = await _fetchEnrichedHistory() ?? history;
+    }
+
     if (history.isEmpty) {
+      debugPrint('[RebalanceReview] No rebalance history available after enrichment');
       setState(() => loading = false);
       return;
     }
@@ -68,134 +78,355 @@ class _RebalanceReviewPageState extends State<RebalanceReviewPage> {
     // Check for research report link
     _researchReportLink = latestRebalance!.researchReportLink;
 
-    // Build map of previous holdings
-    final Map<String, PortfolioStock> previousStocks = {};
-    if (previousRebalance != null) {
-      for (final s in previousRebalance!.adviceEntries) {
-        previousStocks[s.symbol] = s;
-      }
+    // ── SERVER-SIDE CALCULATION (rgx_app approach) ──
+    // POST /rebalance/calculate returns { buy: [...], sell: [...] } with
+    // exact quantities. No HOLD concept — only actionable trades.
+    final serverActions = await _tryServerSideCalculation();
+    if (serverActions != null && serverActions.isNotEmpty) {
+      debugPrint('[RebalanceReview] Using server-side calculation: ${serverActions.length} actions');
+      _serverCalculated = true;
+      setState(() {
+        actions = serverActions;
+        loading = false;
+      });
+      return;
     }
 
-    // Also try to get user's actual current holdings.
-    // holdingsFetched = true only when the API returned valid data, so we
-    // can safely trust qty == 0 means "not held" (not just "API failed").
-    Map<String, double> currentHoldings = {};
-    bool holdingsFetched = false;
-    try {
-      final response = await AqApiService.instance.getSubscriptionRawAmount(
-        email: widget.email,
-        modelName: widget.portfolio.modelName,
-      );
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        final subData = data['data'];
-        if (subData != null) {
-          final userNetPf = subData['user_net_pf_model'] ?? [];
-          if (userNetPf is List && userNetPf.isNotEmpty) {
-            final latest = userNetPf.last;
-            List<dynamic> stockList = [];
-            if (latest is List) stockList = latest;
-            if (latest is Map) stockList = latest['stocks'] ?? latest['holdings'] ?? [];
-            for (final s in stockList) {
-              if (s is Map<String, dynamic>) {
-                final symbol = s['symbol'] ?? s['tradingSymbol'] ?? '';
-                final qty = (s['quantity'] ?? s['qty'] ?? 0).toDouble();
-                if (symbol.isNotEmpty) currentHoldings[symbol] = qty;
-              }
-            }
-            holdingsFetched = true;
-          }
-        }
-      }
-    } catch (_) {}
-
-    // Compute actions
-    final List<_RebalanceAction> computed = [];
-    final allSymbols = <String>{};
-
-    // Add all symbols from latest rebalance
-    for (final s in latestRebalance!.adviceEntries) {
-      allSymbols.add(s.symbol);
-    }
-    // Add all symbols from previous (to detect removals)
-    allSymbols.addAll(previousStocks.keys);
-    allSymbols.addAll(currentHoldings.keys);
-
-    final latestMap = <String, PortfolioStock>{};
-    for (final s in latestRebalance!.adviceEntries) {
-      latestMap[s.symbol] = s;
-    }
-
-    for (final symbol in allSymbols) {
-      final inLatest = latestMap.containsKey(symbol);
-      final inPrevious = previousStocks.containsKey(symbol) || currentHoldings.containsKey(symbol);
-      final currentQty = currentHoldings[symbol] ?? 0;
-
-      if (inLatest && !inPrevious) {
-        // New stock to BUY
-        computed.add(_RebalanceAction(
-          symbol: symbol,
-          exchange: latestMap[symbol]!.exchange ?? 'NSE',
-          type: _ActionType.buy,
-          newWeight: latestMap[symbol]!.weight,
-          oldWeight: 0,
-          currentQty: 0,
-          price: latestMap[symbol]!.price ?? 0,
-        ));
-      } else if (!inLatest && inPrevious) {
-        // Stock removed — SELL
-        computed.add(_RebalanceAction(
-          symbol: symbol,
-          exchange: previousStocks[symbol]?.exchange ?? 'NSE',
-          type: _ActionType.sell,
-          newWeight: 0,
-          oldWeight: previousStocks[symbol]?.weight ?? 0,
-          currentQty: currentQty,
-          price: previousStocks[symbol]?.price ?? 0,
-        ));
-      } else if (inLatest && inPrevious) {
-        // Existing stock — check weight change
-        final newWeight = latestMap[symbol]!.weight;
-        final oldWeight = previousStocks[symbol]?.weight ?? 0;
-        final weightDiff = newWeight - oldWeight;
-
-        _ActionType type;
-        // BUG FIX: If we have reliable holdings data and the user holds
-        // zero quantity of this stock, they never executed a previous
-        // rebalance that included it. Force BUY even if the advisor weight
-        // hasn't changed — the user still needs to acquire the stock.
-        if (holdingsFetched && currentQty <= 0 && newWeight > 0) {
-          type = _ActionType.buy;
-        } else if (weightDiff > 0.01) {
-          type = _ActionType.buy;
-        } else if (weightDiff < -0.01) {
-          type = _ActionType.sell;
-        } else {
-          type = _ActionType.hold;
-        }
-
-        computed.add(_RebalanceAction(
-          symbol: symbol,
-          exchange: latestMap[symbol]!.exchange ?? 'NSE',
-          type: type,
-          newWeight: newWeight,
-          oldWeight: oldWeight,
-          currentQty: currentQty,
-          price: latestMap[symbol]!.price ?? 0,
-        ));
-      }
-    }
-
-    // Sort: sells first, then buys, then holds
-    computed.sort((a, b) {
-      final order = {_ActionType.sell: 0, _ActionType.buy: 1, _ActionType.hold: 2};
-      return (order[a.type] ?? 3).compareTo(order[b.type] ?? 3);
-    });
+    // ── CLIENT-SIDE FALLBACK ──
+    debugPrint('[RebalanceReview] Server-side calculation unavailable, using client-side fallback');
+    final computed = _computeClientSideActions(history);
 
     setState(() {
       actions = computed;
       loading = false;
     });
+  }
+
+  /// Call POST /rebalance/calculate (server-side, like rgx_app).
+  /// Returns BUY/SELL actions with exact quantities, or null on failure.
+  Future<List<_RebalanceAction>?> _tryServerSideCalculation() async {
+    try {
+      // Resolve model_id from latest rebalance history
+      String? modelId;
+      if (widget.portfolio.rebalanceHistory.isNotEmpty) {
+        modelId = widget.portfolio.rebalanceHistory.last.modelId;
+      }
+      modelId ??= widget.portfolio.strategyId ?? widget.portfolio.id;
+
+      // Check for connected broker
+      String userBroker = 'DummyBroker';
+      String userFund = '0';
+      try {
+        final brokerResp = await AqApiService.instance.getConnectedBrokers(widget.email);
+        if (brokerResp.statusCode == 200) {
+          final brokerData = jsonDecode(brokerResp.body);
+          final rawData = brokerData['data'];
+          final List<dynamic> brokerList;
+          if (rawData is List) {
+            brokerList = rawData;
+          } else if (rawData is Map) {
+            brokerList = rawData['connected_brokers'] ?? [];
+          } else {
+            brokerList = brokerData['connected_brokers'] ?? [];
+          }
+          final connected = brokerList
+              .map((e) => BrokerConnection.fromJson(e))
+              .where((b) => b.isEffectivelyConnected)
+              .toList();
+          if (connected.isNotEmpty) {
+            userBroker = connected.first.broker;
+          }
+        }
+      } catch (e) {
+        debugPrint('[RebalanceReview] broker check error: $e');
+      }
+
+      final advisor = widget.portfolio.advisor.isNotEmpty
+          ? widget.portfolio.advisor
+          : AqApiService.instance.advisorName;
+
+      debugPrint('[RebalanceReview] Calling rebalanceCalculate: model=${widget.portfolio.modelName}, modelId=$modelId, broker=$userBroker, advisor=$advisor');
+
+      final resp = await AqApiService.instance.rebalanceCalculate(
+        userEmail: widget.email,
+        modelName: widget.portfolio.modelName,
+        advisor: advisor,
+        modelId: modelId,
+        userBroker: userBroker,
+        userFund: userFund,
+        flag: 0, // full rebalance
+      );
+
+      debugPrint('[RebalanceReview] rebalanceCalculate status=${resp.statusCode}');
+      debugPrint('[RebalanceReview] rebalanceCalculate body=${resp.body.length > 500 ? resp.body.substring(0, 500) : resp.body}');
+
+      if (resp.statusCode >= 200 && resp.statusCode < 300) {
+        final data = jsonDecode(resp.body);
+        final result = _parseServerActions(data);
+        if (result.isNotEmpty) return result;
+        debugPrint('[RebalanceReview] Server returned empty buy/sell');
+      }
+    } catch (e) {
+      debugPrint('[RebalanceReview] rebalanceCalculate error: $e');
+    }
+    return null;
+  }
+
+  /// Re-call server-side calculation with the actual connected broker.
+  /// Called at execution time when the initial DummyBroker call failed.
+  Future<List<_RebalanceAction>?> _tryServerSideCalculationWithBroker(
+      BrokerConnection broker) async {
+    try {
+      String? modelId;
+      if (widget.portfolio.rebalanceHistory.isNotEmpty) {
+        modelId = widget.portfolio.rebalanceHistory.last.modelId;
+      }
+      modelId ??= widget.portfolio.strategyId ?? widget.portfolio.id;
+
+      final advisor = widget.portfolio.advisor.isNotEmpty
+          ? widget.portfolio.advisor
+          : AqApiService.instance.advisorName;
+
+      debugPrint('[RebalanceReview] Re-calling rebalanceCalculate with real broker=${broker.broker}');
+
+      final resp = await AqApiService.instance.rebalanceCalculate(
+        userEmail: widget.email,
+        modelName: widget.portfolio.modelName,
+        advisor: advisor,
+        modelId: modelId,
+        userBroker: broker.broker,
+        userFund: '0',
+        flag: 0,
+      );
+
+      debugPrint('[RebalanceReview] rebalanceCalculate (retry) status=${resp.statusCode}');
+      if (resp.statusCode >= 200 && resp.statusCode < 300) {
+        final data = jsonDecode(resp.body);
+        final result = _parseServerActions(data);
+        if (result.isNotEmpty) return result;
+      }
+    } catch (e) {
+      debugPrint('[RebalanceReview] rebalanceCalculate (retry) error: $e');
+    }
+    return null;
+  }
+
+  /// Parse server response from POST /rebalance/calculate.
+  /// Handles two formats returned by the CCXT server:
+  ///   Array format: { buy: [{symbol, quantity, exchange, price}], sell: [...] }
+  ///   Object format: { buy: {"SYMBOL": qty}, sell: {"SYMBOL": qty} }
+  /// Filters out CASH-EQ (not a real tradeable stock, per rgx_app).
+  List<_RebalanceAction> _parseServerActions(Map<String, dynamic> data) {
+    final List<_RebalanceAction> result = [];
+    final rawBuy = data['buy'];
+    final rawSell = data['sell'];
+
+    void addActions(dynamic raw, _ActionType type) {
+      if (raw is List) {
+        // Array format: [{symbol, quantity, exchange, price}]
+        for (final item in raw) {
+          if (item is! Map) continue;
+          final symbol = (item['symbol'] ?? '').toString();
+          if (symbol.isEmpty || symbol.contains('CASH-EQ')) continue;
+          result.add(_RebalanceAction(
+            symbol: symbol,
+            exchange: (item['exchange'] ?? (symbol.endsWith('-EQ') ? 'NSE' : 'BSE')).toString(),
+            type: type,
+            quantity: _toInt(item['quantity']) ?? 0,
+            price: _toDouble(item['price']) ?? 0,
+          ));
+        }
+      } else if (raw is Map) {
+        // Object format: {"SYMBOL": qty}
+        for (final entry in raw.entries) {
+          final symbol = entry.key.toString();
+          if (symbol.isEmpty || symbol.contains('CASH-EQ')) continue;
+          final qty = _toInt(entry.value) ?? 0;
+          result.add(_RebalanceAction(
+            symbol: symbol,
+            exchange: symbol.endsWith('-EQ') ? 'NSE' : 'BSE',
+            type: type,
+            quantity: qty,
+            price: 0,
+          ));
+        }
+      }
+    }
+
+    addActions(rawSell, _ActionType.sell);
+    addActions(rawBuy, _ActionType.buy);
+
+    debugPrint('[RebalanceReview] Parsed server actions: ${result.length} (sell=${result.where((a) => a.type == _ActionType.sell).length}, buy=${result.where((a) => a.type == _ActionType.buy).length})');
+    return result;
+  }
+
+  /// Client-side fallback when server calculation is unavailable.
+  /// Unlike the old logic, this does NOT produce HOLD actions (matching rgx_app).
+  /// For new subscribers (never executed), all stocks are BUY.
+  List<_RebalanceAction> _computeClientSideActions(List<RebalanceHistoryEntry> history) {
+    final latest = history.last;
+    final previous = history.length > 1 ? history[history.length - 2] : null;
+
+    // Check if user has ever executed a rebalance for this portfolio
+    final execForUser = latest.getExecutionForUser(widget.email);
+    final neverExecuted = execForUser == null ||
+        execForUser.status.toLowerCase() == 'toexecute' ||
+        execForUser.status.toLowerCase() == 'pending';
+
+    final Map<String, PortfolioStock> previousStocks = {};
+    if (previous != null) {
+      for (final s in previous.adviceEntries) {
+        previousStocks[s.symbol] = s;
+      }
+    }
+
+    final latestMap = <String, PortfolioStock>{};
+    for (final s in latest.adviceEntries) {
+      latestMap[s.symbol] = s;
+    }
+
+    final allSymbols = <String>{
+      ...latestMap.keys,
+      ...previousStocks.keys,
+    };
+
+    final List<_RebalanceAction> computed = [];
+
+    for (final symbol in allSymbols) {
+      // Filter out CASH-EQ — not a real tradeable stock (same as rgx_app)
+      if (symbol.contains('CASH-EQ')) continue;
+
+      final inLatest = latestMap.containsKey(symbol);
+      final inPrevious = previousStocks.containsKey(symbol);
+
+      if (inLatest && !inPrevious) {
+        // New stock → BUY
+        computed.add(_RebalanceAction(
+          symbol: symbol,
+          exchange: latestMap[symbol]!.exchange ?? 'NSE',
+          type: _ActionType.buy,
+          quantity: 0,
+          price: latestMap[symbol]!.price ?? 0,
+        ));
+      } else if (!inLatest && inPrevious) {
+        // Removed stock → SELL
+        computed.add(_RebalanceAction(
+          symbol: symbol,
+          exchange: previousStocks[symbol]?.exchange ?? 'NSE',
+          type: _ActionType.sell,
+          quantity: 0,
+          price: previousStocks[symbol]?.price ?? 0,
+        ));
+      } else if (inLatest && inPrevious) {
+        final newWeight = latestMap[symbol]!.weight;
+        final oldWeight = previousStocks[symbol]?.weight ?? 0;
+        final weightDiff = newWeight - oldWeight;
+
+        if (neverExecuted && newWeight > 0) {
+          // User never executed → they need to BUY everything in the portfolio
+          computed.add(_RebalanceAction(
+            symbol: symbol,
+            exchange: latestMap[symbol]!.exchange ?? 'NSE',
+            type: _ActionType.buy,
+            quantity: 0,
+            price: latestMap[symbol]!.price ?? 0,
+          ));
+        } else if (weightDiff > 0.01) {
+          computed.add(_RebalanceAction(
+            symbol: symbol,
+            exchange: latestMap[symbol]!.exchange ?? 'NSE',
+            type: _ActionType.buy,
+            quantity: 0,
+            price: latestMap[symbol]!.price ?? 0,
+          ));
+        } else if (weightDiff < -0.01) {
+          computed.add(_RebalanceAction(
+            symbol: symbol,
+            exchange: latestMap[symbol]!.exchange ?? 'NSE',
+            type: _ActionType.sell,
+            quantity: 0,
+            price: latestMap[symbol]!.price ?? 0,
+          ));
+        }
+        // No HOLD — stocks with unchanged weight and already executed are
+        // simply not shown, matching rgx_app behavior.
+      }
+    }
+
+    // Sort: sells first, then buys
+    computed.sort((a, b) {
+      final order = {_ActionType.sell: 0, _ActionType.buy: 1};
+      return (order[a.type] ?? 2).compareTo(order[b.type] ?? 2);
+    });
+
+    return computed;
+  }
+
+  static double? _toDouble(dynamic value) {
+    if (value == null) return null;
+    if (value is num) return value.toDouble();
+    if (value is String) return double.tryParse(value);
+    return null;
+  }
+
+  static int? _toInt(dynamic value) {
+    if (value == null) return null;
+    if (value is num) return value.toInt();
+    if (value is String) return int.tryParse(value);
+    return null;
+  }
+
+  /// Fetch full rebalance history with adviceEntries from the strategy
+  /// details endpoint or subscribed-strategies endpoint.
+  Future<List<RebalanceHistoryEntry>?> _fetchEnrichedHistory() async {
+    // 1. Try strategy details endpoint (has full rebalanceHistory)
+    try {
+      CacheService.instance.invalidate('aq/model-portfolio/strategy:${widget.portfolio.modelName}');
+      final resp = await AqApiService.instance.getStrategyDetails(widget.portfolio.modelName);
+      debugPrint('[RebalanceReview] getStrategyDetails status=${resp.statusCode}');
+      if (resp.statusCode == 200) {
+        final data = jsonDecode(resp.body);
+        final raw = data is Map<String, dynamic> ? data : <String, dynamic>{};
+        final strategyPortfolio = ModelPortfolio.fromJson(raw);
+        if (strategyPortfolio.rebalanceHistory.isNotEmpty &&
+            strategyPortfolio.rebalanceHistory.last.adviceEntries.isNotEmpty) {
+          debugPrint('[RebalanceReview] Got ${strategyPortfolio.rebalanceHistory.length} entries from strategy details, latest has ${strategyPortfolio.rebalanceHistory.last.adviceEntries.length} advice entries');
+          return strategyPortfolio.rebalanceHistory;
+        }
+      }
+    } catch (e) {
+      debugPrint('[RebalanceReview] getStrategyDetails error: $e');
+    }
+
+    // 2. Fallback: try subscribed-strategies endpoint
+    try {
+      CacheService.instance.invalidate('aq/model-portfolio/subscribed:${widget.email}');
+      final resp = await AqApiService.instance.getSubscribedStrategies(widget.email);
+      debugPrint('[RebalanceReview] getSubscribedStrategies status=${resp.statusCode}');
+      if (resp.statusCode == 200) {
+        final data = jsonDecode(resp.body);
+        final List<dynamic> list = data is List
+            ? data
+            : (data is Map
+                ? (data['subscribedPortfolios'] ?? data['data'] ?? data['strategies'] ?? [])
+                : []);
+        for (final item in list) {
+          if (item is! Map) continue;
+          final portfolio = ModelPortfolio.fromJson(Map<String, dynamic>.from(item));
+          if (portfolio.modelName == widget.portfolio.modelName &&
+              portfolio.rebalanceHistory.isNotEmpty &&
+              portfolio.rebalanceHistory.last.adviceEntries.isNotEmpty) {
+            debugPrint('[RebalanceReview] Got ${portfolio.rebalanceHistory.length} entries from subscribed-strategies, latest has ${portfolio.rebalanceHistory.last.adviceEntries.length} advice entries');
+            return portfolio.rebalanceHistory;
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('[RebalanceReview] getSubscribedStrategies error: $e');
+    }
+
+    debugPrint('[RebalanceReview] Could not fetch enriched rebalance history');
+    return null;
   }
 
   Future<void> _executeRebalance() async {
@@ -219,22 +450,34 @@ class _RebalanceReviewPageState extends State<RebalanceReviewPage> {
       }
     }
 
-    // Generate orders: sells first, then buys.
-    // BUG FIX: Skip SELL orders where currentQty <= 0. We have no holdings to
-    // sell, so sending such orders would cause broker rejection (CDSL error).
-    // This is a pre-filter guard independent of the live holdings API call below.
+    // ── Re-compute with real broker (rgx_app calls /rebalance/calculate at
+    //    execute time with the actual broker, not DummyBroker) ──
+    List<_RebalanceAction> execActions = actions;
+    if (!_serverCalculated) {
+      // Initial page load failed to get server data — retry now with real broker.
+      final freshActions = await _tryServerSideCalculationWithBroker(connectedBroker);
+      if (freshActions != null && freshActions.isNotEmpty) {
+        execActions = freshActions;
+        _serverCalculated = true;
+        if (mounted) setState(() => actions = freshActions);
+      }
+    }
+
+    // Generate orders from actions.
     final orders = <Map<String, dynamic>>[];
 
-    for (final action in actions) {
-      if (action.type == _ActionType.hold) continue;
-
-      if (action.type == _ActionType.sell && action.currentQty <= 0) continue;
+    for (final action in execActions) {
+      // Server-computed actions have exact quantities; skip 0-qty entries.
+      // Client-side fallback actions have quantity=0 → use 1 as minimum
+      // so the order can be placed (broker may adjust).
+      final qty = action.quantity > 0 ? action.quantity : (_serverCalculated ? 0 : 1);
+      if (qty <= 0) continue;
 
       orders.add({
         'symbol': action.symbol,
         'exchange': action.exchange,
         'transactionType': action.type == _ActionType.buy ? 'BUY' : 'SELL',
-        'quantity': action.currentQty > 0 ? action.currentQty.toInt() : 1,
+        'quantity': qty,
         'orderType': 'MARKET',
         'productType': 'CNC',
         'price': action.price,
@@ -733,15 +976,12 @@ class _RebalanceReviewPageState extends State<RebalanceReviewPage> {
   Widget _summary() {
     final buyCount = actions.where((a) => a.type == _ActionType.buy).length;
     final sellCount = actions.where((a) => a.type == _ActionType.sell).length;
-    final holdCount = actions.where((a) => a.type == _ActionType.hold).length;
 
     return Row(
       children: [
         _summaryChip("BUY", buyCount, Colors.green),
         const SizedBox(width: 10),
         _summaryChip("SELL", sellCount, Colors.red),
-        const SizedBox(width: 10),
-        _summaryChip("HOLD", holdCount, Colors.grey),
       ],
     );
   }
@@ -815,12 +1055,9 @@ class _RebalanceReviewPageState extends State<RebalanceReviewPage> {
         icon = Icons.remove_circle;
         label = "SELL";
         break;
-      case _ActionType.hold:
-        color = Colors.grey;
-        icon = Icons.horizontal_rule;
-        label = "HOLD";
-        break;
     }
+
+    final qtyText = action.quantity > 0 ? 'Qty: ${action.quantity}' : action.exchange;
 
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
@@ -840,7 +1077,7 @@ class _RebalanceReviewPageState extends State<RebalanceReviewPage> {
               children: [
                 Text(action.symbol,
                   style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
-                Text("${action.exchange} | ${action.oldWeight.toStringAsFixed(1)} → ${action.newWeight.toStringAsFixed(1)} wt",
+                Text("$qtyText${action.price > 0 ? ' | \u20B9${action.price.toStringAsFixed(2)}' : ''}",
                   style: TextStyle(fontSize: 11, color: Colors.grey.shade600)),
               ],
             ),
@@ -924,24 +1161,20 @@ class _RebalanceReviewPageState extends State<RebalanceReviewPage> {
   }
 }
 
-enum _ActionType { buy, sell, hold }
+enum _ActionType { buy, sell }
 
 class _RebalanceAction {
   final String symbol;
   final String exchange;
   final _ActionType type;
-  final double newWeight;
-  final double oldWeight;
-  final double currentQty;
+  final int quantity;   // Server-computed quantity (0 = not yet computed)
   final double price;
 
   _RebalanceAction({
     required this.symbol,
     required this.exchange,
     required this.type,
-    required this.newWeight,
-    required this.oldWeight,
-    required this.currentQty,
+    required this.quantity,
     required this.price,
   });
 }

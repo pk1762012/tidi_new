@@ -8,6 +8,7 @@ import 'package:razorpay_flutter/razorpay_flutter.dart';
 import '../components/login/PaymentSuccess.dart';
 import '../main.dart';
 import 'ApiService.dart';
+import 'AqApiService.dart';
 import 'CacheService.dart';
 
 class RazorpayService {
@@ -154,6 +155,7 @@ class RazorpayService {
 
       if (response.statusCode >= 200 && response.statusCode < 300) {
         try {
+          String? phone = await secureStorage.read(key: 'phone_number');
           final jsonData = json.decode(response.body);
 
           final razorpayKey = dotenv.env['RAZORPAY_KEY'] ?? '';
@@ -169,6 +171,7 @@ class RazorpayService {
             'order_id': orderId,
             'description': 'Workshop Registration',
             'timeout': 60,
+            'prefill': {'contact': phone ?? ''}
           };
 
           _razorpay.open(options);
@@ -293,6 +296,21 @@ class RazorpayService {
           razorpaySignature: response.signature ?? '',
         );
         if (verifyResp.statusCode >= 200 && verifyResp.statusCode < 300) {
+          // Register subscription with AlphaQuark
+          final sid = _pendingMetadata['strategyId'];
+          final uemail = _pendingMetadata['userEmail'];
+          if (sid != null && sid.isNotEmpty && uemail != null && uemail.isNotEmpty) {
+            try {
+              await AqApiService.instance.subscribeStrategy(
+                strategyId: sid,
+                email: uemail,
+                action: 'subscribe',
+              );
+              debugPrint('[RazorpayService] AQ subscribeStrategy success');
+            } catch (e) {
+              debugPrint('[RazorpayService] AQ subscribeStrategy error (non-fatal): $e');
+            }
+          }
           CacheService.instance.invalidateByPrefix('aq/admin/plan/portfolios');
           CacheService.instance.invalidateByPrefix('aq/model-portfolio/subscribed');
           _navigateToSuccess();

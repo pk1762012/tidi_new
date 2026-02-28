@@ -510,12 +510,12 @@ class _StockScannerState extends State<StockScanner> {
       bool selected = filter['value'] as bool;
       switch (filter['type']) {
         case 'RSI':
-          return Colors.orangeAccent;
+          return Colors.teal;
         case 'MACD':
-          return filter['label'].contains('Positive') ? Colors.greenAccent : Colors.redAccent;
+          return filter['label'].contains('Positive') ? Colors.green.shade700 : Colors.redAccent;
         case 'SMA':
         case 'EMA':
-          return filter['label'].contains('Bullish') ? Colors.greenAccent : Colors.redAccent;
+          return filter['label'].contains('Bullish') ? Colors.green.shade700 : Colors.redAccent;
         default:
           return Colors.grey;
       }
@@ -825,7 +825,7 @@ class _StockScannerState extends State<StockScanner> {
               final pattern = availablePatterns[index];
               final isSelected = selectedPatterns.contains(pattern);
 
-              Color color = Colors.orangeAccent; // default
+              Color color = Colors.deepPurple; // deep purple for better visibility
               // Optional: show green/red depending on bullish/bearish if you want
               return GestureDetector(
                 onTap: () {

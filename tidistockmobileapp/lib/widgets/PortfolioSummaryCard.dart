@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:tidistockmobileapp/service/AqApiService.dart';
+import 'package:tidistockmobileapp/service/ApiService.dart';
 
 import '../components/home/portfolio/CurrentHoldingsPreviewPage.dart';
 import '../components/home/portfolio/ModelPortfolioDetailPage.dart';
@@ -14,10 +15,10 @@ import '../service/RebalanceStatusService.dart';
 
 /// Shows each subscribed portfolio as an individual card on the Market page,
 /// with a color-coded rebalance action button.
+///
+/// Self-contained: resolves user email internally (same as ModelPortfolioListPage).
 class PortfolioSummaryCard extends StatefulWidget {
-  final String email;
-
-  const PortfolioSummaryCard({super.key, required this.email});
+  const PortfolioSummaryCard({super.key});
 
   @override
   State<PortfolioSummaryCard> createState() => _PortfolioSummaryCardState();
@@ -25,9 +26,24 @@ class PortfolioSummaryCard extends StatefulWidget {
 
 class _PortfolioSummaryCardState extends State<PortfolioSummaryCard> {
   bool _loading = true;
-  int _portfolioCount = 0;
+  String? _userEmail;
   Map<String, PortfolioRebalanceStatus> _rebalanceStatusMap = {};
-  List<ModelPortfolio> _subscribedPortfolios = [];
+
+  // All portfolios from API + subscribed IDs/names (mirrors ModelPortfolioListPage)
+  List<ModelPortfolio> _allPortfolios = [];
+  Set<String> _subscribedStrategyIds = {};
+  Set<String> _subscribedModelNames = {};
+
+  List<ModelPortfolio> get _subscribedPortfolios =>
+      _allPortfolios.where((p) => _isSubscribed(p)).toList();
+
+  bool _isSubscribed(ModelPortfolio p) {
+    if (_subscribedStrategyIds.contains(p.strategyId)) return true;
+    if (_subscribedStrategyIds.contains(p.id)) return true;
+    if (_subscribedModelNames.contains(p.modelName.toLowerCase().trim())) return true;
+    if (_userEmail != null && p.isSubscribedBy(_userEmail!)) return true;
+    return false;
+  }
 
   @override
   void initState() {
@@ -36,109 +52,222 @@ class _PortfolioSummaryCardState extends State<PortfolioSummaryCard> {
   }
 
   Future<void> _loadData() async {
+    // ── Step 0: Resolve email (same as ModelPortfolioListPage) ──
+    try {
+      final email = await AqApiService.resolveUserEmail();
+      if (mounted && email != null) {
+        setState(() => _userEmail = email);
+      }
+      debugPrint('[PortfolioSummaryCard] resolved email=$email');
+    } catch (e) {
+      debugPrint('[PortfolioSummaryCard] resolveUserEmail error: $e');
+    }
+
+    // ── Step 1: Load local subscriptions first (for instant display) ──
+    await _loadLocalSubscriptions();
+
+    // ── Step 2: Fetch all data in parallel ──
     await Future.wait([
+      _fetchAllPortfolios(),
       _fetchSubscribedStrategies(),
       _fetchRebalanceStatuses(),
     ]);
-    if (mounted) setState(() => _loading = false);
+
+    if (mounted) {
+      final subscribed = _subscribedPortfolios;
+      debugPrint('[PortfolioSummaryCard] FINAL: allPortfolios=${_allPortfolios.length}, '
+          'subscribedIds=$_subscribedStrategyIds, subscribedNames=$_subscribedModelNames, '
+          'matched=${subscribed.length}');
+      setState(() => _loading = false);
+    }
   }
 
-  Future<void> _fetchSubscribedStrategies() async {
+  /// Fetch ALL available portfolios — same approach as ModelPortfolioListPage._fetchPortfolios
+  Future<void> _fetchAllPortfolios() async {
     try {
-      await AqApiService.instance.getCachedSubscribedStrategies(
-        email: widget.email,
+      await AqApiService.instance.getCachedPortfolios(
+        email: _userEmail ?? '',
         onData: (data, {required fromCache}) {
           if (!mounted) return;
+
           List<dynamic> list;
+          String extractionPath;
           if (data is List) {
             list = data;
+            extractionPath = 'top-level List';
           } else if (data is Map) {
-            list = data['subscribedPortfolios'] ?? data['data'] ?? data['strategies'] ?? [];
+            if (data['data'] is List) {
+              list = data['data'];
+              extractionPath = 'data key';
+            } else if (data['portfolios'] is List) {
+              list = data['portfolios'];
+              extractionPath = 'portfolios key';
+            } else if (data['models'] is List) {
+              list = data['models'];
+              extractionPath = 'models key';
+            } else {
+              list = data.values.whereType<List>().firstOrNull ?? [];
+              extractionPath = 'fallback first List value';
+            }
           } else {
             list = [];
+            extractionPath = 'empty (unknown type)';
           }
-          final portfolios = list.map((e) => ModelPortfolio.fromJson(e)).toList();
+
+          list = list.where((e) => e is Map && e['draft'] != true).toList();
+
+          debugPrint('[PortfolioSummaryCard] portfolios: ${list.length} via $extractionPath (fromCache=$fromCache)');
+
+          // Don't overwrite existing data with empty cache results
+          if (fromCache && list.isEmpty && _allPortfolios.isNotEmpty) return;
+
           setState(() {
-            _subscribedPortfolios = portfolios;
-            _portfolioCount = portfolios.length;
+            _allPortfolios = list.map((e) => ModelPortfolio.fromJson(e)).toList();
           });
         },
       );
     } catch (e) {
-      debugPrint('[PortfolioSummaryCard] fetchSubscribed error: $e');
-    }
-
-    // If AQ API returned nothing, check local subscriptions
-    if (_portfolioCount == 0) {
-      await _mergeLocalSubscriptions();
+      debugPrint('[PortfolioSummaryCard] _fetchAllPortfolios error: $e');
     }
   }
 
-  /// Load locally-saved subscriptions (from subscribe-free flow) so they
-  /// appear immediately even before the backend APIs reflect them.
-  Future<void> _mergeLocalSubscriptions() async {
+  /// Fetch subscribed strategy IDs/names — same dual-API approach as
+  /// ModelPortfolioListPage._fetchSubscribedStrategies
+  Future<void> _fetchSubscribedStrategies() async {
+    // ── 1. Try tidi_Front_back API first (resolves email from JWT internally) ──
+    bool tidiApiSuccess = false;
+    try {
+      final response = await ApiService().getUserModelPortfolioSubscriptions();
+      debugPrint('[PortfolioSummaryCard] tidi_subscriptions status=${response.statusCode}');
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        final body = json.decode(response.body);
+        debugPrint('[PortfolioSummaryCard] tidi_subscriptions body type=${body.runtimeType}');
+        final List<dynamic> strategies = body is List
+            ? body
+            : (body is Map
+                ? (body['subscriptions'] ?? body['subscribedPortfolios'] ?? body['data'] ?? body['strategies'] ?? [])
+                : []);
+        debugPrint('[PortfolioSummaryCard] tidi strategies count=${strategies.length}');
+        if (strategies.isNotEmpty) {
+          tidiApiSuccess = true;
+          final ids = <String>{};
+          final names = <String>{};
+          for (final s in strategies) {
+            if (s is Map) {
+              final id = s['_id']?.toString() ?? s['strategyId']?.toString();
+              if (id != null && id.isNotEmpty) ids.add(id);
+              final modelId = s['model_id']?.toString() ?? s['modelId']?.toString();
+              if (modelId != null && modelId.isNotEmpty) ids.add(modelId);
+              final modelName = s['model_name']?.toString() ?? s['name']?.toString();
+              if (modelName != null && modelName.isNotEmpty) {
+                names.add(modelName.toLowerCase().trim());
+              }
+            } else if (s is String && s.isNotEmpty) {
+              ids.add(s);
+            }
+          }
+          debugPrint('[PortfolioSummaryCard] tidi subscribedIds=$ids, names=$names');
+          if (mounted) {
+            setState(() {
+              _subscribedStrategyIds = ids;
+              _subscribedModelNames = names;
+            });
+          }
+          return; // Success — no need to fall back
+        }
+      }
+    } catch (e) {
+      debugPrint('[PortfolioSummaryCard] tidi_subscriptions error (will fallback): $e');
+    }
+
+    // ── 2. Fallback: AlphaQuark API if tidi_Front_back failed or returned empty ──
+    if (!tidiApiSuccess && _userEmail != null && _userEmail!.isNotEmpty) {
+      debugPrint('[PortfolioSummaryCard] falling back to AlphaQuark API');
+      try {
+        final response = await AqApiService.instance.getSubscribedStrategies(_userEmail!);
+        debugPrint('[PortfolioSummaryCard] AQ subscribedStrategies status=${response.statusCode}');
+        if (response.statusCode >= 200 && response.statusCode < 300) {
+          final body = json.decode(response.body);
+          debugPrint('[PortfolioSummaryCard] AQ body type=${body.runtimeType}');
+          final List<dynamic> strategies = body is List
+              ? body
+              : (body is Map
+                  ? (body['subscribedPortfolios'] ?? body['data'] ?? body['strategies'] ?? [])
+                  : []);
+          debugPrint('[PortfolioSummaryCard] AQ strategies count=${strategies.length}');
+          final ids = <String>{};
+          final names = <String>{};
+          for (final s in strategies) {
+            if (s is Map) {
+              final id = s['_id']?.toString() ?? s['strategyId']?.toString();
+              if (id != null && id.isNotEmpty) ids.add(id);
+              final modelId = s['model_id']?.toString() ?? s['modelId']?.toString();
+              if (modelId != null && modelId.isNotEmpty) ids.add(modelId);
+              final modelName = s['model_name']?.toString() ?? s['name']?.toString();
+              if (modelName != null && modelName.isNotEmpty) {
+                names.add(modelName.toLowerCase().trim());
+              }
+            } else if (s is String && s.isNotEmpty) {
+              ids.add(s);
+            }
+          }
+          debugPrint('[PortfolioSummaryCard] AQ subscribedIds=$ids, names=$names');
+          if (mounted) {
+            setState(() {
+              _subscribedStrategyIds = ids;
+              _subscribedModelNames = names;
+            });
+          }
+        }
+      } catch (e) {
+        debugPrint('[PortfolioSummaryCard] AQ fallback error: $e');
+      }
+    }
+  }
+
+  /// Load locally-saved subscriptions so they appear immediately even before
+  /// the backend APIs reflect them.
+  Future<void> _loadLocalSubscriptions() async {
     try {
       final raw = await const FlutterSecureStorage().read(key: 'local_subscribed_portfolios');
       if (raw == null || raw.isEmpty) return;
       final List<dynamic> entries = json.decode(raw);
       if (entries.isEmpty) return;
 
+      final localIds = <String>{};
       final localNames = <String>{};
       for (final e in entries) {
         if (e is Map) {
+          final sid = e['strategyId']?.toString();
+          final pid = e['planId']?.toString();
           final name = e['modelName']?.toString();
-          if (name != null && name.isNotEmpty) localNames.add(name);
-        }
-      }
-      if (localNames.isEmpty) return;
-
-      debugPrint('[PortfolioSummaryCard] found ${localNames.length} local subscriptions: $localNames');
-
-      // Try to match local subscriptions against the full portfolio list from API
-      try {
-        final response = await AqApiService.instance.getPortfolios(email: widget.email);
-        if (response.statusCode >= 200 && response.statusCode < 300) {
-          final body = json.decode(response.body);
-          final List<dynamic> allPlans = body is List
-              ? body
-              : (body is Map ? (body['data'] ?? body['plans'] ?? []) : []);
-          final matched = <ModelPortfolio>[];
-          for (final plan in allPlans) {
-            if (plan is Map<String, dynamic>) {
-              final p = ModelPortfolio.fromJson(plan);
-              if (localNames.contains(p.modelName)) {
-                matched.add(p);
-              }
-            }
-          }
-          if (matched.isNotEmpty && mounted) {
-            setState(() {
-              _subscribedPortfolios = matched;
-              _portfolioCount = matched.length;
-            });
-            debugPrint('[PortfolioSummaryCard] matched ${matched.length} local subs to portfolios');
+          if (sid != null && sid.isNotEmpty) localIds.add(sid);
+          if (pid != null && pid.isNotEmpty) localIds.add(pid);
+          if (name != null && name.isNotEmpty) {
+            localNames.add(name.toLowerCase().trim());
           }
         }
-      } catch (e) {
-        debugPrint('[PortfolioSummaryCard] portfolio match error: $e');
       }
+      if (localIds.isEmpty && localNames.isEmpty) return;
 
-      // Even if we can't match full portfolio objects, show the count
-      if (_portfolioCount == 0 && localNames.isNotEmpty && mounted) {
+      debugPrint('[PortfolioSummaryCard] local subscriptions: ids=$localIds, names=$localNames');
+      if (mounted) {
         setState(() {
-          _portfolioCount = localNames.length;
+          _subscribedStrategyIds = {..._subscribedStrategyIds, ...localIds};
+          _subscribedModelNames = {..._subscribedModelNames, ...localNames};
         });
       }
     } catch (e) {
-      debugPrint('[PortfolioSummaryCard] _mergeLocalSubscriptions error: $e');
+      debugPrint('[PortfolioSummaryCard] _loadLocalSubscriptions error: $e');
     }
   }
 
   Future<void> _fetchRebalanceStatuses() async {
+    if (_userEmail == null || _userEmail!.isEmpty) return;
     try {
-      final connectedBroker = await RebalanceStatusService.fetchConnectedBrokerName(widget.email);
+      final connectedBroker = await RebalanceStatusService.fetchConnectedBrokerName(_userEmail!);
       final statuses = await RebalanceStatusService.fetchAllRebalanceStatuses(
-        widget.email,
+        _userEmail!,
         connectedBroker: connectedBroker,
       );
       if (mounted) setState(() => _rebalanceStatusMap = statuses);
@@ -155,7 +284,9 @@ class _PortfolioSummaryCardState extends State<PortfolioSummaryCard> {
         child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
       );
     }
-    if (_portfolioCount == 0) return const SizedBox.shrink();
+
+    final subscribed = _subscribedPortfolios;
+    if (subscribed.isEmpty) return const SizedBox.shrink();
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -169,7 +300,7 @@ class _PortfolioSummaryCardState extends State<PortfolioSummaryCard> {
               const SizedBox(width: 10),
               Expanded(
                 child: Text(
-                  "My Portfolios ($_portfolioCount)",
+                  "My Portfolios (${subscribed.length})",
                   style: TextStyle(
                     color: Colors.indigo.shade900,
                     fontSize: 16,
@@ -200,7 +331,7 @@ class _PortfolioSummaryCardState extends State<PortfolioSummaryCard> {
         ),
 
         // Individual portfolio cards
-        ..._subscribedPortfolios.map((p) => _portfolioCard(p)),
+        ...subscribed.map((p) => _portfolioCard(p)),
       ],
     );
   }
@@ -331,13 +462,14 @@ class _PortfolioSummaryCardState extends State<PortfolioSummaryCard> {
     return GestureDetector(
       onTap: () async {
         HapticFeedback.mediumImpact();
+        if (_userEmail == null) return;
         if (status != null && status.cardState == RebalanceCardState.pendingVerification) {
           await Navigator.push(
             context,
             MaterialPageRoute(
               builder: (_) => PendingOrdersPage(
                 portfolio: portfolio,
-                email: widget.email,
+                email: _userEmail!,
                 broker: status.broker,
                 advisor: status.advisor,
               ),
@@ -350,7 +482,7 @@ class _PortfolioSummaryCardState extends State<PortfolioSummaryCard> {
             MaterialPageRoute(
               builder: (_) => CurrentHoldingsPreviewPage(
                 portfolio: portfolio,
-                email: widget.email,
+                email: _userEmail!,
               ),
             ),
           );

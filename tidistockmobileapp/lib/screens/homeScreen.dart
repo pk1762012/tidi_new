@@ -9,6 +9,7 @@ import 'package:tidistockmobileapp/widgets/customScaffold.dart';
 import '../components/home/AcademyPage.dart';
 import '../components/home/advisory/StockRecommendationScreen.dart';
 import '../components/home/portfolio/ModelPortfolioListPage.dart';
+import '../config/app_config.dart';
 import '../service/AqApiService.dart';
 import '../service/RebalanceStatusService.dart';
 
@@ -61,6 +62,7 @@ class HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _loadRebalanceAlerts() async {
+    if (AppConfig.advisoryMode != AdvisoryPortfolioMode.modelPortfolio) return;
     final email = await AqApiService.resolveUserEmail();
     if (email == null || !mounted) return;
     try {
@@ -89,10 +91,11 @@ class HomeScreenState extends State<HomeScreen> {
         body: Stack(
           children: [
             pages[currentIndex],
-            // Floating rebalance alert — visible on Market (0) and Advisory (1) tabs
+            // Floating rebalance alert — only visible on Advisory tab when in Model Portfolio mode
             if (_pendingRebalances.isNotEmpty &&
                 !_alertDismissed &&
-                (currentIndex == 0 || currentIndex == 1))
+                currentIndex == 1 &&
+                AppConfig.advisoryMode == AdvisoryPortfolioMode.modelPortfolio)
               Positioned(
                 left: 12,
                 right: 12,

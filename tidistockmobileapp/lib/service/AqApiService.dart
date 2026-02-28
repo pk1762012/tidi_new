@@ -161,6 +161,36 @@ class AqApiService {
   }
 
   // ---------------------------------------------------------------------------
+  // CCXT Rebalance APIs
+  // ---------------------------------------------------------------------------
+
+  /// Server-side rebalance calculation (same as rgx_app POST /rebalance/calculate).
+  /// Returns { buy: [{symbol, quantity, exchange, price}], sell: [...] }.
+  Future<http.Response> rebalanceCalculate({
+    required String userEmail,
+    required String modelName,
+    required String advisor,
+    required String modelId,
+    String userBroker = 'DummyBroker',
+    String userFund = '0',
+    int flag = 0,
+  }) async {
+    return http.post(
+      Uri.parse('${ccxtUrl}rebalance/calculate'),
+      headers: _headers(),
+      body: jsonEncode({
+        'userEmail': userEmail,
+        'userBroker': userBroker,
+        'modelName': modelName,
+        'advisor': advisor,
+        'model_id': modelId,
+        'userFund': userFund,
+        'flag': flag,
+      }),
+    ).timeout(const Duration(seconds: 15));
+  }
+
+  // ---------------------------------------------------------------------------
   // CCXT Performance APIs
   // ---------------------------------------------------------------------------
 

@@ -684,6 +684,19 @@ class _InvestInPlanSheetState extends State<InvestInPlanSheet>
           email: email,
         );
 
+        // Register subscription with AlphaQuark so getSubscribedStrategies
+        // returns it (needed for PortfolioSummaryCard & ModelPortfolioListPage)
+        try {
+          await AqApiService.instance.subscribeStrategy(
+            strategyId: strategyId,
+            email: email,
+            action: 'subscribe',
+          );
+          debugPrint('[InvestInPlanSheet] AQ subscribeStrategy success');
+        } catch (e) {
+          debugPrint('[InvestInPlanSheet] AQ subscribeStrategy error (non-fatal): $e');
+        }
+
         // Create model_portfolio_user doc on ccxt-india (same as rgx_app)
         try {
           await AqApiService.instance.insertUserDoc(
