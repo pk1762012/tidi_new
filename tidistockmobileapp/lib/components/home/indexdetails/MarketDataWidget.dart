@@ -41,6 +41,9 @@ class MarketDataWidgetState extends State<MarketDataWidget>
   Timer? _uiUpdateTimer;
   bool _hasPendingUpdate = false;
 
+  // Fallback: periodic HTTP refresh when WebSocket is down
+  Timer? _httpFallbackTimer;
+
   @override
   void initState() {
     super.initState();
@@ -48,6 +51,7 @@ class MarketDataWidgetState extends State<MarketDataWidget>
     _startUiUpdateTimer();
     _fetchInitialData();
     connectWebSocket();
+    _startHttpFallbackTimer();
   }
 
   void _startUiUpdateTimer() {
@@ -60,11 +64,22 @@ class MarketDataWidgetState extends State<MarketDataWidget>
     });
   }
 
+  void _startHttpFallbackTimer() {
+    _httpFallbackTimer?.cancel();
+    _httpFallbackTimer = Timer.periodic(const Duration(seconds: 15), (_) {
+      if (!_isConnected && mounted) {
+        _fetchInitialData();
+      }
+    });
+  }
+
   void _closeWs() {
     _isConnected = false;
     _isConnecting = false;
     _uiUpdateTimer?.cancel();
     _uiUpdateTimer = null;
+    _httpFallbackTimer?.cancel();
+    _httpFallbackTimer = null;
     _channelSubscription?.cancel();
     _channelSubscription = null;
 
@@ -82,6 +97,7 @@ class MarketDataWidgetState extends State<MarketDataWidget>
 
     if (state == AppLifecycleState.resumed) {
       _startUiUpdateTimer();
+      _startHttpFallbackTimer();
       // Skip HTTP fetch on resume if we already have valid data (4.3)
       if (nifty == 0.0) {
         _fetchInitialData();
@@ -378,6 +394,7 @@ class MarketDataWidgetState extends State<MarketDataWidget>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _uiUpdateTimer?.cancel();
+    _httpFallbackTimer?.cancel();
     _closeWs();
     super.dispose();
   }
