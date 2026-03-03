@@ -1,6 +1,10 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_svg/svg.dart';
+import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
 
 import 'package:cached_network_image/cached_network_image.dart';
@@ -213,6 +217,22 @@ class _IpoListingPageState extends State<IpoListingPage>
           });
 
           debugPrint('[IPO] Open: ${openIpos.length}, Upcoming: ${upcomingIpos.length}, RecentlyClosed: ${recentlyClosedIpos.length}');
+
+          // Log GMP matches (if GMP data already loaded)
+          if (_gmpByName.isNotEmpty) {
+            final allIpos = [...filteredOpen, ...filteredUpcoming, ...filteredClosed];
+            int matchCount = 0;
+            for (final ipo in allIpos) {
+              final gmp = _getGmpValue(ipo);
+              if (gmp != null) {
+                matchCount++;
+                debugPrint('[IPO+GMP] Match: ${ipo['name']} -> $gmp');
+              }
+            }
+            debugPrint('[IPO+GMP] Total matches: $matchCount / ${allIpos.length} IPOs (gmpByName has ${_gmpByName.length} entries)');
+          } else {
+            debugPrint('[IPO+GMP] GMP data not yet loaded (_gmpByName is empty)');
+          }
         },
       );
     } catch (e) {
@@ -232,37 +252,46 @@ class _IpoListingPageState extends State<IpoListingPage>
 
   Future<void> fetchGmp() async {
     try {
-      await ApiService().getCachedIPOGmp(
-        onData: (data, {required fromCache}) {
-          if (!mounted) return;
-          final List list = data is List ? data : [];
-          final Map<String, dynamic> map = {};
-          for (final item in list) {
-            final name = (item['companyName'] ?? '').toString().trim().toLowerCase();
-            if (name.isNotEmpty) {
-              map[name] = item;
-            }
-          }
-          setState(() {
-            _gmpByName = map;
-          });
-          debugPrint('[GMP] Loaded ${map.length} GMP entries (fromCache: $fromCache)');
+      final apiUrl = dotenv.env['API_URL'] ?? '';
+      final url = Uri.parse('${apiUrl}api/ipo/gmp');
+      debugPrint('[GMP] Fetching from: $url');
 
-          // Log matches against current IPOs for debugging
-          final allIpos = [...openIpos, ...upcomingIpos, ...recentlyClosedIpos];
-          int matchCount = 0;
-          for (final ipo in allIpos) {
-            final gmp = _getGmpValue(ipo);
-            if (gmp != null) {
-              matchCount++;
-              debugPrint('[GMP] Match: ${ipo['name']} -> $gmp');
-            }
-          }
-          debugPrint('[GMP] Total matches: $matchCount / ${allIpos.length} IPOs');
-        },
-      );
-    } catch (e) {
+      final response = await http.get(url).timeout(const Duration(seconds: 15));
+      debugPrint('[GMP] Response status: ${response.statusCode}, bodyLen: ${response.body.length}');
+
+      if (response.statusCode != 200) {
+        debugPrint('[GMP] Non-200 response: ${response.body.substring(0, (response.body.length > 200 ? 200 : response.body.length))}');
+        return;
+      }
+
+      final decoded = jsonDecode(response.body);
+      final List list = decoded is List ? decoded : [];
+      debugPrint('[GMP] Parsed ${list.length} GMP entries');
+
+      if (list.isEmpty) return;
+
+      final Map<String, dynamic> map = {};
+      for (final item in list) {
+        final name = (item['companyName'] ?? '').toString().trim().toLowerCase();
+        if (name.isNotEmpty) {
+          map[name] = item;
+        }
+      }
+
+      if (!mounted) return;
+      setState(() {
+        _gmpByName = map;
+      });
+      debugPrint('[GMP] Stored ${map.length} GMP entries in _gmpByName');
+
+      // Log first few entries for verification
+      final keys = map.keys.take(5).toList();
+      for (final k in keys) {
+        debugPrint('[GMP]   "$k" -> gmpValue=${map[k]?['gmpValue']}');
+      }
+    } catch (e, stack) {
       debugPrint('[GMP] Fetch error: $e');
+      debugPrint('[GMP] Stack: $stack');
     }
   }
 
@@ -749,9 +778,8 @@ class _IpoListingPageState extends State<IpoListingPage>
 
   Widget _gmpBox(dynamic ipo) {
     final gmpDisplay = _getGmpDisplay(ipo);
-    if (gmpDisplay == "-") return const SizedBox();
-
-    return _infoBox("GMP", gmpDisplay);
+    // Always show GMP box — "N/A" when no data available
+    return _infoBox("GMP", gmpDisplay == "-" ? "N/A" : gmpDisplay);
   }
 
   // ==========================================================
