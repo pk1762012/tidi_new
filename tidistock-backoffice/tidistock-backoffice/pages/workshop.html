@@ -71,6 +71,9 @@
                 <th>Demat Account</th>
                 <th>Workshop Date</th>
                 <th>Branch</th>
+                <th>Checked In</th>
+                <th>Check-ins</th>
+                <th>Last Check-in</th>
                 <th>Registered On</th>
             </tr>
             </thead>
@@ -164,6 +167,9 @@
                 { data: 'hasDematAccount', className: "text-center", render: d => d === true ? '<span class="badge bg-success">Yes</span>' : d === false ? '<span class="badge bg-secondary">No</span>' : '-' },
                 { data: 'date', className: "text-center", render: d => new Date(d).toLocaleDateString() },
                 { data: 'branch', className: "text-center" },
+                { data: 'checkedIn', className: "text-center", render: d => d === true ? '<span class="badge bg-success">Yes</span>' : '<span class="badge bg-secondary">No</span>' },
+                { data: 'checkedInCount', className: "text-center", defaultContent: '0' },
+                { data: 'lastCheckedInAt', className: "text-center", render: d => d ? new Date(d).toLocaleString() : '-' },
                 { data: 'dateCreated', className: "text-center", render: d => new Date(d).toLocaleString() }
             ],
             pageLength: 10,
