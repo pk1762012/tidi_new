@@ -1,6 +1,3 @@
-import 'dart:convert';
-import 'dart:ui';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_svg/svg.dart';
@@ -14,8 +11,6 @@ import 'package:tidistockmobileapp/service/CacheService.dart';
 import 'package:tidistockmobileapp/service/SubscriptionService.dart';
 import 'package:url_launcher/url_launcher.dart';
 
-import '../../../widgets/SubscriptionPromptDialog.dart';
-
 class IpoListingPage extends StatefulWidget {
   const IpoListingPage({super.key});
 
@@ -23,7 +18,8 @@ class IpoListingPage extends StatefulWidget {
   State<IpoListingPage> createState() => _IpoListingPageState();
 }
 
-class _IpoListingPageState extends State<IpoListingPage> {
+class _IpoListingPageState extends State<IpoListingPage>
+    with SingleTickerProviderStateMixin {
   final FlutterSecureStorage secureStorage = const FlutterSecureStorage();
 
   bool loading = true;
@@ -35,11 +31,24 @@ class _IpoListingPageState extends State<IpoListingPage> {
   List<dynamic> recentlyClosedIpos = [];
   int totalFromApi = -1; // -1 = not yet loaded, 0 = server returned empty
 
+  // GMP data from scraped source
+  Map<String, dynamic> _gmpByName = {};
+
+  late TabController _tabController;
+
   @override
   void initState() {
     super.initState();
-    fetchIpos();
+    _tabController = TabController(length: 2, vsync: this);
+    _tabController.addListener(() => setState(() {}));
+    _refreshAll();
     loadSubscriptionStatus();
+  }
+
+  @override
+  void dispose() {
+    _tabController.dispose();
+    super.dispose();
   }
 
   Future<void> loadSubscriptionStatus() async {
@@ -48,6 +57,68 @@ class _IpoListingPageState extends State<IpoListingPage> {
       isSubscribed = hasAccess;
     });
   }
+
+  // ==========================================================
+  // Filtering helpers: Mainboard vs SME
+  // ==========================================================
+
+  bool _isSme(dynamic ipo) =>
+      (ipo['type'] ?? '').toString().toLowerCase() == 'sme';
+
+  bool _isMainboard(dynamic ipo) => !_isSme(ipo);
+
+  List<dynamic> get _mainboardOpen =>
+      _sortByDataScore(openIpos.where(_isMainboard).toList());
+  List<dynamic> get _mainboardUpcoming =>
+      _sortByDataScore(upcomingIpos.where(_isMainboard).toList());
+  List<dynamic> get _mainboardRecent =>
+      _sortByDataScore(recentlyClosedIpos.where(_isMainboard).toList());
+
+  List<dynamic> get _smeOpen =>
+      _sortByDataScore(openIpos.where(_isSme).toList());
+  List<dynamic> get _smeUpcoming =>
+      _sortByDataScore(upcomingIpos.where(_isSme).toList());
+  List<dynamic> get _smeRecent =>
+      _sortByDataScore(recentlyClosedIpos.where(_isSme).toList());
+
+  int get _mainboardCount =>
+      _mainboardOpen.length + _mainboardUpcoming.length + _mainboardRecent.length;
+  int get _smeCount =>
+      _smeOpen.length + _smeUpcoming.length + _smeRecent.length;
+
+  // ==========================================================
+  // Data score — sort data-rich IPOs first
+  // ==========================================================
+
+  int _dataScore(dynamic ipo) {
+    int score = 0;
+    if (ipo['about'] != null && ipo['about'].toString().isNotEmpty) score++;
+    if (ipo['strengths'] != null && (ipo['strengths'] as List).isNotEmpty) score++;
+    if (ipo['risks'] != null && (ipo['risks'] as List).isNotEmpty) score++;
+    if (ipo['schedule'] != null && (ipo['schedule'] as List).isNotEmpty) score++;
+    if (ipo['issueSize'] != null) score++;
+    if (ipo['priceRange'] != null) score++;
+    if (ipo['logo'] != null) score++;
+    if (_getGmpValue(ipo) != null) score++;
+    return score;
+  }
+
+  List<dynamic> _sortByDataScore(List<dynamic> list) {
+    list.sort((a, b) => _dataScore(b).compareTo(_dataScore(a)));
+    return list;
+  }
+
+  // ==========================================================
+  // Refresh all data
+  // ==========================================================
+
+  Future<void> _refreshAll() async {
+    await Future.wait([fetchIpos(), fetchGmp()]);
+  }
+
+  // ==========================================================
+  // Fetch IPOs
+  // ==========================================================
 
   Future<void> fetchIpos() async {
     // Invalidate cached IPO data so we get a fresh network fetch
@@ -66,7 +137,7 @@ class _IpoListingPageState extends State<IpoListingPage> {
           final List list = data is List ? data : [];
           final now = DateTime.now();
           final today = DateTime(now.year, now.month, now.day);
-          final recentCutoff = today.subtract(const Duration(days: 15));
+          final recentCutoff = today.subtract(const Duration(days: 30));
 
           debugPrint('[IPO] Raw data type: ${data.runtimeType}, items: ${list.length}, fromCache: $fromCache');
           if (list.isNotEmpty) {
@@ -92,7 +163,6 @@ class _IpoListingPageState extends State<IpoListingPage> {
           final filteredUpcoming = list.where((e) {
             final status = (e['status'] ?? '').toString().toLowerCase();
             if (status != 'upcoming') return false;
-            // Exclude upcoming IPOs whose endDate has already passed
             final endDateStr = e['endDate'];
             if (endDateStr != null) {
               final endDate = DateTime.tryParse(endDateStr);
@@ -104,14 +174,11 @@ class _IpoListingPageState extends State<IpoListingPage> {
           // Recently closed: status is closed/listed, OR was open/upcoming but endDate has passed
           final filteredClosed = list.where((e) {
             final status = (e['status'] ?? '').toString().toLowerCase();
-            // Skip anything already shown in open or upcoming
             if (openStatuses.contains(status)) {
-              // If it's "open" but endDate passed, show in recently closed
               final endDateStr = e['endDate'];
               if (endDateStr != null) {
                 final endDate = DateTime.tryParse(endDateStr);
                 if (endDate != null && endDate.isBefore(today)) {
-                  // Only show if within recent cutoff
                   return !endDate.isBefore(recentCutoff);
                 }
               }
@@ -160,8 +227,83 @@ class _IpoListingPageState extends State<IpoListingPage> {
   }
 
   // ==========================================================
-  // GMP %
+  // Fetch GMP data (scraped)
   // ==========================================================
+
+  Future<void> fetchGmp() async {
+    try {
+      await ApiService().getCachedIPOGmp(
+        onData: (data, {required fromCache}) {
+          if (!mounted) return;
+          final List list = data is List ? data : [];
+          final Map<String, dynamic> map = {};
+          for (final item in list) {
+            final name = (item['companyName'] ?? '').toString().trim().toLowerCase();
+            if (name.isNotEmpty) {
+              map[name] = item;
+            }
+          }
+          setState(() {
+            _gmpByName = map;
+          });
+          debugPrint('[GMP] Loaded ${map.length} GMP entries');
+        },
+      );
+    } catch (e) {
+      debugPrint('[GMP] Fetch error: $e');
+    }
+  }
+
+  // ==========================================================
+  // GMP helpers
+  // ==========================================================
+
+  /// Try to get GMP value — first from ipoalerts data, then from scraped data
+  dynamic _getGmpValue(dynamic ipo) {
+    // 1. From ipoalerts GMP addon (if ever enabled)
+    final apiGmp = ipo['gmp']?['aggregations']?['mean'];
+    if (apiGmp != null) return apiGmp;
+
+    // 2. From scraped data — fuzzy match by company name
+    final name = (ipo['name'] ?? '').toString().trim().toLowerCase();
+    if (name.isEmpty) return null;
+
+    // Try exact match first
+    if (_gmpByName.containsKey(name)) {
+      return _gmpByName[name]['gmpValue'];
+    }
+
+    // Try partial match — check if scraped name contains IPO name or vice versa
+    for (final entry in _gmpByName.entries) {
+      if (entry.key.contains(name) || name.contains(entry.key)) {
+        return entry.value['gmpValue'];
+      }
+    }
+
+    return null;
+  }
+
+  String _getGmpDisplay(dynamic ipo) {
+    final gmpVal = _getGmpValue(ipo);
+    if (gmpVal == null) return "-";
+
+    // If from API (numeric), format with percentage
+    if (gmpVal is num) {
+      final priceRange = ipo['priceRange'];
+      if (priceRange != null) {
+        final parts = priceRange.toString().split("-");
+        final upper = double.tryParse(parts.last.trim());
+        if (upper != null && upper > 0) {
+          final percent = (gmpVal / upper) * 100;
+          return "\u20B9$gmpVal (${percent.toStringAsFixed(1)}%)";
+        }
+      }
+      return "\u20B9$gmpVal";
+    }
+
+    // If from scraped data (string like "+45" or "₹45")
+    return gmpVal.toString();
+  }
 
   String gmpPercent(dynamic ipo) {
     final gmp = ipo['gmp']?['aggregations']?['mean'];
@@ -178,6 +320,10 @@ class _IpoListingPageState extends State<IpoListingPage> {
     return "${percent.toStringAsFixed(1)}%";
   }
 
+  // ==========================================================
+  // BUILD
+  // ==========================================================
+
   @override
   Widget build(BuildContext context) {
     return CustomScaffold(
@@ -187,12 +333,12 @@ class _IpoListingPageState extends State<IpoListingPage> {
       menu: "IPO",
       child: loading
           ? const Center(child: CircularProgressIndicator())
-          : RefreshIndicator(
-        onRefresh: fetchIpos,
-        child: errorMsg != null && openIpos.isEmpty && upcomingIpos.isEmpty
-            ? _buildErrorState()
-            : _buildIpoList(),
-      ),
+          : errorMsg != null && openIpos.isEmpty && upcomingIpos.isEmpty
+              ? RefreshIndicator(
+                  onRefresh: _refreshAll,
+                  child: _buildErrorState(),
+                )
+              : _buildTabbedLayout(),
     );
   }
 
@@ -211,7 +357,7 @@ class _IpoListingPageState extends State<IpoListingPage> {
         const SizedBox(height: 24),
         Center(
           child: ElevatedButton.icon(
-            onPressed: fetchIpos,
+            onPressed: _refreshAll,
             icon: const Icon(Icons.refresh),
             label: const Text("Retry"),
             style: ElevatedButton.styleFrom(
@@ -225,25 +371,130 @@ class _IpoListingPageState extends State<IpoListingPage> {
     );
   }
 
-  Widget _buildIpoList() {
+  // ==========================================================
+  // TABBED LAYOUT
+  // ==========================================================
+
+  Widget _buildTabbedLayout() {
     // API returned 0 items — server has no data at all
     if (totalFromApi == 0) {
+      return RefreshIndicator(
+        onRefresh: _refreshAll,
+        child: ListView(
+          padding: const EdgeInsets.all(32),
+          children: [
+            const SizedBox(height: 80),
+            Icon(Icons.info_outline, size: 56, color: Colors.grey.shade400),
+            const SizedBox(height: 16),
+            Text(
+              "IPO data unavailable",
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: Colors.grey.shade700),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              "Pull down to refresh",
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 14, color: Colors.grey.shade500),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return Column(
+      children: [
+        // TabBar styled like ModelPortfolioListPage
+        Container(
+          margin: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+          decoration: BoxDecoration(
+            color: Colors.grey.shade100,
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: TabBar(
+            controller: _tabController,
+            indicator: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(10),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.06),
+                  blurRadius: 4,
+                  offset: const Offset(0, 2),
+                ),
+              ],
+            ),
+            indicatorSize: TabBarIndicatorSize.tab,
+            indicatorPadding: const EdgeInsets.all(4),
+            labelColor: Colors.black87,
+            unselectedLabelColor: Colors.grey.shade500,
+            labelStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+            unselectedLabelStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+            dividerColor: Colors.transparent,
+            tabs: [
+              Tab(
+                child: Text('Mainboard ($_mainboardCount)'),
+              ),
+              Tab(
+                child: Text('SME ($_smeCount)'),
+              ),
+            ],
+          ),
+        ),
+
+        const SizedBox(height: 8),
+
+        // Tab content
+        Expanded(
+          child: TabBarView(
+            controller: _tabController,
+            children: [
+              RefreshIndicator(
+                onRefresh: _refreshAll,
+                child: _buildIpoSectionList(
+                  _mainboardOpen,
+                  _mainboardUpcoming,
+                  _mainboardRecent,
+                  "Mainboard",
+                ),
+              ),
+              RefreshIndicator(
+                onRefresh: _refreshAll,
+                child: _buildIpoSectionList(
+                  _smeOpen,
+                  _smeUpcoming,
+                  _smeRecent,
+                  "SME",
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  // ==========================================================
+  // IPO SECTION LIST (per tab)
+  // ==========================================================
+
+  Widget _buildIpoSectionList(
+    List<dynamic> open,
+    List<dynamic> upcoming,
+    List<dynamic> recent,
+    String category,
+  ) {
+    if (open.isEmpty && upcoming.isEmpty && recent.isEmpty) {
       return ListView(
         padding: const EdgeInsets.all(32),
         children: [
           const SizedBox(height: 80),
-          Icon(Icons.info_outline, size: 56, color: Colors.grey.shade400),
+          Icon(Icons.info_outline, size: 48, color: Colors.grey.shade400),
           const SizedBox(height: 16),
           Text(
-            "IPO data unavailable",
+            "No $category IPOs right now",
             textAlign: TextAlign.center,
-            style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: Colors.grey.shade700),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            "Pull down to refresh",
-            textAlign: TextAlign.center,
-            style: TextStyle(fontSize: 14, color: Colors.grey.shade500),
+            style: TextStyle(fontSize: 16, color: Colors.grey.shade600),
           ),
         ],
       );
@@ -256,16 +507,16 @@ class _IpoListingPageState extends State<IpoListingPage> {
       padding: const EdgeInsets.only(bottom: 12),
       child: _sectionTitle("Open IPOs"),
     ));
-    if (openIpos.isEmpty) {
+    if (open.isEmpty) {
       sections.add(Padding(
         padding: const EdgeInsets.only(bottom: 8),
         child: Text(
-          "No open IPOs right now",
+          "No open $category IPOs right now",
           style: TextStyle(color: Colors.grey.shade600, fontSize: 14),
         ),
       ));
     } else {
-      for (final ipo in openIpos) {
+      for (final ipo in open) {
         sections.add(_ipoCard(ipo));
       }
     }
@@ -277,28 +528,28 @@ class _IpoListingPageState extends State<IpoListingPage> {
       padding: const EdgeInsets.only(bottom: 12),
       child: _sectionTitle("Upcoming IPOs"),
     ));
-    if (upcomingIpos.isEmpty) {
+    if (upcoming.isEmpty) {
       sections.add(Padding(
         padding: const EdgeInsets.only(bottom: 8),
         child: Text(
-          "No upcoming IPOs right now",
+          "No upcoming $category IPOs right now",
           style: TextStyle(color: Colors.grey.shade600, fontSize: 14),
         ),
       ));
     } else {
-      for (final ipo in upcomingIpos) {
+      for (final ipo in upcoming) {
         sections.add(_ipoCard(ipo));
       }
     }
 
     // Recently Closed/Listed IPOs
-    if (recentlyClosedIpos.isNotEmpty) {
+    if (recent.isNotEmpty) {
       sections.add(const SizedBox(height: 32));
       sections.add(Padding(
         padding: const EdgeInsets.only(bottom: 12),
         child: _sectionTitle("Recently Listed"),
       ));
-      for (final ipo in recentlyClosedIpos) {
+      for (final ipo in recent) {
         sections.add(_ipoCard(ipo));
       }
     }
@@ -314,6 +565,13 @@ class _IpoListingPageState extends State<IpoListingPage> {
   // ==========================================================
 
   Widget _ipoCard(dynamic ipo) {
+    // Build symbol/type subtitle — handle null symbol gracefully
+    final subtitleParts = <String>[
+      if (ipo['symbol'] != null) ipo['symbol'],
+      if (ipo['type'] != null) ipo['type'],
+    ];
+    final subtitle = subtitleParts.join(' \u00B7 ');
+
     return Container(
       margin: const EdgeInsets.only(bottom: 16),
       decoration: BoxDecoration(
@@ -324,27 +582,25 @@ class _IpoListingPageState extends State<IpoListingPage> {
         borderRadius: BorderRadius.circular(20),
         child: Stack(
           children: [
-            /// ✅ SVG BACKGROUND
+            /// SVG BACKGROUND
             Positioned.fill(
               child: Opacity(
-                opacity: .1, // 👈 visible but subtle
+                opacity: .1,
                 child: SvgPicture.asset(
                   "assets/images/tidi_ipo.svg",
-                  fit: BoxFit.fill, // 👈 squeeze + fit
+                  fit: BoxFit.fill,
                 ),
               ),
             ),
 
-            /// ✅ GLASS OVERLAY (VERY IMPORTANT)
+            /// GLASS OVERLAY
             Positioned.fill(
               child: Container(
-                color: ipo['type'] == "SME"
-                    ? Colors.transparent
-                    : Colors.transparent,
+                color: Colors.transparent,
               ),
             ),
 
-            /// ✅ CONTENT (UNCHANGED)
+            /// CONTENT
             Padding(
               padding: const EdgeInsets.all(16),
               child: Column(
@@ -376,7 +632,7 @@ class _IpoListingPageState extends State<IpoListingPage> {
                       const SizedBox(width: 12),
                       Expanded(
                         child: Text(
-                          ipo['name'],
+                          ipo['name'] ?? '',
                           style: const TextStyle(
                             fontSize: 16,
                             fontWeight: FontWeight.bold,
@@ -384,10 +640,9 @@ class _IpoListingPageState extends State<IpoListingPage> {
                         ),
                       ),
 
-                      /// ⚠️ SME WARNING ICON
                       if (ipo['type'] == 'SME')
                         Tooltip(
-                          message: "SME IPO – Higher risk & lower liquidity",
+                          message: "SME IPO \u2013 Higher risk & lower liquidity",
                           child: Padding(
                             padding: const EdgeInsets.only(right: 6),
                             child: Icon(
@@ -398,19 +653,20 @@ class _IpoListingPageState extends State<IpoListingPage> {
                           ),
                         ),
 
-                      _statusChip(ipo['status']),
+                      _statusChip(ipo['status'] ?? ''),
                     ],
                   ),
 
                   const SizedBox(height: 10),
 
-                  Text(
-                    "${ipo['symbol']} • ${ipo['type']}",
-                    style: TextStyle(
-                      color: Colors.black.withOpacity(0.65),
-                      fontWeight: FontWeight.w600,
+                  if (subtitle.isNotEmpty)
+                    Text(
+                      subtitle,
+                      style: TextStyle(
+                        color: Colors.black.withOpacity(0.65),
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
-                  ),
 
                   const SizedBox(height: 12),
 
@@ -424,7 +680,7 @@ class _IpoListingPageState extends State<IpoListingPage> {
                   const SizedBox(height: 10),
 
                   Text(
-                    "Issue: ${_fmt(ipo['startDate'])} → ${_fmt(ipo['endDate'])}",
+                    "Issue: ${_fmt(ipo['startDate'])} \u2192 ${_fmt(ipo['endDate'])}",
                     style: TextStyle(
                       color: Colors.black.withOpacity(0.7),
                       fontSize: 13,
@@ -432,20 +688,20 @@ class _IpoListingPageState extends State<IpoListingPage> {
                   ),
 
                   Align(
-                      alignment: Alignment.centerRight,
-                      child: TextButton.icon(
-                        onPressed: () => _openIpoDetailsSheet(ipo),
-                        icon: const Icon(Icons.keyboard_arrow_up, size: 18),
-                        label: const Text("Details"),
-                        style: TextButton.styleFrom(
-                          foregroundColor: lightColorScheme.primary,
-                          textStyle: const TextStyle(
-                            fontSize: 13,
-                            fontWeight: FontWeight.w600,
-                          ),
+                    alignment: Alignment.centerRight,
+                    child: TextButton.icon(
+                      onPressed: () => _openIpoDetailsSheet(ipo),
+                      icon: const Icon(Icons.keyboard_arrow_up, size: 18),
+                      label: const Text("Details"),
+                      style: TextButton.styleFrom(
+                        foregroundColor: lightColorScheme.primary,
+                        textStyle: const TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
                         ),
                       ),
                     ),
+                  ),
                 ],
               ),
             ),
@@ -455,18 +711,15 @@ class _IpoListingPageState extends State<IpoListingPage> {
     );
   }
 
-
   // ==========================================================
-  // GMP LOCKED WIDGET
+  // GMP WIDGET
   // ==========================================================
 
   Widget _gmpBox(dynamic ipo) {
-    final gmp = ipo['gmp']?['aggregations']?['mean'];
-    if (gmp == null) return const SizedBox();
+    final gmpDisplay = _getGmpDisplay(ipo);
+    if (gmpDisplay == "-") return const SizedBox();
 
-    final text = "₹$gmp (${gmpPercent(ipo)})";
-
-    return _infoBox("GMP", text);
+    return _infoBox("GMP", gmpDisplay);
   }
 
   // ==========================================================
@@ -474,6 +727,8 @@ class _IpoListingPageState extends State<IpoListingPage> {
   // ==========================================================
 
   void _openIpoDetailsSheet(dynamic ipo) {
+    final gmpDisplay = _getGmpDisplay(ipo);
+
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -485,8 +740,7 @@ class _IpoListingPageState extends State<IpoListingPage> {
           builder: (_, controller) {
             return Container(
               decoration: BoxDecoration(
-                color:
-                Theme.of(context).scaffoldBackgroundColor,
+                color: Theme.of(context).scaffoldBackgroundColor,
                 borderRadius: const BorderRadius.vertical(
                   top: Radius.circular(28),
                 ),
@@ -499,26 +753,24 @@ class _IpoListingPageState extends State<IpoListingPage> {
                     height: 4,
                     decoration: BoxDecoration(
                       color: Colors.grey.shade400,
-                      borderRadius:
-                      BorderRadius.circular(10),
+                      borderRadius: BorderRadius.circular(10),
                     ),
                   ),
                   const SizedBox(height: 12),
                   Padding(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 16),
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
                     child: Row(
                       children: [
                         Expanded(
                           child: Text(
-                            ipo['name'],
+                            ipo['name'] ?? '',
                             style: const TextStyle(
                               fontSize: 18,
                               fontWeight: FontWeight.bold,
                             ),
                           ),
                         ),
-                        _statusChip(ipo['status']),
+                        _statusChip(ipo['status'] ?? ''),
                       ],
                     ),
                   ),
@@ -533,63 +785,44 @@ class _IpoListingPageState extends State<IpoListingPage> {
                           _infoRow("Type", ipo['type']),
                         if (ipo['symbol'] != null)
                           _infoRow("Symbol", ipo['symbol']),
-                        _infoRow("Price Range",
-                            ipo['priceRange'] ?? "-"),
-                        /// GMP (LOCKED)
-                        if (ipo['gmp']?['aggregations']?['mean'] != null)
-                          _infoRow(
-                            "GMP",
-                            "₹${ipo['gmp']['aggregations']['mean']} (${gmpPercent(ipo)})",
-                          ),
+                        _infoRow("Price Range", ipo['priceRange'] ?? "-"),
+
+                        // GMP — from API or scraped
+                        if (gmpDisplay != "-")
+                          _infoRow("GMP", gmpDisplay),
 
                         if (ipo['issueSize'] != null)
-                          _infoRow("Issue Size",
-                              ipo['issueSize']
-                          ),
-                        if (ipo['lotSize'] != null)
-                          _infoRow("Lot Size",
-                              "${ipo['lotSize']} shares"),
+                          _infoRow("Issue Size", ipo['issueSize']),
+                        // Use minQty (lotSize doesn't exist in API)
                         if (ipo['minQty'] != null)
-                          _infoRow(
-                              "Minimum Quantity",
-                              "${ipo['minQty']} shares"),
+                          _infoRow("Lot Size", "${ipo['minQty']} shares"),
                         if (ipo['minAmount'] != null)
-                          _infoRow("Min Amount",
-                              "₹${ipo['minAmount']}"),
+                          _infoRow("Min Amount", "\u20B9${ipo['minAmount']}"),
 
                         // --- Dates ---
                         if (ipo['startDate'] != null)
-                          _infoRow("Open Date",
-                              _fmt(ipo['startDate'])),
+                          _infoRow("Open Date", _fmt(ipo['startDate'])),
                         if (ipo['endDate'] != null)
-                          _infoRow("Close Date",
-                              _fmt(ipo['endDate'])),
+                          _infoRow("Close Date", _fmt(ipo['endDate'])),
                         if (ipo['listingDate'] != null)
-                          _infoRow(
-                              "Listing Date",
-                              _fmt(ipo['listingDate'])),
+                          _infoRow("Listing Date", _fmt(ipo['listingDate'])),
                         if (ipo['allotmentDate'] != null)
-                          _infoRow("Allotment Date",
-                              _fmt(ipo['allotmentDate'])),
+                          _infoRow("Allotment Date", _fmt(ipo['allotmentDate'])),
 
                         // --- Listing Performance (for listed IPOs) ---
                         if (ipo['listingPrice'] != null)
-                          _infoRow("Listing Price",
-                              "₹${ipo['listingPrice']}"),
+                          _infoRow("Listing Price", "\u20B9${ipo['listingPrice']}"),
                         if (ipo['listingGain'] != null)
-                          _infoRow("Listing Gain",
-                              "${ipo['listingGain']}"),
+                          _infoRow("Listing Gain", "${ipo['listingGain']}"),
 
                         // --- Subscription Data ---
                         if (ipo['subscriptionStatus'] != null)
-                          _infoRow("Subscription",
-                              ipo['subscriptionStatus'].toString()),
+                          _infoRow("Subscription", ipo['subscriptionStatus'].toString()),
 
                         const SizedBox(height: 8),
 
                         _textSection("About", ipo['about']),
-                        _listSection(
-                            "Strengths", ipo['strengths']),
+                        _listSection("Strengths", ipo['strengths']),
                         _listSection("Risks", ipo['risks']),
                         _scheduleSection(ipo['schedule']),
                       ],
@@ -602,8 +835,7 @@ class _IpoListingPageState extends State<IpoListingPage> {
                     child: Row(
                       children: [
                         if (ipo['prospectusUrl'] != null)
-                          _bottomButton(
-                              "Prospectus", ipo['prospectusUrl']),
+                          _bottomButton("Prospectus", ipo['prospectusUrl']),
                         const SizedBox(width: 12),
                         if (ipo['nseInfoUrl'] != null)
                           _bottomButton("NSE", ipo['nseInfoUrl']),
@@ -619,12 +851,9 @@ class _IpoListingPageState extends State<IpoListingPage> {
     );
   }
 
-
   // ==========================================================
   // HELPERS
   // ==========================================================
-
-
 
   Widget _sectionTitle(String text) => Text(
     text,
@@ -648,8 +877,7 @@ class _IpoListingPageState extends State<IpoListingPage> {
       const SizedBox(height: 4),
       Text(
         value,
-        style:
-        const TextStyle(fontWeight: FontWeight.bold),
+        style: const TextStyle(fontWeight: FontWeight.bold),
       ),
     ],
   );
@@ -692,16 +920,14 @@ class _IpoListingPageState extends State<IpoListingPage> {
       color = Colors.blueGrey;
     }
     return Container(
-      padding: const EdgeInsets.symmetric(
-          horizontal: 10, vertical: 5),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
       decoration: BoxDecoration(
         color: color.withOpacity(0.3),
         borderRadius: BorderRadius.circular(14),
       ),
       child: Text(
         status.toUpperCase(),
-        style: TextStyle(
-            color: color, fontWeight: FontWeight.bold),
+        style: TextStyle(color: color, fontWeight: FontWeight.bold),
       ),
     );
   }
@@ -713,8 +939,7 @@ class _IpoListingPageState extends State<IpoListingPage> {
             launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication),
         style: ElevatedButton.styleFrom(
           backgroundColor: lightColorScheme.primary,
-          shape:
-          RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
           padding: const EdgeInsets.symmetric(vertical: 14),
         ),
         child: Text(label),
@@ -726,73 +951,65 @@ class _IpoListingPageState extends State<IpoListingPage> {
       content == null || content.isEmpty
           ? const SizedBox()
           : Column(
-        crossAxisAlignment:
-        CrossAxisAlignment.start,
-        children: [
-          Text(
-            title,
-            style: TextStyle(
-              fontWeight: FontWeight.bold,
-              color: lightColorScheme.primary,
-            ),
-          ),
-          const SizedBox(height: 6),
-          Text(content),
-          const SizedBox(height: 16),
-        ],
-      );
-
-
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    color: lightColorScheme.primary,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(content),
+                const SizedBox(height: 16),
+              ],
+            );
 
   Widget _listSection(String title, List? items) =>
       items == null || items.isEmpty
           ? const SizedBox()
           : Column(
-        crossAxisAlignment:
-        CrossAxisAlignment.start,
-        children: [
-          Text(
-            title,
-            style: TextStyle(
-              fontWeight: FontWeight.bold,
-              color: lightColorScheme.primary,
-            ),
-          ),
-          const SizedBox(height: 6),
-          ...items.map((e) => Text("• $e")),
-          const SizedBox(height: 16),
-        ],
-      );
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    color: lightColorScheme.primary,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                ...items.map((e) => Text("\u2022 $e")),
+                const SizedBox(height: 16),
+              ],
+            );
 
   Widget _scheduleSection(List? schedule) =>
       schedule == null || schedule.isEmpty
           ? const SizedBox()
           : Column(
-        crossAxisAlignment:
-        CrossAxisAlignment.start,
-        children: [
-          Text(
-            "IPO Schedule",
-            style: TextStyle(
-              fontWeight: FontWeight.bold,
-              color: lightColorScheme.primary,
-            ),
-          ),
-          ...schedule.map(
-                (e) => ListTile(
-              title: Text(e['event']),
-              trailing:
-              Text(_fmt(e['date'])),
-            ),
-          ),
-        ],
-      );
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  "IPO Schedule",
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    color: lightColorScheme.primary,
+                  ),
+                ),
+                ...schedule.map(
+                  (e) => ListTile(
+                    title: Text(e['event']),
+                    trailing: Text(_fmt(e['date'])),
+                  ),
+                ),
+              ],
+            );
 
   String _fmt(String? date) =>
       date == null
           ? "-"
           : DateFormat('dd MMM yyyy')
-          .format(DateTime.parse(date));
+              .format(DateTime.parse(date));
 }
-
-

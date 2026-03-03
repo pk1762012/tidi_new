@@ -283,6 +283,17 @@ class ApiService {
     );
   }
 
+  Future<http.Response> getIPOGmp() async {
+    String? token = await _getToken();
+    return http.get(
+      Uri.parse(apiUrl + 'api/ipo/gmp'),
+      headers: {
+        'Authorization': 'Bearer $token',
+        'Content-Type': 'application/json',
+      },
+    );
+  }
+
   Future<http.Response> getPortfolioHistory(int? limit, int? offset) async {
     return CacheService.instance.cachedGet(
       key: 'api/history/portfolio:$limit:$offset',
@@ -807,6 +818,22 @@ class ApiService {
           return extracted;
         }
         debugPrint('[IPO] Unexpected response type: ${decoded.runtimeType} body=${r.body.length > 300 ? r.body.substring(0, 300) : r.body}');
+        return [];
+      },
+    );
+  }
+
+  /// Cached IPO GMP data (scraped from investorgain.com).
+  Future<void> getCachedIPOGmp({
+    required void Function(dynamic data, {required bool fromCache}) onData,
+  }) {
+    return CacheService.instance.fetchWithCache(
+      key: 'api/ipo/gmp',
+      fetcher: () => getIPOGmp(),
+      onData: onData,
+      parseResponse: (r) {
+        final decoded = jsonDecode(r.body);
+        if (decoded is List) return decoded;
         return [];
       },
     );

@@ -178,6 +178,7 @@ class CacheService {
     'api/market/holiday':          const _TierConfig(tier: CacheTier.nonCritical, memoryTtl: Duration(minutes: 10), diskTtl: Duration(days: 30)),
     'api/branch':                  const _TierConfig(tier: CacheTier.nonCritical, memoryTtl: Duration(minutes: 10), diskTtl: Duration(days: 30)),
     'api/course':                  const _TierConfig(tier: CacheTier.nonCritical, memoryTtl: Duration(minutes: 10), diskTtl: Duration(days: 30)),
+    'api/ipo/gmp':                 const _TierConfig(tier: CacheTier.nonCritical, memoryTtl: Duration(minutes: 10), diskTtl: Duration(hours: 6)),
     'api/ipo':                     const _TierConfig(tier: CacheTier.nonCritical, memoryTtl: Duration(minutes: 5),  diskTtl: Duration(hours: 6)),
     'api/fii':                     const _TierConfig(tier: CacheTier.nonCritical, memoryTtl: Duration(minutes: 10), diskTtl: Duration(hours: 12)),
     'stock_analysis':              const _TierConfig(tier: CacheTier.nonCritical, memoryTtl: Duration(minutes: 10), diskTtl: Duration(hours: 12)),
