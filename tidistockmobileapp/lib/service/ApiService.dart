@@ -318,18 +318,30 @@ class ApiService {
     );
   }
 
-  Future<http.Response> registerToWorkshop(String date, String branchId) async {
+  Future<http.Response> registerToWorkshop(
+    String date,
+    String branchId, {
+    String? participantName,
+    String? participantPhone,
+    bool? hasStockExperience,
+    bool? hasDematAccount,
+  }) async {
     String? token = await _getToken();
+    final body = <String, dynamic>{
+      "date": date,
+      "branchId": branchId,
+    };
+    if (participantName != null) body["participantName"] = participantName;
+    if (participantPhone != null) body["participantPhone"] = participantPhone;
+    if (hasStockExperience != null) body["hasStockExperience"] = hasStockExperience;
+    if (hasDematAccount != null) body["hasDematAccount"] = hasDematAccount;
     return http.post(
       Uri.parse(apiUrl + 'api/workshop/register'),
       headers: {
         'Authorization': 'Bearer $token',
         'Content-Type': 'application/json',
       },
-      body: jsonEncode({
-        "date": date,
-        "branchId": branchId,
-      }),
+      body: jsonEncode(body),
     );
   }
 

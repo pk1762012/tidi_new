@@ -19,6 +19,7 @@ import '../../../service/SubscriptionService.dart';
 import '../../../theme/theme.dart';
 import '../../../widgets/customScaffold.dart';
 import '../../login/splash.dart';
+import '../academy/WorkshopPage.dart';
 import '../portfolio/BrokerSelectionPage.dart';
 import '../portfolio/ManageBrokersPage.dart';
 import 'SubscriptionPlanScreen.dart';
@@ -688,6 +689,58 @@ class ProfilePageState extends State<ProfilePage>
                                     const SizedBox(width: 8),
                                     const Text(
                                       "View Transactions",
+                                      style: TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 14,
+                                        fontWeight: FontWeight.w700,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 10),
+                            InkWell(
+                              onTap: () {
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (context) => CustomScaffold(
+                                      allowBackNavigation: true,
+                                      displayActions: false,
+                                      imageUrl: null,
+                                      menu: "My Workshop Tickets",
+                                      child: const WorkshopPage(),
+                                    ),
+                                  ),
+                                );
+                              },
+                              borderRadius: BorderRadius.circular(12),
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 20),
+                                decoration: BoxDecoration(
+                                  gradient: LinearGradient(
+                                    colors: [lightColorScheme.primary, lightColorScheme.secondary],
+                                    begin: Alignment.topLeft,
+                                    end: Alignment.bottomRight,
+                                  ),
+                                  borderRadius: BorderRadius.circular(12),
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: Colors.teal.withOpacity(0.3),
+                                      blurRadius: 8,
+                                      offset: const Offset(0, 4),
+                                    ),
+                                  ],
+                                ),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    const Icon(Icons.confirmation_number, color: Colors.blue, size: 20),
+                                    const SizedBox(width: 8),
+                                    const Text(
+                                      "My Workshop Tickets",
                                       style: TextStyle(
                                         color: Colors.white,
                                         fontSize: 14,

@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:ui';
 import 'package:flutter/material.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:intl/intl.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import '../../../service/ApiService.dart';
@@ -143,7 +144,13 @@ class _WorkshopPageState extends State<WorkshopPage>
 
   // ---------------- REGISTER ----------------
 
-  Future<bool> _register(String branchId) async {
+  Future<bool> _register(
+    String branchId, {
+    String? participantName,
+    String? participantPhone,
+    bool? hasStockExperience,
+    bool? hasDematAccount,
+  }) async {
     final date = selectedDate!.toIso8601String().substring(0, 10);
 
     /// already registered for same day
@@ -161,7 +168,14 @@ class _WorkshopPageState extends State<WorkshopPage>
       return false;
     }
 
-    return razorpayService.openWorkshopCheckout(date, branchId);
+    return razorpayService.openWorkshopCheckout(
+      date,
+      branchId,
+      participantName: participantName,
+      participantPhone: participantPhone,
+      hasStockExperience: hasStockExperience,
+      hasDematAccount: hasDematAccount,
+    );
   }
 
   // ---------------- UI ----------------
@@ -513,10 +527,23 @@ class _WorkshopPageState extends State<WorkshopPage>
 
   // ---------------- BOTTOM SHEET ----------------
 
-  void _openRegisterSheet() {
+  void _openRegisterSheet() async {
     DateTime tempDate = _getNextSunday();
     String? selectedBranchId;
     bool isRegistering = false;
+
+    // Pre-fill from secure storage
+    const storage = FlutterSecureStorage();
+    final storedName = await storage.read(key: 'first_name');
+    final storedPhone = await storage.read(key: 'phone_number');
+
+    final nameController = TextEditingController(text: storedName ?? '');
+    final phoneController = TextEditingController(text: storedPhone ?? '');
+    bool? hasStockExperience;
+    bool? hasDematAccount;
+    final formKey = GlobalKey<FormState>();
+
+    if (!mounted) return;
 
     showDialog(
       context: context,
@@ -530,150 +557,309 @@ class _WorkshopPageState extends State<WorkshopPage>
                 borderRadius: BorderRadius.circular(24),
               ),
               insetPadding: const EdgeInsets.symmetric(horizontal: 20),
-              child: Padding(
-                padding: const EdgeInsets.all(20),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    /// TITLE
-                    const Text(
-                      "Register",
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-
-                    const SizedBox(height: 20),
-
-                    /// DATE PICKER
-                    ElevatedButton.icon(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.white,
-                        foregroundColor: Colors.black,
-                        elevation: 0,
-                        side: const BorderSide(color: Colors.grey),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(14),
+              child: SingleChildScrollView(
+                child: Padding(
+                  padding: const EdgeInsets.all(20),
+                  child: Form(
+                    key: formKey,
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        /// TITLE
+                        const Text(
+                          "Register",
+                          style: TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                          ),
                         ),
-                      ),
-                      icon: const Icon(Icons.calendar_month),
-                      label: Text(
-                        "Date: ${tempDate.toString().substring(0, 10)}",
-                      ),
-                      onPressed: isRegistering
-                          ? null
-                          : () async {
-                              final picked = await showDatePicker(
-                                context: ctx,
-                                initialDate: tempDate,
-                                firstDate: tempDate,
-                                lastDate: tempDate.add(const Duration(days: 90)),
-                                selectableDayPredicate: (d) =>
-                                d.weekday == DateTime.sunday,
-                                builder: (context, child) {
-                                  return Theme(
-                                    data: Theme.of(context).copyWith(
-                                      colorScheme: const ColorScheme.light(
-                                        surface: Colors.white,
-                                        primary: Colors.black,
-                                        onPrimary: Colors.white,
-                                        onSurface: Colors.black,
-                                      ),
-                                      dialogBackgroundColor: Colors.white,
-                                    ),
-                                    child: child!,
+
+                        const SizedBox(height: 20),
+
+                        /// DATE PICKER
+                        ElevatedButton.icon(
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.white,
+                            foregroundColor: Colors.black,
+                            elevation: 0,
+                            side: const BorderSide(color: Colors.grey),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                          ),
+                          icon: const Icon(Icons.calendar_month),
+                          label: Text(
+                            "Date: ${tempDate.toString().substring(0, 10)}",
+                          ),
+                          onPressed: isRegistering
+                              ? null
+                              : () async {
+                                  final picked = await showDatePicker(
+                                    context: ctx,
+                                    initialDate: tempDate,
+                                    firstDate: tempDate,
+                                    lastDate: tempDate.add(const Duration(days: 90)),
+                                    selectableDayPredicate: (d) =>
+                                    d.weekday == DateTime.sunday,
+                                    builder: (context, child) {
+                                      return Theme(
+                                        data: Theme.of(context).copyWith(
+                                          colorScheme: const ColorScheme.light(
+                                            surface: Colors.white,
+                                            primary: Colors.black,
+                                            onPrimary: Colors.white,
+                                            onSurface: Colors.black,
+                                          ),
+                                          dialogBackgroundColor: Colors.white,
+                                        ),
+                                        child: child!,
+                                      );
+                                    },
                                   );
+
+                                  if (picked != null) {
+                                    setDialog(() => tempDate = picked);
+                                  }
                                 },
+                        ),
+
+                        const SizedBox(height: 16),
+
+                        /// BRANCH DROPDOWN
+                        DropdownButtonFormField<String>(
+                          hint: const Text("Select Branch"),
+                          value: selectedBranchId,
+                          dropdownColor: Colors.white,
+                          menuMaxHeight: 200,
+                          items: branches.map<DropdownMenuItem<String>>((b) {
+                            return DropdownMenuItem<String>(
+                              value: b['id'].toString(),
+                              child: Text(
+                                b['name'].toString(),
+                                style: const TextStyle(color: Colors.black),
+                              ),
+                            );
+                          }).toList(),
+                          onChanged: isRegistering
+                              ? null
+                              : (String? v) {
+                                  setDialog(() => selectedBranchId = v);
+                                },
+                          decoration: InputDecoration(
+                            filled: true,
+                            fillColor: Colors.white,
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                            enabledBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(14),
+                              borderSide:
+                              const BorderSide(color: Colors.grey),
+                            ),
+                            focusedBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(14),
+                              borderSide:
+                              const BorderSide(color: Colors.black),
+                            ),
+                            contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 16,
+                              vertical: 14,
+                            ),
+                          ),
+                        ),
+
+                        const SizedBox(height: 16),
+
+                        /// NAME FIELD
+                        TextFormField(
+                          controller: nameController,
+                          enabled: !isRegistering,
+                          decoration: InputDecoration(
+                            labelText: "Your Name",
+                            prefixIcon: const Icon(Icons.person_outline),
+                            filled: true,
+                            fillColor: Colors.white,
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                            enabledBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(14),
+                              borderSide: const BorderSide(color: Colors.grey),
+                            ),
+                            focusedBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(14),
+                              borderSide: const BorderSide(color: Colors.black),
+                            ),
+                            contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 16, vertical: 14,
+                            ),
+                          ),
+                          validator: (v) {
+                            if (v == null || v.trim().isEmpty) return "Name is required";
+                            if (v.trim().length > 50) return "Max 50 characters";
+                            return null;
+                          },
+                        ),
+
+                        const SizedBox(height: 12),
+
+                        /// MOBILE FIELD
+                        TextFormField(
+                          controller: phoneController,
+                          enabled: !isRegistering,
+                          keyboardType: TextInputType.phone,
+                          maxLength: 10,
+                          decoration: InputDecoration(
+                            labelText: "Mobile Number",
+                            prefixIcon: const Icon(Icons.phone_outlined),
+                            counterText: "",
+                            filled: true,
+                            fillColor: Colors.white,
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                            enabledBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(14),
+                              borderSide: const BorderSide(color: Colors.grey),
+                            ),
+                            focusedBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(14),
+                              borderSide: const BorderSide(color: Colors.black),
+                            ),
+                            contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 16, vertical: 14,
+                            ),
+                          ),
+                          validator: (v) {
+                            if (v == null || v.trim().isEmpty) return "Mobile number is required";
+                            if (!RegExp(r'^[0-9]{10}$').hasMatch(v.trim())) {
+                              return "Enter a valid 10-digit number";
+                            }
+                            return null;
+                          },
+                        ),
+
+                        const SizedBox(height: 14),
+
+                        /// STOCK EXPERIENCE
+                        Row(
+                          children: [
+                            const Expanded(
+                              child: Text(
+                                "Stock market experience?",
+                                style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
+                              ),
+                            ),
+                            ChoiceChip(
+                              label: const Text("Yes"),
+                              selected: hasStockExperience == true,
+                              selectedColor: Colors.black,
+                              labelStyle: TextStyle(
+                                color: hasStockExperience == true ? Colors.white : Colors.black,
+                              ),
+                              onSelected: isRegistering ? null : (v) {
+                                setDialog(() => hasStockExperience = true);
+                              },
+                            ),
+                            const SizedBox(width: 8),
+                            ChoiceChip(
+                              label: const Text("No"),
+                              selected: hasStockExperience == false,
+                              selectedColor: Colors.black,
+                              labelStyle: TextStyle(
+                                color: hasStockExperience == false ? Colors.white : Colors.black,
+                              ),
+                              onSelected: isRegistering ? null : (v) {
+                                setDialog(() => hasStockExperience = false);
+                              },
+                            ),
+                          ],
+                        ),
+
+                        const SizedBox(height: 10),
+
+                        /// DEMAT ACCOUNT
+                        Row(
+                          children: [
+                            const Expanded(
+                              child: Text(
+                                "Do you have a Demat account?",
+                                style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
+                              ),
+                            ),
+                            ChoiceChip(
+                              label: const Text("Yes"),
+                              selected: hasDematAccount == true,
+                              selectedColor: Colors.black,
+                              labelStyle: TextStyle(
+                                color: hasDematAccount == true ? Colors.white : Colors.black,
+                              ),
+                              onSelected: isRegistering ? null : (v) {
+                                setDialog(() => hasDematAccount = true);
+                              },
+                            ),
+                            const SizedBox(width: 8),
+                            ChoiceChip(
+                              label: const Text("No"),
+                              selected: hasDematAccount == false,
+                              selectedColor: Colors.black,
+                              labelStyle: TextStyle(
+                                color: hasDematAccount == false ? Colors.white : Colors.black,
+                              ),
+                              onSelected: isRegistering ? null : (v) {
+                                setDialog(() => hasDematAccount = false);
+                              },
+                            ),
+                          ],
+                        ),
+
+                        const SizedBox(height: 24),
+
+                        /// CONFIRM BUTTON
+                        SizedBox(
+                          width: double.infinity,
+                          child: ElevatedButton(
+                            onPressed: (selectedBranchId == null || isRegistering)
+                                ? null
+                                : () async {
+                              if (!formKey.currentState!.validate()) return;
+
+                              setDialog(() => isRegistering = true);
+                              selectedDate = tempDate;
+
+                              final opened = await _register(
+                                selectedBranchId!,
+                                participantName: nameController.text.trim(),
+                                participantPhone: phoneController.text.trim(),
+                                hasStockExperience: hasStockExperience,
+                                hasDematAccount: hasDematAccount,
                               );
 
-                              if (picked != null) {
-                                setDialog(() => tempDate = picked);
+                              if (!opened) {
+                                setDialog(() => isRegistering = false);
                               }
                             },
-                    ),
-
-                    const SizedBox(height: 16),
-
-                    /// BRANCH DROPDOWN
-                    DropdownButtonFormField<String>(
-                      hint: const Text("Select Branch"),
-                      value: selectedBranchId,
-                      dropdownColor: Colors.white,
-                      items: branches.map<DropdownMenuItem<String>>((b) {
-                        return DropdownMenuItem<String>(
-                          value: b['id'].toString(),
-                          child: Text(
-                            b['name'].toString(),
-                            style: const TextStyle(color: Colors.black),
-                          ),
-                        );
-                      }).toList(),
-                      onChanged: isRegistering
-                          ? null
-                          : (String? v) {
-                              setDialog(() => selectedBranchId = v);
-                            },
-                      decoration: InputDecoration(
-                        filled: true,
-                        fillColor: Colors.white,
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(14),
-                        ),
-                        enabledBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(14),
-                          borderSide:
-                          const BorderSide(color: Colors.grey),
-                        ),
-                        focusedBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(14),
-                          borderSide:
-                          const BorderSide(color: Colors.black),
-                        ),
-                        contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 16,
-                          vertical: 14,
-                        ),
-                      ),
-                    ),
-
-                    const SizedBox(height: 24),
-
-                    /// CONFIRM BUTTON
-                    SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton(
-                        onPressed: (selectedBranchId == null || isRegistering)
-                            ? null
-                            : () async {
-                          setDialog(() => isRegistering = true);
-                          selectedDate = tempDate;
-
-                          final opened = await _register(selectedBranchId!);
-
-                          if (!opened) {
-                            setDialog(() => isRegistering = false);
-                          }
-                        },
-                        style: ElevatedButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(vertical: 14),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(14),
+                            style: ElevatedButton.styleFrom(
+                              padding: const EdgeInsets.symmetric(vertical: 14),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(14),
+                              ),
+                            ),
+                            child: isRegistering
+                                ? const SizedBox(
+                                    width: 20,
+                                    height: 20,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                      color: Colors.white,
+                                    ),
+                                  )
+                                : const Text("Confirm Registration"),
                           ),
                         ),
-                        child: isRegistering
-                            ? const SizedBox(
-                                width: 20,
-                                height: 20,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  color: Colors.white,
-                                ),
-                              )
-                            : const Text("Confirm Registration"),
-                      ),
+                      ],
                     ),
-                  ],
+                  ),
                 ),
               ),
             );

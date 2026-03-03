@@ -409,16 +409,13 @@ class _AcademyPageState extends State<AcademyPage>
           // Banner image — crop bottom to hide baked-in fee/register text
           ClipRRect(
             borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
-            child: SizedBox(
-              height: 165,
-              width: double.infinity,
-              child: FittedBox(
+            child: AspectRatio(
+              aspectRatio: 16 / 9,
+              child: Image.asset(
+                "assets/images/tidi_workshop.png",
+                width: double.infinity,
                 fit: BoxFit.cover,
                 alignment: Alignment.topCenter,
-                clipBehavior: Clip.hardEdge,
-                child: Image.asset(
-                  "assets/images/tidi_workshop.png",
-                ),
               ),
             ),
           ),
@@ -797,6 +794,8 @@ class _AcademyPageState extends State<AcademyPage>
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(14),
                           ),
+                          disabledBackgroundColor: Colors.grey.shade300,
+                          disabledForegroundColor: Colors.grey.shade500,
                         ),
                         child: isRegistering
                             ? const SizedBox(
@@ -1032,53 +1031,60 @@ class _BranchSelectionBottomSheetState
                 ),
               ),
               const SizedBox(height: 20),
-              ...widget.branches.map((b) {
-                final isSelected = _selectedBranchId == b['id'];
-                return GestureDetector(
-                  onTap: _loading
-                      ? null
-                      : () async {
-                          setState(() {
-                            _loading = true;
-                            _selectedBranchId = b['id'];
-                          });
+              Flexible(
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: widget.branches.map((b) {
+                      final isSelected = _selectedBranchId == b['id'];
+                      return GestureDetector(
+                        onTap: _loading
+                            ? null
+                            : () async {
+                                setState(() {
+                                  _loading = true;
+                                  _selectedBranchId = b['id'];
+                                });
 
-                          final opened = await widget.onSelected(b['id']);
+                                final opened = await widget.onSelected(b['id']);
 
-                          if (!opened) {
-                            if (mounted) {
-                              setState(() {
-                                _loading = false;
-                                _selectedBranchId = null;
-                              });
-                            }
-                          }
-                        },
-                  child: Container(
-                    margin: const EdgeInsets.only(bottom: 16),
-                    padding: const EdgeInsets.symmetric(vertical: 18, horizontal: 20),
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(18),
-                      border: Border.all(color: lightColorScheme.primary, width: 1.5),
-                      color: Colors.white.withOpacity(0.15),
-                    ),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text(b['name'], style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w600)),
-                        if (_loading && isSelected)
-                          const SizedBox(
-                            width: 20,
-                            height: 20,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        else
-                          const Icon(Icons.arrow_forward_ios, size: 16),
-                      ],
-                    ),
+                                if (!opened) {
+                                  if (mounted) {
+                                    setState(() {
+                                      _loading = false;
+                                      _selectedBranchId = null;
+                                    });
+                                  }
+                                }
+                              },
+                        child: Container(
+                          margin: const EdgeInsets.only(bottom: 16),
+                          padding: const EdgeInsets.symmetric(vertical: 18, horizontal: 20),
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(18),
+                            border: Border.all(color: lightColorScheme.primary, width: 1.5),
+                            color: Colors.white.withOpacity(0.15),
+                          ),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Text(b['name'], style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w600)),
+                              if (_loading && isSelected)
+                                const SizedBox(
+                                  width: 20,
+                                  height: 20,
+                                  child: CircularProgressIndicator(strokeWidth: 2),
+                                )
+                              else
+                                const Icon(Icons.arrow_forward_ios, size: 16),
+                            ],
+                          ),
+                        ),
+                      );
+                    }).toList(),
                   ),
-                );
-              }).toList(),
+                ),
+              ),
             ],
           ),
         ),

@@ -140,7 +140,15 @@ class RazorpayService {
     }
   }
 
-  Future<bool> openWorkshopCheckout(String date, String branchId) async {
+
+  Future<bool> openWorkshopCheckout(
+    String date,
+    String branchId, {
+    String? participantName,
+    String? participantPhone,
+    bool? hasStockExperience,
+    bool? hasDematAccount,
+  }) async {
     debugPrint('[RazorpayService] openWorkshopCheckout called - date: $date, branchId: $branchId');
     if (_isProcessing) {
       debugPrint('[RazorpayService] openWorkshopCheckout - already processing');
@@ -149,7 +157,14 @@ class RazorpayService {
     _isProcessing = true;
 
     try {
-      final response = await ApiService().registerToWorkshop(date, branchId);
+      final response = await ApiService().registerToWorkshop(
+        date,
+        branchId,
+        participantName: participantName,
+        participantPhone: participantPhone,
+        hasStockExperience: hasStockExperience,
+        hasDematAccount: hasDematAccount,
+      );
       debugPrint('[RazorpayService] openWorkshopCheckout - API status: ${response.statusCode}');
       debugPrint('[RazorpayService] openWorkshopCheckout - API body: ${response.body}');
 
