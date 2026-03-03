@@ -246,7 +246,19 @@ class _IpoListingPageState extends State<IpoListingPage>
           setState(() {
             _gmpByName = map;
           });
-          debugPrint('[GMP] Loaded ${map.length} GMP entries');
+          debugPrint('[GMP] Loaded ${map.length} GMP entries (fromCache: $fromCache)');
+
+          // Log matches against current IPOs for debugging
+          final allIpos = [...openIpos, ...upcomingIpos, ...recentlyClosedIpos];
+          int matchCount = 0;
+          for (final ipo in allIpos) {
+            final gmp = _getGmpValue(ipo);
+            if (gmp != null) {
+              matchCount++;
+              debugPrint('[GMP] Match: ${ipo['name']} -> $gmp');
+            }
+          }
+          debugPrint('[GMP] Total matches: $matchCount / ${allIpos.length} IPOs');
         },
       );
     } catch (e) {
@@ -257,6 +269,15 @@ class _IpoListingPageState extends State<IpoListingPage>
   // ==========================================================
   // GMP helpers
   // ==========================================================
+
+  /// Normalize a company name for matching: strip common suffixes and extra spaces.
+  String _normalizeName(String name) {
+    String n = name.toLowerCase().trim();
+    for (final suffix in [' limited', ' ltd', ' pvt', ' private', ' india', ' corporation', ' company']) {
+      n = n.replaceAll(suffix, '');
+    }
+    return n.replaceAll(RegExp(r'\s+'), ' ').trim();
+  }
 
   /// Try to get GMP value — first from ipoalerts data, then from scraped data
   dynamic _getGmpValue(dynamic ipo) {
@@ -270,12 +291,23 @@ class _IpoListingPageState extends State<IpoListingPage>
 
     // Try exact match first
     if (_gmpByName.containsKey(name)) {
-      return _gmpByName[name]['gmpValue'];
+      return _gmpByName[name]?['gmpValue'];
     }
 
-    // Try partial match — check if scraped name contains IPO name or vice versa
+    // Try containment match on raw names
     for (final entry in _gmpByName.entries) {
       if (entry.key.contains(name) || name.contains(entry.key)) {
+        return entry.value['gmpValue'];
+      }
+    }
+
+    // Try normalized match (strip "Limited", "Ltd", "India", etc.)
+    final normName = _normalizeName(name);
+    if (normName.isEmpty) return null;
+
+    for (final entry in _gmpByName.entries) {
+      final normGmp = _normalizeName(entry.key);
+      if (normGmp == normName || normGmp.contains(normName) || normName.contains(normGmp)) {
         return entry.value['gmpValue'];
       }
     }
