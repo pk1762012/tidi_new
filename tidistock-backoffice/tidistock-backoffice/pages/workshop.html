@@ -65,6 +65,10 @@
                 <th>Phone Number</th>
                 <th>First Name</th>
                 <th>Last Name</th>
+                <th>Participant Name</th>
+                <th>Participant Phone</th>
+                <th>Stock Experience</th>
+                <th>Demat Account</th>
                 <th>Workshop Date</th>
                 <th>Branch</th>
                 <th>Registered On</th>
@@ -154,6 +158,10 @@
                 { data: 'username', className: "text-center" },
                 { data: 'firstName', className: "text-center" },
                 { data: 'lastName', className: "text-center" },
+                { data: 'participantName', className: "text-center", defaultContent: '-' },
+                { data: 'participantPhone', className: "text-center", defaultContent: '-' },
+                { data: 'hasStockExperience', className: "text-center", render: d => d === true ? '<span class="badge bg-success">Yes</span>' : d === false ? '<span class="badge bg-secondary">No</span>' : '-' },
+                { data: 'hasDematAccount', className: "text-center", render: d => d === true ? '<span class="badge bg-success">Yes</span>' : d === false ? '<span class="badge bg-secondary">No</span>' : '-' },
                 { data: 'date', className: "text-center", render: d => new Date(d).toLocaleDateString() },
                 { data: 'branch', className: "text-center" },
                 { data: 'dateCreated', className: "text-center", render: d => new Date(d).toLocaleString() }
