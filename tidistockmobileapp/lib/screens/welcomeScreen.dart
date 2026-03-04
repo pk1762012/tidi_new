@@ -21,6 +21,7 @@ class _WelcomeScreenState extends State<WelcomeScreen>
   final TextEditingController phoneCtrl = TextEditingController();
 
   bool isLoading = false;
+  bool _isNewUser = false;
   String? phoneError;
 
   // -------------------------------------------------------
@@ -159,6 +160,7 @@ class _WelcomeScreenState extends State<WelcomeScreen>
                           ApiService apiService = ApiService();
                           final response = await apiService.createUser(fnameCtrl.text.trim(), lnameCtrl.text.trim(), phoneCtrl.text.trim());
                           if (response.statusCode == 201 || response.statusCode == 202) {
+                            _isNewUser = true;
                             Navigator.pop(dialogCtx);   // Close name popup
                             showOtpPopup(phoneCtrl.text.trim());
                           } else {
@@ -320,31 +322,11 @@ class _WelcomeScreenState extends State<WelcomeScreen>
                               timer?.cancel();
                               Navigator.pop(dialogCtx);
 
-                              Navigator.pushAndRemoveUntil(
-                                this.context,
-                                MaterialPageRoute(
-                                  builder: (context) => DisclaimerScreen(
-                                    onAccept: () {
-                                      Navigator.pushAndRemoveUntil(
-                                        context,
-                                        MaterialPageRoute(
-                                          builder: (context) => SplashScreen(),
-                                        ),
-                                            (route) => false,
-                                      );
-                                    },
-                                    onDecline: () async {
-                                      await secureStorage.deleteAll();
-                                      Navigator.pushAndRemoveUntil(
-                                        context,
-                                        MaterialPageRoute(builder: (context) => WelcomeScreen()),
-                                            (route) => false,
-                                      );
-                                    },
-                                  ),
-                                ),
-                                    (route) => false,
-                              );
+                              if (_isNewUser) {
+                                _showWelcomeTrialDialog();
+                              } else {
+                                _navigateToDisclaimer();
+                              }
                             } else {
                               var responseData = jsonDecode(response.body);
                               String message = responseData['message'];
@@ -407,6 +389,90 @@ class _WelcomeScreenState extends State<WelcomeScreen>
   }
 
 
+
+  // -------------------------------------------------------
+  // NAVIGATE TO DISCLAIMER → SPLASH → HOME
+  // -------------------------------------------------------
+  void _navigateToDisclaimer() {
+    Navigator.pushAndRemoveUntil(
+      context,
+      MaterialPageRoute(
+        builder: (context) => DisclaimerScreen(
+          onAccept: () {
+            Navigator.pushAndRemoveUntil(
+              context,
+              MaterialPageRoute(
+                builder: (context) => SplashScreen(),
+              ),
+              (route) => false,
+            );
+          },
+          onDecline: () async {
+            await secureStorage.deleteAll();
+            Navigator.pushAndRemoveUntil(
+              context,
+              MaterialPageRoute(builder: (context) => WelcomeScreen()),
+              (route) => false,
+            );
+          },
+        ),
+      ),
+      (route) => false,
+    );
+  }
+
+  // -------------------------------------------------------
+  // WELCOME TRIAL DIALOG FOR NEW USERS
+  // -------------------------------------------------------
+  void _showWelcomeTrialDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) {
+        return Dialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.celebration_rounded, size: 48, color: Colors.amber[700]),
+                const SizedBox(height: 16),
+                const Text(
+                  "Welcome to TIDI Wealth!",
+                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  "You've got 15 days of free access to all stock analysis reports.",
+                  style: TextStyle(fontSize: 15, color: Colors.grey[600]),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 24),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      minimumSize: const Size(double.infinity, 48),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    onPressed: () {
+                      Navigator.pop(dialogContext);
+                      _navigateToDisclaimer();
+                    },
+                    child: const Text("Start Exploring", style: TextStyle(fontSize: 16)),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
 
   // -------------------------------------------------------
   // CUSTOM 4 DIGIT BOX ANIMATED INPUT

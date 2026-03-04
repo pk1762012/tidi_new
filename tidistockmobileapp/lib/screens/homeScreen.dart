@@ -12,6 +12,8 @@ import '../components/home/portfolio/ModelPortfolioListPage.dart';
 import '../config/app_config.dart';
 import '../service/AqApiService.dart';
 import '../service/RebalanceStatusService.dart';
+import '../service/SubscriptionService.dart';
+import '../components/home/profile/SubscriptionPlanScreen.dart' show showSubscriptionBottomCurtain;
 
 class HomeScreen extends StatefulWidget {
   final int currentIndex;
@@ -50,6 +52,10 @@ class HomeScreenState extends State<HomeScreen> {
   List<PendingRebalance> _pendingRebalances = [];
   bool _alertDismissed = false;
 
+  // Trial banner state
+  bool _isTrial = false;
+  int _trialDaysLeft = 0;
+
   @override
   void initState() {
     super.initState();
@@ -57,8 +63,19 @@ class HomeScreenState extends State<HomeScreen> {
     imageUrl = widget.userData?['profilePicture'];
     currentMenu = _menuMap[currentIndex];
     _loadRebalanceAlerts();
+    _loadTrialStatus();
     // Ensure AQ user exists in the background (non-blocking)
     AqApiService.ensureAqRegistration();
+  }
+
+  Future<void> _loadTrialStatus() async {
+    final status = await SubscriptionService.getStatus();
+    if (mounted && status.isTrial) {
+      setState(() {
+        _isTrial = true;
+        _trialDaysLeft = status.daysLeft ?? 0;
+      });
+    }
   }
 
   Future<void> _loadRebalanceAlerts() async {
@@ -91,6 +108,14 @@ class HomeScreenState extends State<HomeScreen> {
         body: Stack(
           children: [
             pages[currentIndex],
+            // Trial banner — visible on Market tab
+            if (_isTrial && currentIndex == 0)
+              Positioned(
+                left: 12,
+                right: 12,
+                bottom: 8,
+                child: _buildTrialBanner(),
+              ),
             // Floating rebalance alert — only visible on Advisory tab when in Model Portfolio mode
             if (_pendingRebalances.isNotEmpty &&
                 !_alertDismissed &&
@@ -105,6 +130,60 @@ class HomeScreenState extends State<HomeScreen> {
           ],
         ),
         bottomNavigationBar: _buildBottomBar(),
+      ),
+    );
+  }
+
+  Widget _buildTrialBanner() {
+    final daysText = _trialDaysLeft == 1 ? '1 day' : '$_trialDaysLeft days';
+    return GestureDetector(
+      onTap: () => showSubscriptionBottomCurtain(context),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            colors: [Colors.teal.shade500, Colors.teal.shade700],
+          ),
+          borderRadius: BorderRadius.circular(14),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.teal.withOpacity(0.3),
+              blurRadius: 10,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: Row(
+          children: [
+            const Icon(Icons.star_rounded, color: Colors.white, size: 22),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                'Free Trial: $daysText left',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: Text(
+                'View Plans',
+                style: TextStyle(
+                  color: Colors.teal.shade700,
+                  fontWeight: FontWeight.w700,
+                  fontSize: 12,
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
