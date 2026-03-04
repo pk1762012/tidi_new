@@ -674,7 +674,7 @@ class _AcademyPageState extends State<AcademyPage>
                     ),
                     const SizedBox(height: 6),
                     Text(
-                      "Fee: ₹1 Only",
+                      "Fee: ₹10 Only",
                       style: TextStyle(
                         fontSize: 14,
                         fontWeight: FontWeight.w600,
@@ -804,7 +804,7 @@ class _AcademyPageState extends State<AcademyPage>
                                 child: CircularProgressIndicator(
                                   strokeWidth: 2, color: Colors.white),
                               )
-                            : const Text("Confirm & Pay ₹1"),
+                            : const Text("Confirm & Pay ₹10"),
                       ),
                     ),
 
