@@ -16,6 +16,7 @@ import 'package:webview_flutter/webview_flutter.dart';
 import 'BrokerAuthPage.dart';
 import 'BrokerCredentialPage.dart';
 import 'BrokerSelectionPage.dart';
+import 'MPStatusModal.dart';
 import 'PendingOrdersPage.dart';
 import 'PortfolioHoldingsPage.dart';
 
@@ -62,6 +63,10 @@ class _ExecutionStatusPageState extends State<ExecutionStatusPage> {
 
   // Execution date recorded when orders are placed
   final DateTime _executionDate = DateTime.now();
+
+  // Order error details (matching alphab2b UpdateRebalanceModal.js orderErrorData)
+  List<Map<String, dynamic>> _orderErrors = [];
+  double? _fundsRequired;
 
   String get _modelName => widget.modelName ?? widget.portfolio.modelName;
   String get _advisor => widget.advisor ?? widget.portfolio.advisor;
@@ -244,6 +249,11 @@ class _ExecutionStatusPageState extends State<ExecutionStatusPage> {
           errStr.contains('authentication') ||
           errStr.contains('unauthorized') ||
           errStr.contains('401');
+
+      // Parse order errors from exception if available
+      // (matching alphab2b UpdateRebalanceModal.js orderErrors capture)
+      _parseOrderErrors(e);
+
       setState(() {
         _state = 'error';
         hasError = true;
@@ -259,6 +269,19 @@ class _ExecutionStatusPageState extends State<ExecutionStatusPage> {
       widget.email,
       _modelName,
     );
+
+    // Extract per-order errors from failed results
+    // (matching alphab2b UpdateRebalanceModal.js orderErrors extraction)
+    final failedResults = orderResults.where((r) => r.isFailed).toList();
+    if (failedResults.isNotEmpty) {
+      _orderErrors = failedResults.map((r) => <String, dynamic>{
+        'symbol': r.symbol,
+        'transactionType': r.transactionType,
+        'quantity': r.quantity,
+        'message': r.message ?? 'Order rejected',
+        'orderStatus': r.status,
+      }).toList();
+    }
 
     if (mounted) {
       setState(() {
@@ -463,6 +486,231 @@ class _ExecutionStatusPageState extends State<ExecutionStatusPage> {
   // ---------------------------------------------------------------------------
   // Retry failed orders
   // ---------------------------------------------------------------------------
+
+  /// Show MPStatusModal for viewing/editing/confirming orders
+  /// (matching alphab2b MPStatusModal.js)
+  Future<void> _showMPStatusModal(String mode) async {
+    final brokerName = OrderExecutionService.instance.lastUsedBrokerName.isNotEmpty
+        ? OrderExecutionService.instance.lastUsedBrokerName
+        : 'DummyBroker';
+
+    // Build stock data from current results
+    final stockData = results.map((r) => <String, dynamic>{
+      'symbol': r.symbol,
+      'transactionType': r.transactionType,
+      'quantity': r.quantity,
+      'filledShares': r.quantity,
+      'averagePrice': r.price ?? 0,
+      'averageEntryPrice': r.price ?? 0,
+      'exchange': r.exchange ?? 'NSE',
+      'orderStatus': r.status.toUpperCase(),
+      'orderId': r.orderId ?? '',
+    }).toList();
+
+    final result = await MPStatusModal.show(
+      context,
+      email: widget.email,
+      modelName: _modelName,
+      advisor: _advisor,
+      broker: brokerName,
+      stockData: stockData,
+      mode: mode,
+    );
+
+    if (result != null && mounted) {
+      // Refresh the page if data was updated
+      setState(() {});
+    }
+  }
+
+  /// Parse order errors from an exception (matching alphab2b orderErrors/fundsRequired)
+  void _parseOrderErrors(dynamic e) {
+    try {
+      final errStr = e.toString();
+      // Try to extract JSON from error string
+      final jsonStart = errStr.indexOf('{');
+      final jsonEnd = errStr.lastIndexOf('}');
+      if (jsonStart >= 0 && jsonEnd > jsonStart) {
+        final jsonStr = errStr.substring(jsonStart, jsonEnd + 1);
+        final data = jsonDecode(jsonStr);
+        if (data['orderErrors'] is List) {
+          _orderErrors = (data['orderErrors'] as List)
+              .map((e) => Map<String, dynamic>.from(e))
+              .toList();
+        }
+        if (data['fundsRequired'] != null) {
+          _fundsRequired = (data['fundsRequired'] as num).toDouble();
+        }
+      }
+    } catch (_) {
+      // Not JSON-parseable, ignore
+    }
+  }
+
+  /// Show detailed order error modal
+  /// (matching alphab2b UpdateRebalanceModal.js showOrderErrorModal)
+  Future<void> _showOrderErrorModal() async {
+    await showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => Container(
+        constraints: BoxConstraints(
+          maxHeight: MediaQuery.of(ctx).size.height * 0.75,
+        ),
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Handle
+            Container(
+              margin: const EdgeInsets.only(top: 12),
+              width: 36, height: 4,
+              decoration: BoxDecoration(
+                color: Colors.grey.shade300,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            // Title
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
+              child: Row(
+                children: [
+                  Icon(Icons.error_outline, color: Colors.red.shade600, size: 24),
+                  const SizedBox(width: 10),
+                  const Text("Order Errors",
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
+                ],
+              ),
+            ),
+            if (errorMessage != null)
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                child: Text(errorMessage!,
+                  style: TextStyle(fontSize: 13, color: Colors.red.shade700)),
+              ),
+            // Funds required
+            if (_fundsRequired != null)
+              Container(
+                margin: const EdgeInsets.fromLTRB(20, 12, 20, 0),
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.amber.shade50,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: Colors.amber.shade200),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.account_balance_wallet, color: Colors.amber.shade700, size: 20),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text("Funds Required",
+                            style: TextStyle(fontSize: 12, color: Colors.amber.shade800, fontWeight: FontWeight.w600)),
+                          Text("\u20B9${NumberFormat('#,##,###.##').format(_fundsRequired)}",
+                            style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: Colors.amber.shade900)),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            // Order errors list
+            if (_orderErrors.isNotEmpty)
+              Expanded(
+                child: ListView.builder(
+                  padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
+                  itemCount: _orderErrors.length,
+                  itemBuilder: (ctx, i) {
+                    final err = _orderErrors[i];
+                    return Container(
+                      margin: const EdgeInsets.only(bottom: 8),
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.red.shade50,
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: Colors.red.shade100),
+                      ),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: (err['transactionType'] ?? 'BUY').toString().toUpperCase() == 'BUY'
+                                  ? Colors.green.shade100
+                                  : Colors.red.shade100,
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                            child: Text(
+                              (err['transactionType'] ?? 'BUY').toString().toUpperCase(),
+                              style: TextStyle(
+                                fontSize: 10, fontWeight: FontWeight.w600,
+                                color: (err['transactionType'] ?? 'BUY').toString().toUpperCase() == 'BUY'
+                                    ? Colors.green.shade700
+                                    : Colors.red.shade700,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  err['symbol']?.toString() ?? err['tradingSymbol']?.toString() ?? '',
+                                  style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                                ),
+                                if (err['message'] != null || err['error'] != null)
+                                  Text(
+                                    (err['message'] ?? err['error']).toString(),
+                                    style: TextStyle(fontSize: 11, color: Colors.red.shade700, height: 1.3),
+                                  ),
+                              ],
+                            ),
+                          ),
+                          if (err['quantity'] != null)
+                            Text("Qty: ${err['quantity']}",
+                              style: TextStyle(fontSize: 11, color: Colors.grey.shade600)),
+                        ],
+                      ),
+                    );
+                  },
+                ),
+              )
+            else
+              const Padding(
+                padding: EdgeInsets.all(20),
+                child: Text("No detailed error information available.",
+                  style: TextStyle(fontSize: 13, color: Colors.grey)),
+              ),
+            // Close button
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+              child: SizedBox(
+                width: double.infinity,
+                height: 46,
+                child: ElevatedButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.red.shade600,
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
+                  child: const Text("Close", style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 
   Future<void> _retryFailed() async {
     final failedOrders = <Map<String, dynamic>>[];
@@ -1298,7 +1546,27 @@ class _ExecutionStatusPageState extends State<ExecutionStatusPage> {
         top: false,
         child: Column(
           children: [
-            if (_failedCount > 0)
+            // Order Error Details button (matching alphab2b showOrderErrorModal)
+            if (_orderErrors.isNotEmpty || _fundsRequired != null)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: SizedBox(
+                  width: double.infinity,
+                  height: 46,
+                  child: OutlinedButton.icon(
+                    onPressed: _showOrderErrorModal,
+                    icon: const Icon(Icons.error_outline, size: 18),
+                    label: const Text("View Error Details",
+                        style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+                    style: OutlinedButton.styleFrom(
+                      side: BorderSide(color: Colors.red.shade400),
+                      foregroundColor: Colors.red.shade600,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                    ),
+                  ),
+                ),
+              ),
+            if (_failedCount > 0) ...[
               Padding(
                 padding: const EdgeInsets.only(bottom: 8),
                 child: SizedBox(
@@ -1318,6 +1586,45 @@ class _ExecutionStatusPageState extends State<ExecutionStatusPage> {
                   ),
                 ),
               ),
+              // Confirm Failed Orders button (matching alphab2b MPStatusModal)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: SizedBox(
+                  width: double.infinity,
+                  height: 46,
+                  child: OutlinedButton.icon(
+                    onPressed: () => _showMPStatusModal('confirmFailed'),
+                    icon: const Icon(Icons.check_circle_outline, size: 18),
+                    label: const Text("Confirm Failed Orders Manually",
+                        style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+                    style: OutlinedButton.styleFrom(
+                      side: BorderSide(color: Colors.red.shade400),
+                      foregroundColor: Colors.red.shade600,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+            // View/Edit Orders button (matching alphab2b MPStatusModal)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: SizedBox(
+                width: double.infinity,
+                height: 46,
+                child: OutlinedButton.icon(
+                  onPressed: () => _showMPStatusModal('viewing'),
+                  icon: const Icon(Icons.edit_note, size: 18),
+                  label: const Text("View / Edit Orders",
+                      style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+                  style: OutlinedButton.styleFrom(
+                    side: BorderSide(color: Colors.blue.shade400),
+                    foregroundColor: Colors.blue.shade600,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                  ),
+                ),
+              ),
+            ),
             if (_hasPendingOrPartialOrders)
               Padding(
                 padding: const EdgeInsets.only(bottom: 8),

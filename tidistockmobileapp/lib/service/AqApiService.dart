@@ -166,6 +166,7 @@ class AqApiService {
 
   /// Server-side rebalance calculation (same as rgx_app POST /rebalance/calculate).
   /// Returns { buy: [{symbol, quantity, exchange, price}], sell: [...] }.
+  /// Passes broker credentials so CCXT can fetch live holdings from broker.
   Future<http.Response> rebalanceCalculate({
     required String userEmail,
     required String modelName,
@@ -174,20 +175,66 @@ class AqApiService {
     String userBroker = 'DummyBroker',
     String userFund = '0',
     int flag = 0,
+    String? apiKey,
+    String? secretKey,
+    String? jwtToken,
+    String? clientCode,
+    String? viewToken,
+    String? sid,
+    String? serverId,
   }) async {
+    final body = <String, dynamic>{
+      'userEmail': userEmail,
+      'userBroker': userBroker,
+      'modelName': modelName,
+      'advisor': advisor,
+      'model_id': modelId,
+      'userFund': userFund,
+      'flag': flag,
+    };
+
+    // Pass broker-specific credentials (matching alphab2b RebalanceCard.js)
+    final broker = userBroker.toLowerCase();
+    if (apiKey != null && apiKey.isNotEmpty) {
+      if (broker.contains('upstox')) {
+        body['apiKey'] = apiKey;
+        body['apiSecret'] = secretKey;
+      } else if (broker.contains('icici')) {
+        body['apiKey'] = apiKey;
+        body['secretKey'] = secretKey;
+      } else if (broker.contains('zerodha')) {
+        body['apiKey'] = apiKey;
+        body['SecretKey'] = secretKey;
+      } else if (broker.contains('kotak')) {
+        body['consumerKey'] = apiKey;
+        body['consumerSecret'] = secretKey;
+      } else {
+        body['apiKey'] = apiKey;
+      }
+    }
+    if (jwtToken != null && jwtToken.isNotEmpty) {
+      if (broker.contains('angel')) {
+        body['jwtToken'] = jwtToken;
+      } else {
+        body['accessToken'] = jwtToken;
+      }
+    }
+    if (clientCode != null && clientCode.isNotEmpty) {
+      if (broker.contains('dhan') || broker.contains('alice') || broker.contains('fyers')) {
+        body['clientId'] = clientCode;
+      } else {
+        body['clientCode'] = clientCode;
+      }
+    }
+    if (viewToken != null) body['viewToken'] = viewToken;
+    if (sid != null) body['sid'] = sid;
+    if (serverId != null) body['serverId'] = serverId;
+
     return http.post(
       Uri.parse('${ccxtUrl}rebalance/calculate'),
       headers: _headers(),
-      body: jsonEncode({
-        'userEmail': userEmail,
-        'userBroker': userBroker,
-        'modelName': modelName,
-        'advisor': advisor,
-        'model_id': modelId,
-        'userFund': userFund,
-        'flag': flag,
-      }),
-    ).timeout(const Duration(seconds: 15));
+      body: jsonEncode(body),
+    ).timeout(const Duration(seconds: 30));
   }
 
   // ---------------------------------------------------------------------------
@@ -1215,6 +1262,158 @@ class AqApiService {
       headers: _headers(),
       body: jsonEncode(symbols),
     ).timeout(const Duration(seconds: 15));
+  }
+
+  // ---------------------------------------------------------------------------
+  // Broker Holdings & Corporate Action APIs (matching alphab2b)
+  // ---------------------------------------------------------------------------
+
+  /// Check broker holdings for CA (Corporate Action) pending repair.
+  /// Verifies if shares have been credited at broker after splits/bonus.
+  /// POST /rebalance/check-broker-holdings
+  Future<http.Response> checkBrokerHoldings({
+    required String userEmail,
+    required String userBroker,
+    required List<Map<String, String>> symbols,
+    String? apiKey,
+    String? secretKey,
+    String? accessToken,
+    String? clientCode,
+  }) async {
+    final body = <String, dynamic>{
+      'userEmail': userEmail,
+      'userBroker': userBroker,
+      'symbols': symbols,
+    };
+    if (apiKey != null) body['apiKey'] = apiKey;
+    if (secretKey != null) body['secretKey'] = secretKey;
+    if (accessToken != null) body['accessToken'] = accessToken;
+    if (clientCode != null) body['clientCode'] = clientCode;
+
+    return http.post(
+      Uri.parse('${ccxtUrl}rebalance/check-broker-holdings'),
+      headers: _headers(),
+      body: jsonEncode(body),
+    ).timeout(const Duration(seconds: 20));
+  }
+
+  /// Check for upcoming corporate actions (splits, dividends) within N days.
+  /// POST /rebalance/corporate-actions/upcoming
+  Future<http.Response> getUpcomingCorporateActions({
+    required List<String> symbols,
+    int days = 7,
+  }) async {
+    return http.post(
+      Uri.parse('${ccxtUrl}rebalance/corporate-actions/upcoming'),
+      headers: _headers(),
+      body: jsonEncode({
+        'symbols': symbols,
+        'days': days,
+      }),
+    ).timeout(const Duration(seconds: 15));
+  }
+
+  /// Update user portfolio order results after manual edit.
+  /// PUT /rebalance/update/user-portfolio/latest
+  Future<http.Response> updateLatestUserPortfolio({
+    required String documentId,
+    required String modelName,
+    required String userEmail,
+    required List<Map<String, dynamic>> orderResults,
+    required String userBroker,
+  }) async {
+    return http.put(
+      Uri.parse('${ccxtUrl}rebalance/update/user-portfolio/latest'),
+      headers: _headers(),
+      body: jsonEncode({
+        'data': {
+          '_id': {'\$oid': documentId},
+          'model_name': modelName,
+          'user_email': userEmail,
+          'user_net_pf_model': {
+            'order_results': orderResults,
+            'user_broker': userBroker,
+          },
+        },
+      }),
+    ).timeout(const Duration(seconds: 15));
+  }
+
+  /// Confirm manually-handled failed orders.
+  /// PUT /rebalance/update/user-portfolio/latest/keys
+  Future<http.Response> confirmFailedOrders({
+    required String userEmail,
+    required String modelObjectId,
+    required List<Map<String, dynamic>> updatedPortfolio,
+    required String advisor,
+    required String modelName,
+    required String userBroker,
+    required bool allOrdersComplete,
+  }) async {
+    return http.put(
+      Uri.parse('${ccxtUrl}rebalance/update/user-portfolio/latest/keys'),
+      headers: _headers(),
+      body: jsonEncode({
+        'userEmail': userEmail,
+        'modelObjectId': modelObjectId,
+        'modelUserObjectId': modelObjectId,
+        'updatedPortfolio': updatedPortfolio,
+        'advisor': advisor,
+        'modelName': modelName,
+        'userBroker': userBroker,
+        'allOrdersComplete': allOrdersComplete,
+      }),
+    ).timeout(const Duration(seconds: 15));
+  }
+
+  /// Fetch broker funds/balance.
+  /// GET /ccxt/{broker}/funds or POST /ccxt/fetch-funds
+  Future<http.Response> fetchFunds({
+    required String email,
+    required String broker,
+    String? apiKey,
+    String? secretKey,
+    String? jwtToken,
+    String? clientCode,
+    String? sid,
+    String? serverId,
+  }) async {
+    final body = <String, dynamic>{
+      'userEmail': email,
+      'user_broker': broker,
+    };
+    if (apiKey != null) body['apiKey'] = apiKey;
+    if (secretKey != null) body['secretKey'] = secretKey;
+    if (jwtToken != null) body['accessToken'] = jwtToken;
+    if (clientCode != null) body['clientCode'] = clientCode;
+    if (sid != null) body['sid'] = sid;
+    if (serverId != null) body['serverId'] = serverId;
+
+    return http.post(
+      Uri.parse('${ccxtUrl}rebalance/fetch-funds'),
+      headers: _headers(),
+      body: jsonEncode(body),
+    ).timeout(const Duration(seconds: 15));
+  }
+
+  /// Search for stock symbols (for adding stocks in edit mode).
+  /// POST /angelone/get-symbol-name-exchange
+  Future<http.Response> searchSymbol(String query) async {
+    return http.post(
+      Uri.parse('${ccxtUrl}angelone/get-symbol-name-exchange'),
+      headers: _headers(),
+      body: jsonEncode({'symbol': query}),
+    ).timeout(const Duration(seconds: 10));
+  }
+
+  /// Fetch repair trades for model portfolios.
+  /// GET /rebalance/repair-trades/{email}
+  Future<http.Response> getRepairTrades(String email) async {
+    final encodedEmail = Uri.encodeComponent(email);
+    return http.get(
+      Uri.parse('${ccxtUrl}rebalance/repair-trades/$encodedEmail'),
+      headers: _headers(),
+    ).timeout(const Duration(seconds: 10));
   }
 
   // ---------------------------------------------------------------------------

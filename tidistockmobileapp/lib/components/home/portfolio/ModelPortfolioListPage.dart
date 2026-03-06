@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:tidistockmobileapp/models/broker_connection.dart';
 import 'package:tidistockmobileapp/models/model_portfolio.dart';
 import 'package:tidistockmobileapp/service/ApiService.dart';
 import 'package:tidistockmobileapp/service/AqApiService.dart';
@@ -13,6 +14,7 @@ import 'package:tidistockmobileapp/widgets/customScaffold.dart';
 import 'package:tidistockmobileapp/mixins/ScreenProtectionMixin.dart';
 
 import '../../../service/RebalanceStatusService.dart';
+import 'BrokerHoldingsCards.dart';
 import 'CurrentHoldingsPreviewPage.dart';
 import 'ModelPortfolioDetailPage.dart';
 import 'InvestedPortfoliosPage.dart';
@@ -42,6 +44,15 @@ class _ModelPortfolioListPageState extends State<ModelPortfolioListPage>
   Map<String, PortfolioRebalanceStatus> _rebalanceStatusMap = {};
   List<Map<String, dynamic>> _pendingRebalances = [];
   bool _loadingRebalances = true;
+
+  // Broker holdings (matching alphab2b ModalPFList.js)
+  List<BrokerConnection> _connectedBrokers = [];
+  String _selectedBroker = 'ALL';
+  List<Map<String, dynamic>> _portfolioHoldings = [];
+  bool _holdingsLoading = false;
+
+  // Repair trades (matching alphab2b ModalPFCard.js repair badge)
+  List<Map<String, dynamic>> _repairTrades = [];
 
   late TabController _tabController;
 
@@ -90,7 +101,131 @@ class _ModelPortfolioListPageState extends State<ModelPortfolioListPage>
       _fetchPortfolios(),
       _fetchSubscribedStrategies(),
       _fetchRebalanceStatus(),
+      _fetchBrokerHoldings(),
+      _fetchRepairTrades(),
     ]);
+  }
+
+  /// Fetch portfolio holdings from subscription-raw-amount for each subscribed model.
+  /// Matching alphab2b ModalPFList.js holdings fetch.
+  Future<void> _fetchBrokerHoldings() async {
+    if (userEmail == null || userEmail!.isEmpty) return;
+
+    setState(() => _holdingsLoading = true);
+
+    try {
+      // Fetch connected brokers
+      final brokerResp = await AqApiService.instance.getConnectedBrokers(userEmail!);
+      if (brokerResp.statusCode == 200) {
+        final data = jsonDecode(brokerResp.body);
+        _connectedBrokers = BrokerConnection.parseApiResponse(data);
+      }
+
+      // Fetch holdings for each subscribed portfolio
+      final subscribed = _subscribedPortfolios;
+      final allHoldings = <Map<String, dynamic>>[];
+
+      for (final model in subscribed) {
+        try {
+          final resp = await AqApiService.instance.getSubscriptionRawAmount(
+            email: userEmail!,
+            modelName: model.modelName,
+            userBroker: _connectedBrokers.isNotEmpty ? _connectedBrokers.first.broker : '',
+          );
+          if (resp.statusCode == 200) {
+            final data = jsonDecode(resp.body);
+            final innerData = data['data'] ?? data;
+            final userNetPf = innerData['user_net_pf_model'];
+
+            List<dynamic>? orderResults;
+            if (userNetPf is List && userNetPf.isNotEmpty) {
+              // Take latest entry by execDate
+              final sorted = List.from(userNetPf)
+                ..sort((a, b) => (a['execDate'] ?? '').toString().compareTo((b['execDate'] ?? '').toString()));
+              final latest = sorted.last;
+              orderResults = latest['order_results'];
+              final broker = latest['user_broker']?.toString() ?? '';
+              if (orderResults is List) {
+                for (final r in orderResults) {
+                  if (r is! Map) continue;
+                  allHoldings.add({
+                    'symbol': r['symbol'] ?? r['tradingsymbol'] ?? '',
+                    'exchange': r['exchange'] ?? 'NSE',
+                    'quantity': (r['quantity'] as num?)?.toInt() ?? 0,
+                    'avgPrice': (r['averagePrice'] ?? r['averageEntryPrice'] ?? 0).toDouble(),
+                    'ltp': 0.0,
+                    'pnl': 0.0,
+                    'pnlPercent': 0.0,
+                    'broker': broker,
+                    'modelName': model.modelName,
+                  });
+                }
+              }
+            } else if (userNetPf is Map) {
+              orderResults = userNetPf['order_results'];
+              final broker = userNetPf['user_broker']?.toString() ?? '';
+              if (orderResults is List) {
+                for (final r in orderResults) {
+                  if (r is! Map) continue;
+                  allHoldings.add({
+                    'symbol': r['symbol'] ?? r['tradingsymbol'] ?? '',
+                    'exchange': r['exchange'] ?? 'NSE',
+                    'quantity': (r['quantity'] as num?)?.toInt() ?? 0,
+                    'avgPrice': (r['averagePrice'] ?? r['averageEntryPrice'] ?? 0).toDouble(),
+                    'ltp': 0.0,
+                    'pnl': 0.0,
+                    'pnlPercent': 0.0,
+                    'broker': broker,
+                    'modelName': model.modelName,
+                  });
+                }
+              }
+            }
+          }
+        } catch (e) {
+          debugPrint('[ModelPortfolio] Holdings fetch error for ${model.modelName}: $e');
+        }
+      }
+
+      if (mounted) {
+        setState(() {
+          _portfolioHoldings = allHoldings;
+          _holdingsLoading = false;
+        });
+      }
+    } catch (e) {
+      debugPrint('[ModelPortfolio] _fetchBrokerHoldings error: $e');
+      if (mounted) setState(() => _holdingsLoading = false);
+    }
+  }
+
+  /// Fetch repair trades (matching alphab2b repair badge).
+  Future<void> _fetchRepairTrades() async {
+    if (userEmail == null || userEmail!.isEmpty) return;
+    try {
+      final resp = await AqApiService.instance.getRepairTrades(userEmail!);
+      if (resp.statusCode == 200) {
+        final data = jsonDecode(resp.body);
+        if (data is List) {
+          _repairTrades = data.map((e) => Map<String, dynamic>.from(e)).toList();
+        } else if (data is Map && data['data'] is List) {
+          _repairTrades = (data['data'] as List).map((e) => Map<String, dynamic>.from(e)).toList();
+        }
+        if (mounted) setState(() {});
+      }
+    } catch (e) {
+      debugPrint('[ModelPortfolio] _fetchRepairTrades error: $e');
+    }
+  }
+
+  /// Check if a portfolio has repair trades (matching alphab2b ModalPFCard.js)
+  bool _hasRepairTrades(ModelPortfolio portfolio) {
+    return _repairTrades.any((trade) {
+      final modelId = trade['modelId']?.toString();
+      return modelId == portfolio.id ||
+          modelId == portfolio.strategyId ||
+          (trade['failedTrades'] is List && (trade['failedTrades'] as List).isNotEmpty);
+    });
   }
 
   Future<void> _fetchRebalanceStatus() async {
@@ -780,6 +915,19 @@ class _ModelPortfolioListPageState extends State<ModelPortfolioListPage>
           // "My Investments" banner to go to detailed holdings
           if (userEmail != null) _investedPortfoliosBanner(),
 
+          // Broker Holdings Cards (matching alphab2b BrokerHoldingsCards.js)
+          if (_portfolioHoldings.isNotEmpty || _holdingsLoading)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 16),
+              child: BrokerHoldingsCards(
+                connectedBrokers: _connectedBrokers,
+                selectedBroker: _selectedBroker,
+                onBrokerSelect: (broker) => setState(() => _selectedBroker = broker),
+                holdingsFromDB: _portfolioHoldings,
+                holdingsLoading: _holdingsLoading,
+              ),
+            ),
+
           if (subscribed.isEmpty)
             Padding(
               padding: const EdgeInsets.only(top: 40),
@@ -1254,13 +1402,31 @@ class _ModelPortfolioListPageState extends State<ModelPortfolioListPage>
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                Text(
-                                  portfolio.modelName,
-                                  style: const TextStyle(
-                                    fontSize: 17,
-                                    fontWeight: FontWeight.w700,
-                                    color: Colors.black87,
-                                  ),
+                                Row(
+                                  children: [
+                                    Expanded(
+                                      child: Text(
+                                        portfolio.modelName,
+                                        style: const TextStyle(
+                                          fontSize: 17,
+                                          fontWeight: FontWeight.w700,
+                                          color: Colors.black87,
+                                        ),
+                                      ),
+                                    ),
+                                    // Repair badge (matching alphab2b ModalPFCard.js)
+                                    if (_hasRepairTrades(portfolio))
+                                      Container(
+                                        margin: const EdgeInsets.only(left: 6),
+                                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                        decoration: BoxDecoration(
+                                          color: Colors.red.shade100,
+                                          borderRadius: BorderRadius.circular(4),
+                                        ),
+                                        child: Text("Repair",
+                                          style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: Colors.red.shade700)),
+                                      ),
+                                  ],
                                 ),
                                 if (portfolio.riskProfile != null && portfolio.riskProfile!.trim().isNotEmpty)
                                   Padding(
@@ -1286,16 +1452,44 @@ class _ModelPortfolioListPageState extends State<ModelPortfolioListPage>
 
                       const SizedBox(height: 14),
 
+                      // Performance metrics row (matching alphab2b ModalPFCard.js)
+                      if (portfolio.performanceData != null) ...[
+                        Row(
+                          children: [
+                            if (portfolio.performanceData!.cagr != null)
+                              _statChip(Icons.trending_up, "CAGR",
+                                  "${portfolio.performanceData!.cagr!.toStringAsFixed(1)}%",
+                                  portfolio.performanceData!.cagr! >= 0 ? Colors.green : Colors.red),
+                            if (portfolio.performanceData!.sharpeRatio != null) ...[
+                              const SizedBox(width: 8),
+                              _statChip(Icons.speed, "Sharpe",
+                                  portfolio.performanceData!.sharpeRatio!.toStringAsFixed(2),
+                                  portfolio.performanceData!.sharpeRatio! >= 1
+                                      ? Colors.green
+                                      : portfolio.performanceData!.sharpeRatio! >= 0.5
+                                          ? Colors.orange
+                                          : Colors.red),
+                            ],
+                            if (portfolio.volatilityLabel != null) ...[
+                              const SizedBox(width: 8),
+                              _statChip(Icons.show_chart, "Volatility",
+                                  portfolio.volatilityLabel!,
+                                  portfolio.volatilityLabel!.toLowerCase() == 'low'
+                                      ? Colors.green
+                                      : portfolio.volatilityLabel!.toLowerCase() == 'medium'
+                                          ? Colors.orange
+                                          : Colors.red),
+                            ],
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                      ],
+
                       // Stats row
                       Row(
                         children: [
                           _statChip(Icons.currency_rupee, "Min",
                               "\u20B9${_formatCurrency(portfolio.minInvestment)}", Colors.blue),
-                          if (portfolio.riskProfile != null && portfolio.riskProfile!.trim().isNotEmpty) ...[
-                            const SizedBox(width: 8),
-                            _statChip(Icons.shield_rounded, "Risk",
-                                portfolio.riskProfile!, riskColor),
-                          ],
                           if (portfolio.stocks.isNotEmpty) ...[
                             const SizedBox(width: 8),
                             _statChip(Icons.pie_chart_rounded, "Stocks",
