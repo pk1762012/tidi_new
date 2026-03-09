@@ -21,11 +21,20 @@ class BrokerSelectionPage extends StatefulWidget {
   /// When false (default), renders as a full page with CustomScaffold.
   final bool asModal;
 
+  /// When true, shows "Continue without connecting broker" option
+  /// matching AllBrokerList.js withoutBrokerModal behaviour.
+  final bool showContinueWithoutBroker;
+
+  /// Callback when user chooses to continue without broker (DummyBroker flow).
+  final VoidCallback? onContinueWithoutBroker;
+
   const BrokerSelectionPage({
     super.key,
     required this.email,
     this.portfolio,
     this.asModal = false,
+    this.showContinueWithoutBroker = true,
+    this.onContinueWithoutBroker,
   });
 
   /// Opens broker selection as a modal bottom sheet (matching rgx_app style).
@@ -57,6 +66,7 @@ class BrokerSelectionPage extends StatefulWidget {
 class _BrokerSelectionPageState extends State<BrokerSelectionPage> {
   List<BrokerConnection> connectedBrokers = [];
   bool loading = true;
+  bool _withoutBrokerLoading = false;
 
   @override
   void initState() {
@@ -178,6 +188,37 @@ class _BrokerSelectionPageState extends State<BrokerSelectionPage> {
     }
   }
 
+  /// Handle "Continue without connecting broker" — saves DummyBroker preference.
+  /// Matching AllBrokerList.js handleContinueWithoutBrokerSave logic.
+  Future<void> _handleContinueWithoutBroker() async {
+    setState(() => _withoutBrokerLoading = true);
+    try {
+      await AqApiService.instance.changeBrokerModelPortfolio(
+        email: widget.email,
+        broker: 'DummyBroker',
+      );
+      if (widget.onContinueWithoutBroker != null) {
+        widget.onContinueWithoutBroker!();
+      } else if (mounted) {
+        // Return a special "DummyBroker" connection to the caller
+        Navigator.pop(context, BrokerConnection(
+          id: '',
+          broker: 'DummyBroker',
+          clientCode: '',
+          status: 'connected',
+        ));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red.shade700),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _withoutBrokerLoading = false);
+    }
+  }
+
   void _openManageBrokers() async {
     await Navigator.push(
       context,
@@ -241,28 +282,24 @@ class _BrokerSelectionPageState extends State<BrokerSelectionPage> {
                     ),
                   ),
 
-                // SEBI disclaimer
-                Container(
-                  margin: const EdgeInsets.only(bottom: 16),
-                  padding: const EdgeInsets.all(14),
-                  decoration: BoxDecoration(
-                    color: Colors.blue.shade50,
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: Colors.blue.shade100),
+                // SEBI disclaimer (matching AllBrokerList.js BrokerDisclaimer)
+                _brokerDisclaimer(),
+
+                // Header text (matching AllBrokerList.js)
+                const Padding(
+                  padding: EdgeInsets.only(bottom: 6),
+                  child: Text(
+                    "Select your broker for connection",
+                    style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800, color: Colors.black87),
+                    textAlign: TextAlign.center,
                   ),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Icon(Icons.info_outline, size: 18, color: Colors.blue.shade700),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: Text(
-                          "Connect your trading account to execute model portfolio trades. "
-                          "Your credentials are encrypted and stored securely.",
-                          style: TextStyle(fontSize: 13, color: Colors.blue.shade700, height: 1.4),
-                        ),
-                      ),
-                    ],
+                ),
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 16),
+                  child: Text(
+                    "For seamless execution post your approval, please connect your broker",
+                    style: TextStyle(fontSize: 13, color: Colors.grey.shade600, height: 1.4),
+                    textAlign: TextAlign.center,
                   ),
                 ),
 
@@ -282,6 +319,12 @@ class _BrokerSelectionPageState extends State<BrokerSelectionPage> {
                     return _brokerCard(config, darkMode: false);
                   },
                 ),
+
+                // "Continue without connecting broker" button (matching AllBrokerList.js)
+                if (widget.showContinueWithoutBroker) ...[
+                  const SizedBox(height: 20),
+                  _continueWithoutBrokerButton(),
+                ],
               ],
             ),
     );
@@ -412,6 +455,12 @@ class _BrokerSelectionPageState extends State<BrokerSelectionPage> {
                           return _brokerCard(config, darkMode: true);
                         },
                       ),
+
+                      // "Continue without connecting broker" (matching AllBrokerList.js)
+                      if (widget.showContinueWithoutBroker) ...[
+                        const SizedBox(height: 24),
+                        _continueWithoutBrokerButton(darkMode: true),
+                      ],
                     ],
                   ),
                 ),
@@ -423,6 +472,135 @@ class _BrokerSelectionPageState extends State<BrokerSelectionPage> {
   // ---------------------------------------------------------------------------
   // Broker card widget
   // ---------------------------------------------------------------------------
+
+  /// SEBI Disclaimer matching AllBrokerList.js BrokerDisclaimer component.
+  Widget _brokerDisclaimer() {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 16),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [Colors.amber.shade50, Colors.yellow.shade50],
+        ),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: Colors.amber.shade200, width: 2),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.amber.withOpacity(0.08),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 32,
+            height: 32,
+            decoration: BoxDecoration(
+              color: Colors.amber.shade100,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: Colors.amber.shade200),
+            ),
+            child: Icon(Icons.warning_amber_rounded, size: 20, color: Colors.amber.shade700),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text("Important Disclaimer",
+                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: Colors.amber.shade900)),
+                const SizedBox(height: 6),
+                ...["Actions and decisions are solely yours",
+                    "RA does not control or influence your action",
+                    "RA isn't responsible for any outcome",
+                    "You act independently on the broker platform",
+                ].map((text) => Padding(
+                  padding: const EdgeInsets.only(bottom: 3),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text("• ", style: TextStyle(fontSize: 12, color: Colors.amber.shade800)),
+                      Expanded(
+                        child: Text(text,
+                          style: TextStyle(fontSize: 12, color: Colors.amber.shade800, height: 1.4)),
+                      ),
+                    ],
+                  ),
+                )),
+                const SizedBox(height: 8),
+                GestureDetector(
+                  onTap: () {
+                    // Open SEBI RA Regulations link
+                    // Note: url_launcher would be used in production
+                  },
+                  child: Row(
+                    children: [
+                      Icon(Icons.open_in_new, size: 14, color: Colors.amber.shade700),
+                      const SizedBox(width: 4),
+                      Text("View SEBI Research Analyst Regulations",
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: Colors.amber.shade700,
+                        )),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// "Continue without connecting broker" button matching AllBrokerList.js.
+  Widget _continueWithoutBrokerButton({bool darkMode = false}) {
+    return GestureDetector(
+      onTap: _withoutBrokerLoading ? null : _handleContinueWithoutBroker,
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 16),
+        decoration: BoxDecoration(
+          color: darkMode ? Colors.white.withOpacity(0.1) : Colors.white,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(
+            color: darkMode ? Colors.white.withOpacity(0.3) : Colors.grey.shade200,
+            width: 2,
+          ),
+          boxShadow: darkMode ? null : [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.04),
+              blurRadius: 8,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        child: Center(
+          child: _withoutBrokerLoading
+              ? SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: darkMode ? Colors.white : Colors.grey.shade700,
+                  ),
+                )
+              : Text(
+                  "Continue without connecting broker",
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    color: darkMode ? Colors.white : Colors.grey.shade700,
+                  ),
+                ),
+        ),
+      ),
+    );
+  }
 
   Widget _brokerCard(BrokerConfig config, {bool darkMode = false}) {
     final connection = _getConnection(config.name);

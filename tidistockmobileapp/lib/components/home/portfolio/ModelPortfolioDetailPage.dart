@@ -709,12 +709,18 @@ class _ModelPortfolioDetailPageState extends State<ModelPortfolioDetailPage>
                   onPressed: () async {
                     final broker = await _ensureBrokerConnected();
                     if (broker == null || !mounted) return;
+                    // Step 1: Show preference modal FIRST (matching prod RebalanceCard.js)
+                    final prefFlag = await _showRebalancePreferenceSheet();
+                    if (prefFlag == null || !mounted) return;
+                    // Step 2: Navigate to Current Holdings with preference
                     Navigator.push(
                       context,
                       MaterialPageRoute(
                         builder: (_) => CurrentHoldingsPreviewPage(
                           portfolio: portfolio,
                           email: userEmail!,
+                          rebalanceFlag: prefFlag,
+                          userBroker: broker.broker,
                         ),
                       ),
                     ).then((_) => _checkPendingRebalance());
@@ -883,7 +889,7 @@ class _ModelPortfolioDetailPageState extends State<ModelPortfolioDetailPage>
     }
 
     return GestureDetector(
-      onTap: () {
+      onTap: () async {
         if (state == RebalanceCardState.executed) return;
         if (state == RebalanceCardState.pendingVerification) {
           Navigator.push(
@@ -898,12 +904,15 @@ class _ModelPortfolioDetailPageState extends State<ModelPortfolioDetailPage>
             ),
           ).then((_) => _checkPendingRebalance());
         } else {
+          final prefFlag = await _showRebalancePreferenceSheet();
+          if (prefFlag == null || !mounted) return;
           Navigator.push(
             context,
             MaterialPageRoute(
               builder: (_) => CurrentHoldingsPreviewPage(
                 portfolio: portfolio,
                 email: userEmail!,
+                rebalanceFlag: prefFlag,
               ),
             ),
           ).then((_) => _checkPendingRebalance());
@@ -2496,6 +2505,112 @@ class _ModelPortfolioDetailPageState extends State<ModelPortfolioDetailPage>
   }
 
   // ---------------------------------------------------------------------------
+  // Rebalance Preference Sheet (Step 1 — matches prod RebalanceCard.js)
+  // ---------------------------------------------------------------------------
+
+  /// Show preference bottom sheet: full rebalance vs 2% threshold.
+  /// Returns 0 (full) or 1 (2% threshold), or null if dismissed.
+  Future<int?> _showRebalancePreferenceSheet() {
+    return showModalBottomSheet<int>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => Container(
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        ),
+        padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 36, height: 4,
+              decoration: BoxDecoration(
+                color: Colors.grey.shade300,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            const SizedBox(height: 20),
+            const Text("Rebalance Preference",
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
+            const SizedBox(height: 8),
+            Text("Choose how to handle small weight changes",
+              style: TextStyle(fontSize: 13, color: Colors.grey.shade600)),
+            const SizedBox(height: 20),
+            // Option 1: 2% threshold (matches prod option1 = flag 1)
+            _prefOption(
+              ctx: ctx,
+              title: "Ignore Small Changes (2%)",
+              subtitle: "Rebalance only those stocks where the change in allocation is more than 2% of your capital. Avoids small changes and reduces brokerage costs.",
+              icon: Icons.filter_alt_outlined,
+              color: Colors.orange,
+              value: 1,
+            ),
+            const SizedBox(height: 12),
+            // Option 2: Full rebalance (matches prod option2 = flag 0)
+            _prefOption(
+              ctx: ctx,
+              title: "Full Rebalance",
+              subtitle: "Rebalance the entire portfolio exactly as per the updated recommendation. Includes even small allocation changes.",
+              icon: Icons.sync,
+              color: Colors.blue,
+              value: 0,
+            ),
+            const SizedBox(height: 12),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _prefOption({
+    required BuildContext ctx,
+    required String title,
+    required String subtitle,
+    required IconData icon,
+    required Color color,
+    required int value,
+  }) {
+    return InkWell(
+      onTap: () => Navigator.pop(ctx, value),
+      borderRadius: BorderRadius.circular(14),
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.06),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: color.withValues(alpha: 0.2)),
+        ),
+        child: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: color.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Icon(icon, color: color, size: 22),
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(title, style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: color)),
+                  const SizedBox(height: 2),
+                  Text(subtitle, style: TextStyle(fontSize: 12, color: Colors.grey.shade600)),
+                ],
+              ),
+            ),
+            Icon(Icons.arrow_forward_ios, size: 16, color: color.withValues(alpha: 0.5)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ---------------------------------------------------------------------------
   // Broker Connection Gate
   // ---------------------------------------------------------------------------
 
@@ -2599,12 +2714,16 @@ class _ModelPortfolioDetailPageState extends State<ModelPortfolioDetailPage>
         onPressed = () async {
           final broker = await _ensureBrokerConnected();
           if (broker == null || !mounted) return;
+          final prefFlag = await _showRebalancePreferenceSheet();
+          if (prefFlag == null || !mounted) return;
           Navigator.push(
             context,
             MaterialPageRoute(
               builder: (_) => CurrentHoldingsPreviewPage(
                 portfolio: portfolio,
                 email: userEmail!,
+                rebalanceFlag: prefFlag,
+                userBroker: broker.broker,
               ),
             ),
           ).then((_) => _checkPendingRebalance());
@@ -2616,12 +2735,16 @@ class _ModelPortfolioDetailPageState extends State<ModelPortfolioDetailPage>
         onPressed = () async {
           final broker = await _ensureBrokerConnected();
           if (broker == null || !mounted) return;
+          final prefFlag = await _showRebalancePreferenceSheet();
+          if (prefFlag == null || !mounted) return;
           Navigator.push(
             context,
             MaterialPageRoute(
               builder: (_) => CurrentHoldingsPreviewPage(
                 portfolio: portfolio,
                 email: userEmail!,
+                rebalanceFlag: prefFlag,
+                userBroker: broker.broker,
               ),
             ),
           ).then((_) => _checkPendingRebalance());
@@ -2650,12 +2773,16 @@ class _ModelPortfolioDetailPageState extends State<ModelPortfolioDetailPage>
         onPressed = () async {
           final broker = await _ensureBrokerConnected();
           if (broker == null || !mounted) return;
+          final prefFlag = await _showRebalancePreferenceSheet();
+          if (prefFlag == null || !mounted) return;
           Navigator.push(
             context,
             MaterialPageRoute(
               builder: (_) => CurrentHoldingsPreviewPage(
                 portfolio: portfolio,
                 email: userEmail!,
+                rebalanceFlag: prefFlag,
+                userBroker: broker.broker,
               ),
             ),
           ).then((_) => _checkPendingRebalance());

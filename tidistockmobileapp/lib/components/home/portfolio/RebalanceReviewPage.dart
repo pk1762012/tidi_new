@@ -17,10 +17,16 @@ class RebalanceReviewPage extends StatefulWidget {
   final ModelPortfolio portfolio;
   final String email;
 
+  /// When non-null, skip the preference modal and use this flag directly.
+  /// 0 = full rebalance, 1 = 2% threshold.
+  /// Passed from CurrentHoldingsPreviewPage (matching prod flow order).
+  final int? rebalanceFlag;
+
   const RebalanceReviewPage({
     super.key,
     required this.portfolio,
     required this.email,
+    this.rebalanceFlag,
   });
 
   @override
@@ -104,8 +110,11 @@ class _RebalanceReviewPageState extends State<RebalanceReviewPage> {
     // Pre-fetch connected broker for credential passthrough
     await _prefetchBroker();
 
-    // Show 2% threshold preference modal (matching alphab2b RebalanceCard.js)
-    if (mounted && !_alreadyExecuted) {
+    // Use pre-selected preference if provided (from CurrentHoldingsPreviewPage flow),
+    // otherwise show the preference modal (matching prod RebalanceCard.js step order).
+    if (widget.rebalanceFlag != null) {
+      _rebalanceFlag = widget.rebalanceFlag!;
+    } else if (mounted && !_alreadyExecuted) {
       await _showRebalancePreferenceModal();
     }
 

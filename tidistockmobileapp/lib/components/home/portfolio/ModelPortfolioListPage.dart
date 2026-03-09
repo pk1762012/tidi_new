@@ -75,6 +75,55 @@ class _ModelPortfolioListPageState extends State<ModelPortfolioListPage>
 
   bool get _hasSubscribed => _subscribedPortfolios.isNotEmpty;
 
+  /// Rebalance preference bottom sheet (matching prod RebalanceCard.js Step 1).
+  Widget _rebalancePrefSheet(BuildContext ctx) {
+    return Container(
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(width: 36, height: 4, decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(2))),
+          const SizedBox(height: 20),
+          const Text("Rebalance Preference", style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
+          const SizedBox(height: 8),
+          Text("Choose how to handle small weight changes", style: TextStyle(fontSize: 13, color: Colors.grey.shade600)),
+          const SizedBox(height: 20),
+          _prefOptionTile(ctx: ctx, title: "Ignore Small Changes (2%)", subtitle: "Skip trades where weight change is less than 2%", icon: Icons.filter_alt_outlined, color: Colors.orange, value: 1),
+          const SizedBox(height: 12),
+          _prefOptionTile(ctx: ctx, title: "Full Rebalance", subtitle: "Execute all weight changes regardless of size", icon: Icons.sync, color: Colors.blue, value: 0),
+          const SizedBox(height: 12),
+        ],
+      ),
+    );
+  }
+
+  Widget _prefOptionTile({required BuildContext ctx, required String title, required String subtitle, required IconData icon, required Color color, required int value}) {
+    return InkWell(
+      onTap: () => Navigator.pop(ctx, value),
+      borderRadius: BorderRadius.circular(14),
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(color: color.withValues(alpha: 0.06), borderRadius: BorderRadius.circular(14), border: Border.all(color: color.withValues(alpha: 0.2))),
+        child: Row(
+          children: [
+            Container(padding: const EdgeInsets.all(10), decoration: BoxDecoration(color: color.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(10)), child: Icon(icon, color: color, size: 22)),
+            const SizedBox(width: 14),
+            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(title, style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: color)),
+              const SizedBox(height: 2),
+              Text(subtitle, style: TextStyle(fontSize: 12, color: Colors.grey.shade600)),
+            ])),
+            Icon(Icons.arrow_forward_ios, size: 16, color: color.withValues(alpha: 0.5)),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   void initState() {
     super.initState();
@@ -1266,12 +1315,22 @@ class _ModelPortfolioListPageState extends State<ModelPortfolioListPage>
                   ),
                 );
               } else {
+                // Step 1: Show preference sheet (matching prod)
+                final prefFlag = await showModalBottomSheet<int>(
+                  context: context,
+                  isScrollControlled: true,
+                  backgroundColor: Colors.transparent,
+                  builder: (ctx) => _rebalancePrefSheet(ctx),
+                );
+                if (prefFlag == null || !mounted) return;
+                // Step 2: Navigate to current holdings
                 await Navigator.push(
                   context,
                   MaterialPageRoute(
                     builder: (_) => CurrentHoldingsPreviewPage(
                       portfolio: portfolio,
                       email: userEmail!,
+                      rebalanceFlag: prefFlag,
                     ),
                   ),
                 );
@@ -1320,9 +1379,43 @@ class _ModelPortfolioListPageState extends State<ModelPortfolioListPage>
     }
   }
 
+  /// Get holdings for a specific portfolio model from the aggregated holdings.
+  /// Matching ModalPFCard.js per-card investment calculation logic.
+  Map<String, double> _getPortfolioInvestmentData(ModelPortfolio portfolio) {
+    final holdings = _portfolioHoldings
+        .where((h) => h['modelName'] == portfolio.modelName)
+        .toList();
+
+    if (holdings.isEmpty) return {};
+
+    double totalInvested = 0;
+    double totalCurrent = 0;
+
+    for (final h in holdings) {
+      final avgPrice = (h['avgPrice'] as num?)?.toDouble() ?? 0;
+      final qty = (h['quantity'] as num?)?.toDouble() ?? 0;
+      totalInvested += avgPrice * qty;
+      // Use LTP if available, fallback to avgPrice
+      final ltp = (h['ltp'] as num?)?.toDouble() ?? 0;
+      totalCurrent += (ltp > 0 ? ltp : avgPrice) * qty;
+    }
+
+    final returns = totalCurrent - totalInvested;
+    final returnsPct = totalInvested > 0 ? (returns / totalInvested) * 100 : 0.0;
+
+    return {
+      'totalInvested': totalInvested,
+      'currentValue': totalCurrent,
+      'returns': returns,
+      'returnsPct': returnsPct,
+    };
+  }
+
   Widget _portfolioCard(ModelPortfolio portfolio, {bool showSubscribedBadge = false}) {
     final isSubscribed = userEmail != null && portfolio.isSubscribedBy(userEmail!);
     final riskColor = _riskColor(portfolio.riskProfile);
+    // Get per-portfolio investment data (matching ModalPFCard.js)
+    final investData = showSubscribedBadge ? _getPortfolioInvestmentData(portfolio) : <String, double>{};
 
     return GestureDetector(
       onTap: () async {
@@ -1452,6 +1545,92 @@ class _ModelPortfolioListPageState extends State<ModelPortfolioListPage>
 
                       const SizedBox(height: 14),
 
+                      // Investment summary row for subscribed portfolios
+                      // Matching ModalPFCard.js: Total Invested, Current Value, Returns
+                      if (showSubscribedBadge && investData.isNotEmpty) ...[
+                        Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: Colors.grey.shade50,
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: Colors.grey.shade200),
+                          ),
+                          child: Column(
+                            children: [
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: _investmentMetric(
+                                      "Total Invested",
+                                      "\u20B9${_formatCurrencyValue(investData['totalInvested'] ?? 0)}",
+                                      Colors.grey.shade700,
+                                    ),
+                                  ),
+                                  Container(width: 1, height: 36, color: Colors.grey.shade200),
+                                  Expanded(
+                                    child: _investmentMetric(
+                                      "Current Value",
+                                      investData['currentValue'] == investData['totalInvested']
+                                          ? "Fetching..."
+                                          : "\u20B9${_formatCurrencyValue(investData['currentValue'] ?? 0)}",
+                                      Colors.grey.shade700,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 8),
+                              Container(
+                                width: double.infinity,
+                                padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
+                                decoration: BoxDecoration(
+                                  color: (investData['returns'] ?? 0) >= 0
+                                      ? Colors.green.withOpacity(0.08)
+                                      : Colors.red.withOpacity(0.08),
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: Row(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Icon(
+                                      (investData['returns'] ?? 0) >= 0
+                                          ? Icons.trending_up
+                                          : Icons.trending_down,
+                                      size: 16,
+                                      color: (investData['returns'] ?? 0) >= 0
+                                          ? Colors.green.shade700
+                                          : Colors.red.shade700,
+                                    ),
+                                    const SizedBox(width: 6),
+                                    Text(
+                                      "${(investData['returns'] ?? 0) >= 0 ? '+' : ''}\u20B9${_formatCurrencyValue((investData['returns'] ?? 0).abs())}",
+                                      style: TextStyle(
+                                        fontSize: 14,
+                                        fontWeight: FontWeight.w700,
+                                        color: (investData['returns'] ?? 0) >= 0
+                                            ? Colors.green.shade700
+                                            : Colors.red.shade700,
+                                      ),
+                                    ),
+                                    const SizedBox(width: 6),
+                                    Text(
+                                      "(${(investData['returnsPct'] ?? 0).toStringAsFixed(2)}%)",
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.w600,
+                                        color: (investData['returns'] ?? 0) >= 0
+                                            ? Colors.green.shade600
+                                            : Colors.red.shade600,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                      ],
+
                       // Performance metrics row (matching alphab2b ModalPFCard.js)
                       if (portfolio.performanceData != null) ...[
                         Row(
@@ -1576,6 +1755,19 @@ class _ModelPortfolioListPageState extends State<ModelPortfolioListPage>
     );
   }
 
+  Widget _investmentMetric(String label, String value, Color color) {
+    return Column(
+      children: [
+        Text(label,
+          style: TextStyle(fontSize: 11, color: Colors.grey.shade500, fontWeight: FontWeight.w500)),
+        const SizedBox(height: 4),
+        Text(value,
+          style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: color),
+          textAlign: TextAlign.center),
+      ],
+    );
+  }
+
   String _formatCurrency(int amount) {
     if (amount >= 100000) {
       return "${(amount / 100000).toStringAsFixed(1)}L";
@@ -1583,5 +1775,17 @@ class _ModelPortfolioListPageState extends State<ModelPortfolioListPage>
       return "${(amount / 1000).toStringAsFixed(0)}K";
     }
     return "$amount";
+  }
+
+  /// Format a double value as Indian currency (matching ModalPFCard.js formatCurrency).
+  String _formatCurrencyValue(double amount) {
+    if (amount.abs() >= 10000000) {
+      return "${(amount / 10000000).toStringAsFixed(2)}Cr";
+    } else if (amount.abs() >= 100000) {
+      return "${(amount / 100000).toStringAsFixed(2)}L";
+    } else if (amount.abs() >= 1000) {
+      return "${(amount / 1000).toStringAsFixed(1)}K";
+    }
+    return amount.toStringAsFixed(2);
   }
 }

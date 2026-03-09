@@ -1249,6 +1249,73 @@ class AqApiService {
   }
 
   // ---------------------------------------------------------------------------
+  // MPStatusModal helpers (matching prod MPStatusModal.js)
+  // ---------------------------------------------------------------------------
+
+  /// Update user portfolio latest holdings (edit mode save).
+  /// Matches prod MPStatusModal.js updatePortfolio().
+  Future<http.Response> updateUserPortfolioLatest({
+    required String portfolioDocId,
+    required String modelName,
+    required String email,
+    required List<Map<String, dynamic>> orderResults,
+    required String userBroker,
+  }) async {
+    return http.put(
+      Uri.parse('${ccxtUrl}rebalance/update/user-portfolio/latest'),
+      headers: _headers(),
+      body: jsonEncode({
+        'data': {
+          '_id': {'\$oid': portfolioDocId},
+          'model_name': modelName,
+          'user_email': email,
+          'user_net_pf_model': {
+            'order_results': orderResults,
+            'user_broker': userBroker,
+          },
+        },
+      }),
+    );
+  }
+
+  /// Confirm manually placed orders after failed executions.
+  /// Matches prod MPStatusModal.js confirmManualOrders().
+  Future<http.Response> confirmManualOrders({
+    required String email,
+    required String portfolioDocId,
+    required List<Map<String, dynamic>> updatedPortfolio,
+    required String advisor,
+    required String modelName,
+    required String userBroker,
+    bool allOrdersComplete = false,
+  }) async {
+    return http.put(
+      Uri.parse('${ccxtUrl}rebalance/update/user-portfolio/latest/keys'),
+      headers: _headers(),
+      body: jsonEncode({
+        'userEmail': email,
+        'modelObjectId': portfolioDocId,
+        'modelUserObjectId': portfolioDocId,
+        'updatedPortfolio': updatedPortfolio,
+        'advisor': advisor,
+        'modelName': modelName,
+        'userBroker': userBroker,
+        if (allOrdersComplete) 'allOrdersComplete': true,
+      }),
+    );
+  }
+
+  /// Search for stock symbols (autocomplete for add-stock in edit mode).
+  /// Matches prod MPStatusModal.js symbol search.
+  Future<http.Response> searchSymbol(String query) async {
+    return http.post(
+      Uri.parse('${ccxtUrl}angelone/get-symbol-name-exchange'),
+      headers: _headers(),
+      body: jsonEncode({'symbol': query}),
+    );
+  }
+
+  // ---------------------------------------------------------------------------
   // Angel One Surveillance Check (matching RGX ReviewTradeModal.js)
   // ---------------------------------------------------------------------------
 
@@ -1394,16 +1461,6 @@ class AqApiService {
       headers: _headers(),
       body: jsonEncode(body),
     ).timeout(const Duration(seconds: 15));
-  }
-
-  /// Search for stock symbols (for adding stocks in edit mode).
-  /// POST /angelone/get-symbol-name-exchange
-  Future<http.Response> searchSymbol(String query) async {
-    return http.post(
-      Uri.parse('${ccxtUrl}angelone/get-symbol-name-exchange'),
-      headers: _headers(),
-      body: jsonEncode({'symbol': query}),
-    ).timeout(const Duration(seconds: 10));
   }
 
   /// Fetch repair trades for model portfolios.
