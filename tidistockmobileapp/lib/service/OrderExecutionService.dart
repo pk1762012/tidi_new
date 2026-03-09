@@ -126,7 +126,8 @@ class OrderExecutionService {
     required String advisor,
     required void Function(int completed, int total, OrderResult latest) onOrderUpdate,
   }) async {
-    // 1. Get user's connected broker credentials
+    // 1. Get user's connected broker info
+    AqApiService.instance.invalidateUserCache(); // ensure fresh credentials
     final brokerResp = await AqApiService.instance.getConnectedBrokers(email);
     if (brokerResp.statusCode != 200) {
       throw Exception('Failed to fetch broker credentials');
@@ -154,21 +155,52 @@ class OrderExecutionService {
       throw Exception('No connected broker found. Please reconnect your broker.');
     }
 
-    // Pre-flight session validation (matching RGX validateBrokerSession)
-    await _validateBrokerSession(selected);
-
     debugPrint('[OrderExecution] Selected broker: ${selected.broker} (primary=${selected.isPrimary})');
 
+    // Fetch full user details to get credentials (matching RGX flow).
+    // The GET /api/user/brokers endpoint intentionally strips credentials,
+    // so we use GET /api/user/getUser/:email (like prod web app) to obtain
+    // jwtToken, apiKey, secretKey, etc.
+    final userDetails = await AqApiService.instance.getUserDetails(email);
+    BrokerConnection credBroker = selected;
+    if (userDetails != null) {
+      final connectedBrokers = userDetails['connected_brokers'] as List<dynamic>? ?? [];
+      final match = connectedBrokers.cast<Map<String, dynamic>>().where(
+        (b) => (b['broker'] as String? ?? '').toLowerCase() == selected.broker.toLowerCase(),
+      );
+      if (match.isNotEmpty) {
+        credBroker = BrokerConnection.fromJson(match.first);
+      } else {
+        // Fallback: use legacy top-level credentials from user document
+        credBroker = BrokerConnection(
+          broker: selected.broker,
+          clientCode: userDetails['clientCode'] as String? ?? selected.clientCode,
+          apiKey: userDetails['apiKey'] as String? ?? selected.apiKey,
+          secretKey: userDetails['secretKey'] as String? ?? selected.secretKey,
+          jwtToken: userDetails['jwtToken'] as String? ?? selected.jwtToken,
+          viewToken: userDetails['viewToken'] as String? ?? selected.viewToken,
+          sid: userDetails['sid'] as String? ?? selected.sid,
+          serverId: userDetails['serverId'] as String? ?? selected.serverId,
+          status: selected.status,
+          tokenExpire: selected.tokenExpire,
+          isPrimary: selected.isPrimary,
+        );
+      }
+    }
+
+    // Pre-flight session validation (matching RGX validateBrokerSession)
+    await _validateBrokerSession(credBroker);
+
     // Normalize broker name for consistent API calls
-    final brokerName = normalizeBrokerName(selected.broker);
+    final brokerName = normalizeBrokerName(credBroker.broker);
     _lastUsedBrokerName = brokerName;
-    final apiKey = selected.apiKey ?? '';
-    final jwtToken = selected.jwtToken ?? '';
-    final clientCode = selected.clientCode;
-    final secretKey = selected.secretKey;
-    final viewToken = selected.viewToken;
-    final sid = selected.sid;
-    final serverId = selected.serverId;
+    final apiKey = credBroker.apiKey ?? '';
+    final jwtToken = credBroker.jwtToken ?? '';
+    final clientCode = credBroker.clientCode;
+    final secretKey = credBroker.secretKey;
+    final viewToken = credBroker.viewToken;
+    final sid = credBroker.sid;
+    final serverId = credBroker.serverId;
 
     // Generate unique_id matching RGX pattern
     final uniqueId = '${modelId}_${DateTime.now().millisecondsSinceEpoch}_$email';

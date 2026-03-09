@@ -242,12 +242,14 @@ class _ExecutionStatusPageState extends State<ExecutionStatusPage> {
     } catch (e) {
       final errStr = e.toString();
       final brokerErr = errStr.contains('No connected broker') ||
+          errStr.contains('No credentials found') ||
           errStr.contains('broker credentials') ||
           errStr.contains('session expired') ||
           errStr.contains('token expired') ||
           errStr.contains('Invalid token') ||
           errStr.contains('authentication') ||
           errStr.contains('unauthorized') ||
+          errStr.contains('Please reconnect') ||
           errStr.contains('401');
 
       // Parse order errors from exception if available
