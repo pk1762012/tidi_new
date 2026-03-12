@@ -756,6 +756,39 @@ class _RebalanceReviewPageState extends State<RebalanceReviewPage> {
       return;
     }
 
+    // --- CA Pending repair: verify shares credited at broker ---
+    // (matching prod UpdateRebalanceModal.js checkCaPendingRepair)
+    final caPendingOrders = orders.where((o) => o['isCaPending'] == true).toList();
+    if (caPendingOrders.isNotEmpty && connectedBroker != null) {
+      try {
+        final symbols = caPendingOrders.map((o) => <String, String>{
+          'symbol': (o['symbol'] ?? '').toString(),
+          'exchange': (o['exchange'] ?? 'NSE').toString(),
+        }).toList();
+
+        final holdingsResp = await AqApiService.instance.checkBrokerHoldings(
+          userEmail: widget.email,
+          userBroker: connectedBroker.broker,
+          symbols: symbols,
+          apiKey: connectedBroker.apiKey,
+          secretKey: connectedBroker.secretKey,
+          accessToken: connectedBroker.jwtToken,
+          clientCode: connectedBroker.clientCode,
+        );
+
+        if (holdingsResp.statusCode == 200 && mounted) {
+          final data = jsonDecode(holdingsResp.body);
+          final shortfall = data['shortfall'] ?? data['missing'] ?? [];
+          if (shortfall is List && shortfall.isNotEmpty) {
+            final proceed = await _showCaPendingShortfallDialog(shortfall);
+            if (proceed != true || !mounted) return;
+          }
+        }
+      } catch (e) {
+        debugPrint('[RebalanceReview] checkBrokerHoldings error: $e');
+      }
+    }
+
     // --- Holdings validation: filter sell orders with 0 broker holdings ---
     final hasSellOrders = orders.any((o) => o['transactionType'] == 'SELL');
     if (hasSellOrders) {
@@ -845,7 +878,6 @@ class _RebalanceReviewPageState extends State<RebalanceReviewPage> {
           if (freshBroker != null) effectiveBroker = freshBroker;
         } catch (e) {
           debugPrint('[RebalanceReview] zerodhaSaveDdpiStatus error: $e');
-          // Fall through with existing broker data — don't block the user.
         }
       }
 
@@ -854,16 +886,26 @@ class _RebalanceReviewPageState extends State<RebalanceReviewPage> {
           (effectiveBroker.ddpiStatus != null &&
               ['physical', 'ddpi'].contains(effectiveBroker.ddpiStatus!.toLowerCase()));
 
-      // TPIN authorization is valid for the entire trading day.
-      // We trust the fresh is_authorized_for_sell returned by the server
-      // after refreshing DDPI status above.
-      final bool canSell;
+      // Determine if selling is authorized — matching prod UpdateRebalanceModal.js
+      // per-broker EDIS/DDPI checks.
+      bool canSell = false;
+
       if (brokerLower == 'zerodha') {
+        // Zerodha: permanent DDPI or session-level TPIN authorization
         canSell = hasPermanentDdpi || effectiveBroker.isAuthorizedForSell;
+      } else if (brokerLower == 'dhan') {
+        // Dhan: live EDIS status check (matching prod dhanEdisStatus check)
+        canSell = await _checkDhanEdisStatus(effectiveBroker);
+      } else if (brokerLower == 'angel one' || brokerLower == 'angelone') {
+        // Angel One: ddpi_enabled or is_authorized_for_sell
+        canSell = effectiveBroker.ddpiEnabled || effectiveBroker.isAuthorizedForSell;
+      } else if (brokerLower == 'fyers') {
+        // Fyers: is_authorized_for_sell
+        canSell = effectiveBroker.isAuthorizedForSell;
       } else {
-        // All other brokers always route through DdpiAuthPage which handles
-        // broker-specific EDIS / TPIN flows (Angel One, Dhan, Fyers, etc.)
-        canSell = false;
+        // Other brokers (AliceBlue, IIFL, ICICI, Upstox, Kotak, HDFC, Motilal, Groww):
+        // is_authorized_for_sell
+        canSell = effectiveBroker.isAuthorizedForSell;
       }
 
       if (!canSell) {
@@ -880,6 +922,7 @@ class _RebalanceReviewPageState extends State<RebalanceReviewPage> {
             builder: (_) => DdpiAuthPage(
               broker: effectiveBroker,
               sellOrders: sellOrderDetails,
+              email: widget.email,
             ),
           ),
         );
@@ -985,6 +1028,88 @@ class _RebalanceReviewPageState extends State<RebalanceReviewPage> {
         ],
       ),
     );
+  }
+
+  /// Show warning when CA pending stocks have a shortfall at broker.
+  /// (matching prod UpdateRebalanceModal.js CA pending repair warning modal)
+  Future<bool?> _showCaPendingShortfallDialog(List<dynamic> shortfall) {
+    return showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Row(
+          children: [
+            Icon(Icons.warning_amber_rounded, color: Colors.orange.shade700, size: 24),
+            const SizedBox(width: 8),
+            const Expanded(
+              child: Text("Shares Not Yet Credited", style: TextStyle(fontSize: 17)),
+            ),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              "Some stocks from a recent corporate action have not been "
+              "credited to your broker yet. Proceeding may result in rejected orders.",
+              style: TextStyle(fontSize: 13, color: Colors.grey.shade700, height: 1.4),
+            ),
+            const SizedBox(height: 12),
+            ...shortfall.take(5).map((s) => Padding(
+              padding: const EdgeInsets.only(bottom: 4),
+              child: Text(
+                "\u2022 ${s is Map ? (s['symbol'] ?? s) : s}",
+                style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Colors.orange.shade800),
+              ),
+            )),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text("Cancel", style: TextStyle(color: Colors.grey.shade600)),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.orange.shade700,
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            ),
+            child: const Text("Proceed Anyway"),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Live Dhan EDIS status check — matching prod UpdateRebalanceModal.js:
+  ///   if (!dhanEdisStatus?.data?.length || dhanEdisStatus?.data?.some(h => h.edis === false))
+  /// Returns true if all holdings are EDIS-authorized.
+  Future<bool> _checkDhanEdisStatus(BrokerConnection broker) async {
+    try {
+      final clientId = broker.clientCode ?? '';
+      final accessToken = broker.jwtToken ?? '';
+      if (clientId.isEmpty || accessToken.isEmpty) return false;
+
+      final resp = await AqApiService.instance.getDhanEdisStatus(
+        clientId: clientId,
+        accessToken: accessToken,
+      );
+      if (resp.statusCode == 200) {
+        final data = jsonDecode(resp.body);
+        final holdings = data['data'];
+        if (holdings == null || holdings is! List || holdings.isEmpty) {
+          return false;
+        }
+        // If ANY holding has edis === false, authorization is needed
+        return !holdings.any((h) => h is Map && h['edis'] == false);
+      }
+    } catch (e) {
+      debugPrint('[RebalanceReview] Dhan EDIS status check error: $e');
+    }
+    return false;
   }
 
   /// Parse broker holdings response into a symbol → quantity map.

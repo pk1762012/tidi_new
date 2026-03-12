@@ -154,8 +154,16 @@ class _MPStatusModalState extends State<MPStatusModal> {
   }
 
   bool _isStockFailed(Map<String, dynamic> stock) {
-    final status = (stock['orderStatus'] ?? stock['rebalance_status'] ?? '').toString().toLowerCase();
-    return status == 'rejected' || status == 'cancelled' || status == 'failed';
+    final orderStatus = (stock['orderStatus'] ?? '').toString().toLowerCase();
+    final rebalanceStatus = (stock['rebalance_status'] ?? '').toString().toLowerCase();
+    // Match prod MPStatusModal.js: check both orderStatus and rebalance_status
+    // for rejected, cancelled, failed, AND failure
+    return orderStatus == 'rejected' ||
+        orderStatus == 'cancelled' ||
+        orderStatus == 'failed' ||
+        orderStatus == 'failure' ||
+        rebalanceStatus == 'failed' ||
+        rebalanceStatus == 'failure';
   }
 
   List<Map<String, dynamic>> get _successfulStocks =>

@@ -104,30 +104,30 @@ class ApiService {
   }
 
   Future<http.Response> loginUser(String phoneNumber) async {
-    return http.get(
+    return _resilientHttp(() => http.get(
         Uri.parse(apiUrl + 'api/user/login/$phoneNumber'),
         headers: {
           'Content-Type': 'application/json',
         }
-    ).timeout(const Duration(seconds: 15));
+    ).timeout(const Duration(seconds: 15)));
   }
 
   Future<http.Response> verifyOtp(String phoneNumber, String otp) async {
-    return http.get(
+    return _resilientHttp(() => http.get(
         Uri.parse(apiUrl + 'api/user/verify/$phoneNumber/$otp'),
         headers: {
           'Content-Type': 'application/json',
         }
-    ).timeout(const Duration(seconds: 15));
+    ).timeout(const Duration(seconds: 15)));
   }
 
   Future<http.Response> validateUser(String phoneNumber) async {
-    return http.get(
+    return _resilientHttp(() => http.get(
         Uri.parse(apiUrl + 'api/user/validate/$phoneNumber'),
         headers: {
           'Content-Type': 'application/json',
         }
-    ).timeout(const Duration(seconds: 15));
+    ).timeout(const Duration(seconds: 15)));
   }
 
   Future<bool> isAuthenticated() async {

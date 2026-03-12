@@ -18,11 +18,15 @@ class DdpiAuthPage extends StatefulWidget {
   final BrokerConnection broker;
   /// Sell order symbols with ISINs/exchanges for EDIS flows that need them.
   final List<Map<String, dynamic>> sellOrders;
+  /// User email — needed to persist EDIS status via PUT /api/update-edis-status
+  /// (matching prod DdpiModal.js).
+  final String? email;
 
   const DdpiAuthPage({
     super.key,
     required this.broker,
     this.sellOrders = const [],
+    this.email,
   });
 
   @override
@@ -386,9 +390,38 @@ class _DdpiAuthPageState extends State<DdpiAuthPage> {
     debugPrint('[EdisAuth:$_brokerName] Authorization complete');
     setState(() => _state = 'success');
 
+    // Persist is_authorized_for_sell in DB (matching prod DdpiModal.js handleProceed)
+    _persistEdisStatus();
+
     Future.delayed(const Duration(milliseconds: 500), () {
       if (mounted) Navigator.pop(context, true);
     });
+  }
+
+  /// Persist EDIS authorization status to DB matching prod DdpiModal.js:
+  ///   PUT /api/update-edis-status { uid, is_authorized_for_sell: true, user_broker }
+  Future<void> _persistEdisStatus() async {
+    if (widget.email == null || widget.email!.isEmpty) {
+      debugPrint('[EdisAuth:$_brokerName] No email provided, skipping EDIS status update');
+      return;
+    }
+    try {
+      final userDetails = await AqApiService.instance.getUserDetails(widget.email!);
+      final uid = userDetails?['_id']?.toString() ?? '';
+      if (uid.isEmpty) {
+        debugPrint('[EdisAuth:$_brokerName] No user UID found, skipping EDIS status update');
+        return;
+      }
+
+      await AqApiService.instance.updateEdisStatus(
+        uid: uid,
+        isAuthorizedForSell: true,
+        userBroker: _brokerName,
+      );
+      debugPrint('[EdisAuth:$_brokerName] EDIS status persisted: is_authorized_for_sell=true');
+    } catch (e) {
+      debugPrint('[EdisAuth:$_brokerName] Failed to persist EDIS status: $e');
+    }
   }
 
   // ---------------------------------------------------------------------------

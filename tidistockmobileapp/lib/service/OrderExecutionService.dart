@@ -301,6 +301,11 @@ class OrderExecutionService {
       final data = jsonDecode(response.body);
       debugPrint('[OrderExecution] process-trade response keys: ${data is Map ? data.keys.toList() : 'not-map'}');
 
+      // Session expired check (matching prod UpdateRebalanceModal.js)
+      if (data is Map && data['sessionExpired'] == true) {
+        throw Exception('session expired for $brokerName. Please reconnect your broker.');
+      }
+
       // Check nested data wrapper (API may return { data: { tradeDetails: [...] } })
       final innerData = data is Map ? data['data'] : null;
       final tradeDetails = data['tradeDetails'] ??

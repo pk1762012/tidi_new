@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:tidistockmobileapp/models/broker_connection.dart';
 import 'package:tidistockmobileapp/models/model_portfolio.dart';
 import 'package:tidistockmobileapp/models/order_result.dart';
 import 'package:tidistockmobileapp/service/AqApiService.dart';
@@ -16,6 +17,7 @@ import 'package:webview_flutter/webview_flutter.dart';
 import 'BrokerAuthPage.dart';
 import 'BrokerCredentialPage.dart';
 import 'BrokerSelectionPage.dart';
+import 'DdpiAuthPage.dart';
 import 'MPStatusModal.dart';
 import 'PendingOrdersPage.dart';
 import 'PortfolioHoldingsPage.dart';
@@ -290,9 +292,72 @@ class _ExecutionStatusPageState extends State<ExecutionStatusPage> {
         _state = 'done';
         results = orderResults;
       });
+
+      // Post-execution DDPI/EDIS check for rejected sell orders
+      // (matching prod UpdateRebalanceModal.js rejectedSellCount check)
+      await _checkRejectedSellsForEdis(orderResults);
+
       if (_hasPendingOrPartialOrders || _failedCount > 0) {
         _scheduleStatusPoll();
       }
+    }
+  }
+
+  /// Post-execution: if sell orders were rejected, auto-trigger DDPI/EDIS auth
+  /// (matching prod UpdateRebalanceModal.js: if rejectedSellCount >= 1 → show TPIN modal)
+  Future<void> _checkRejectedSellsForEdis(List<OrderResult> orderResults) async {
+    final rejectedSells = orderResults.where((r) =>
+        r.isFailed &&
+        r.transactionType.toUpperCase() == 'SELL').toList();
+
+    if (rejectedSells.isEmpty) return;
+
+    // Check if there are also buy orders (mixed) or all sells
+    final hasSells = widget.orders.any((o) =>
+        (o['transactionType'] ?? '').toString().toUpperCase() == 'SELL');
+    if (!hasSells) return;
+
+    debugPrint('[ExecutionStatus] ${rejectedSells.length} sell order(s) rejected — checking EDIS/DDPI');
+
+    // Get the connected broker info
+    final brokerName = OrderExecutionService.instance.lastUsedBrokerName;
+    if (brokerName.isEmpty || brokerName == 'DummyBroker') return;
+
+    try {
+      final brokerResp = await AqApiService.instance.getConnectedBrokers(widget.email);
+      if (brokerResp.statusCode != 200 || !mounted) return;
+
+      final brokerData = jsonDecode(brokerResp.body);
+      final connections = BrokerConnection.parseApiResponse(brokerData);
+      final broker = connections.where((b) =>
+          b.broker.toLowerCase() == brokerName.toLowerCase() &&
+          b.isEffectivelyConnected).firstOrNull;
+
+      if (broker == null || !mounted) return;
+
+      // Collect sell order details for EDIS flow
+      final sellOrderDetails = widget.orders
+          .where((o) => (o['transactionType'] ?? '').toString().toUpperCase() == 'SELL')
+          .toList();
+
+      final edisResult = await Navigator.push<bool>(
+        context,
+        MaterialPageRoute(
+          builder: (_) => DdpiAuthPage(
+            broker: broker,
+            sellOrders: sellOrderDetails,
+            email: widget.email,
+          ),
+        ),
+      );
+
+      if (edisResult == true && mounted) {
+        // Re-execute failed sell orders after DDPI auth (matching prod reopenRebalanceModal)
+        debugPrint('[ExecutionStatus] EDIS auth complete — retrying failed sell orders');
+        _retryFailed();
+      }
+    } catch (e) {
+      debugPrint('[ExecutionStatus] Post-execution EDIS check error: $e');
     }
   }
 

@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -41,24 +42,29 @@ class _WelcomeScreenState extends State<WelcomeScreen>
 
     try {
       ApiService apiService = ApiService();
+      debugPrint('[Login] Validating phone: $phone, apiUrl: ${apiService.apiUrl}');
       final response = await apiService.validateUser(phone);
+      debugPrint('[Login] validateUser status: ${response.statusCode}, body: ${response.body}');
 
       if (response.statusCode == 200) {
         // Existing user — send OTP
         final loginResponse = await apiService.loginUser(phone);
+        debugPrint('[Login] loginUser status: ${loginResponse.statusCode}, body: ${loginResponse.body}');
         if (loginResponse.statusCode == 200) {
           showOtpPopup(phone);
         } else {
-          setState(() => phoneError = "Something went wrong. Try again.");
+          setState(() => phoneError = "Failed to send OTP. Please try again.");
         }
       } else if (response.statusCode == 404) {
         // New user — show registration popup
         showNamePopup();
       } else {
         // Server error (500, timeout, etc.) — don't assume new user
+        debugPrint('[Login] Unexpected validate status: ${response.statusCode}');
         setState(() => phoneError = "Server error. Please try again later.");
       }
-    } catch (e) {
+    } catch (e, stack) {
+      debugPrint('[Login] Exception: $e\n$stack');
       setState(() => phoneError = "Network error. Please check your connection.");
     }
 

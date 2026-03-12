@@ -865,6 +865,40 @@ class AqApiService {
     );
   }
 
+  /// PUT /api/update-edis-status — persist is_authorized_for_sell after DDPI/TPIN auth.
+  /// Matching prod UpdateRebalanceModal.js / DdpiModal.js handleProceed().
+  Future<http.Response> updateEdisStatus({
+    required String uid,
+    required bool isAuthorizedForSell,
+    required String userBroker,
+  }) async {
+    return http.put(
+      Uri.parse('${baseUrl}api/update-edis-status'),
+      headers: _headers(),
+      body: jsonEncode({
+        'uid': uid,
+        'is_authorized_for_sell': isAuthorizedForSell,
+        'user_broker': userBroker,
+      }),
+    );
+  }
+
+  /// GET Dhan EDIS status — live check whether holdings are authorized for sell.
+  /// Matching prod UpdateRebalanceModal.js dhanEdisStatus check.
+  Future<http.Response> getDhanEdisStatus({
+    required String clientId,
+    required String accessToken,
+  }) async {
+    return http.post(
+      Uri.parse('${ccxtUrl}dhan/edis-status'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({
+        'clientId': clientId,
+        'accessToken': accessToken,
+      }),
+    );
+  }
+
   // ---------------------------------------------------------------------------
   // Order APIs
   // ---------------------------------------------------------------------------
