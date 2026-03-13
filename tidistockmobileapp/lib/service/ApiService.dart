@@ -614,6 +614,49 @@ class ApiService {
     ).timeout(const Duration(seconds: 15));
   }
 
+  // ---------------------------------------------------------------------------
+  // Social Auth APIs (Google / Apple Sign-In)
+  // ---------------------------------------------------------------------------
+
+  /// Check if a social account is already linked to a user.
+  /// Returns 202 + token if linked, 200 + social_info if not linked.
+  Future<http.Response> socialLookup(String provider, String idToken) async {
+    return _resilientHttp(() => http.post(
+      Uri.parse(apiUrl + 'api/auth/social/lookup'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({
+        'provider': provider,
+        'id_token': idToken,
+      }),
+    ).timeout(const Duration(seconds: 15)));
+  }
+
+  /// Complete social login: link social account to existing/new user.
+  /// Returns 202 + token on success, 200 + otp_required if OTP needed.
+  Future<http.Response> socialComplete({
+    required String provider,
+    required String idToken,
+    required String phoneNumber,
+    String? otp,
+    String? firstName,
+    String? lastName,
+  }) async {
+    final body = <String, dynamic>{
+      'provider': provider,
+      'id_token': idToken,
+      'phone_number': phoneNumber,
+    };
+    if (otp != null) body['otp'] = otp;
+    if (firstName != null) body['first_name'] = firstName;
+    if (lastName != null) body['last_name'] = lastName;
+
+    return _resilientHttp(() => http.post(
+      Uri.parse(apiUrl + 'api/auth/social/complete'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode(body),
+    ).timeout(const Duration(seconds: 15)));
+  }
+
   Future<http.Response> createSubscriptionOrder(String duration) async {
     String? token = await _getToken();
     return http.post(

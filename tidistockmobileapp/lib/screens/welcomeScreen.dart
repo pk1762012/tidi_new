@@ -1,7 +1,11 @@
+import 'dart:io';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:google_sign_in/google_sign_in.dart';
+import 'package:sign_in_with_apple/sign_in_with_apple.dart';
 import 'package:tidistockmobileapp/service/ApiService.dart';
 import 'dart:async';
 import 'dart:convert';
@@ -22,11 +26,35 @@ class _WelcomeScreenState extends State<WelcomeScreen>
   final TextEditingController phoneCtrl = TextEditingController();
 
   bool isLoading = false;
+  bool _isSocialLoading = false;
   bool _isNewUser = false;
   String? phoneError;
 
+  // Social login state — kept across dialogs
+  String? _socialProvider;
+  String? _socialIdToken;
+  String? _socialFirstName;
+  String? _socialLastName;
+
   // -------------------------------------------------------
-  // VALIDATE & SHOW OTP POPUP
+  // COMMON: store token & navigate after successful auth
+  // -------------------------------------------------------
+  Future<void> _handleAuthSuccess(String token, String phone, {bool isNewUser = false}) async {
+    await secureStorage.deleteAll();
+    await secureStorage.write(key: 'access_token', value: token);
+    await secureStorage.write(key: 'phone_number', value: phone);
+    ApiService.invalidateTokenCache();
+    ApiService().updateDeviceDetails();
+
+    if (isNewUser) {
+      _showWelcomeTrialDialog();
+    } else {
+      _navigateToDisclaimer();
+    }
+  }
+
+  // -------------------------------------------------------
+  // PHONE LOGIN: VALIDATE & HANDLE OTP-OPTIONAL
   // -------------------------------------------------------
   Future<void> onContinue() async {
     final phone = phoneCtrl.text.trim();
@@ -47,10 +75,16 @@ class _WelcomeScreenState extends State<WelcomeScreen>
       debugPrint('[Login] validateUser status: ${response.statusCode}, body: ${response.body}');
 
       if (response.statusCode == 200) {
-        // Existing user — send OTP
+        // Existing user — attempt login
         final loginResponse = await apiService.loginUser(phone);
         debugPrint('[Login] loginUser status: ${loginResponse.statusCode}, body: ${loginResponse.body}');
-        if (loginResponse.statusCode == 200) {
+
+        if (loginResponse.statusCode == 202) {
+          // OTP disabled — token returned directly
+          var data = jsonDecode(loginResponse.body);
+          await _handleAuthSuccess(data['data']['token'], phone);
+        } else if (loginResponse.statusCode == 200) {
+          // OTP enabled — show OTP popup
           showOtpPopup(phone);
         } else {
           setState(() => phoneError = "Failed to send OTP. Please try again.");
@@ -59,7 +93,6 @@ class _WelcomeScreenState extends State<WelcomeScreen>
         // New user — show registration popup
         showNamePopup();
       } else {
-        // Server error (500, timeout, etc.) — don't assume new user
         debugPrint('[Login] Unexpected validate status: ${response.statusCode}');
         setState(() => phoneError = "Server error. Please try again later.");
       }
@@ -143,7 +176,6 @@ class _WelcomeScreenState extends State<WelcomeScreen>
                           final l = lnameCtrl.text.trim();
 
                           setStatePopup(() {
-                            // fname required + max 20
                             if (f.isEmpty) {
                               fnameError = "Enter first name";
                             } else if (f.length > 20) {
@@ -152,7 +184,6 @@ class _WelcomeScreenState extends State<WelcomeScreen>
                               fnameError = null;
                             }
 
-                            // lname optional but max 20
                             if (l.isNotEmpty && l.length > 20) {
                               lnameError = "Max 20 characters allowed";
                             } else {
@@ -160,22 +191,32 @@ class _WelcomeScreenState extends State<WelcomeScreen>
                             }
                           });
 
-                          // Stop if fname has any error OR lname has an error
                           if (fnameError != null || lnameError != null) return;
 
                           ApiService apiService = ApiService();
                           final response = await apiService.createUser(fnameCtrl.text.trim(), lnameCtrl.text.trim(), phoneCtrl.text.trim());
-                          if (response.statusCode == 201 || response.statusCode == 202) {
+
+                          if (response.statusCode == 202) {
+                            // OTP disabled — token returned directly
+                            var data = jsonDecode(response.body);
+                            if (data['data'] != null && data['data']['token'] != null) {
+                              Navigator.pop(dialogCtx);
+                              _isNewUser = true;
+                              await _handleAuthSuccess(data['data']['token'], phoneCtrl.text.trim(), isNewUser: true);
+                              return;
+                            }
+                          }
+
+                          if (response.statusCode == 201 || response.statusCode == 202 || response.statusCode == 200) {
                             _isNewUser = true;
-                            Navigator.pop(dialogCtx);   // Close name popup
+                            Navigator.pop(dialogCtx);
                             showOtpPopup(phoneCtrl.text.trim());
                           } else {
-                            Navigator.pop(dialogCtx);   // Close name popup
+                            Navigator.pop(dialogCtx);
                             ScaffoldMessenger.of(context).showSnackBar(
                               SnackBar(content: Text("Failed to register. Please try again.")),
                             );
                           }
-
                         },
                         child: Text("Continue"),
                       ),
@@ -202,7 +243,6 @@ class _WelcomeScreenState extends State<WelcomeScreen>
   void showOtpPopup(String phone) {
     ApiService apiService = ApiService();
 
-    // 4 controllers for 4 digits
     final List<TextEditingController> otpControllers =
     List.generate(4, (_) => TextEditingController());
 
@@ -292,8 +332,8 @@ class _WelcomeScreenState extends State<WelcomeScreen>
                       width: double.infinity,
                       child: ElevatedButton(
                         style: ElevatedButton.styleFrom(
-                          padding: EdgeInsets.zero,                // remove default padding
-                          alignment: Alignment.center,             // center content
+                          padding: EdgeInsets.zero,
+                          alignment: Alignment.center,
                         ),
                         onPressed: verifying
                             ? null
@@ -316,23 +356,11 @@ class _WelcomeScreenState extends State<WelcomeScreen>
                               var responseData = jsonDecode(response.body);
                               String accessToken = responseData['data']['token'];
 
-                              await secureStorage.deleteAll();
-                              await secureStorage.write(key: 'access_token', value: accessToken);
-                              // Store phone early so SplashScreen can generate
-                              // a synthetic email if the backend doesn't return one.
-                              await secureStorage.write(key: 'phone_number', value: phone);
-                              ApiService.invalidateTokenCache();
-                              apiService.updateDeviceDetails();
-
                               setStatePopup(() => verifying = false);
                               timer?.cancel();
                               Navigator.pop(dialogCtx);
 
-                              if (_isNewUser) {
-                                _showWelcomeTrialDialog();
-                              } else {
-                                _navigateToDisclaimer();
-                              }
+                              await _handleAuthSuccess(accessToken, phone, isNewUser: _isNewUser);
                             } else {
                               var responseData = jsonDecode(response.body);
                               String message = responseData['message'];
@@ -348,12 +376,12 @@ class _WelcomeScreenState extends State<WelcomeScreen>
                             });
                           }
                         },
-                        child: Center(                               // <-- FIX: centers loader/text
+                        child: Center(
                           child: verifying
                               ? SizedBox(
                             width: 22,
                             height: 22,
-                            child: CircularProgressIndicator(  // <-- smaller loader fits perfectly
+                            child: CircularProgressIndicator(
                               strokeWidth: 2.5,
                               color: Colors.white,
                             ),
@@ -394,10 +422,424 @@ class _WelcomeScreenState extends State<WelcomeScreen>
     );
   }
 
+  // -------------------------------------------------------
+  // GOOGLE SIGN-IN
+  // -------------------------------------------------------
+  Future<void> _signInWithGoogle() async {
+    setState(() => _isSocialLoading = true);
 
+    try {
+      final GoogleSignIn googleSignIn = GoogleSignIn(
+        scopes: ['email'],
+        serverClientId: '29712834204-1v7v64ip2sf4mq8usrnsa13smqesdhoe.apps.googleusercontent.com',
+      );
+
+      final GoogleSignInAccount? account = await googleSignIn.signIn();
+      if (account == null) {
+        // User cancelled
+        setState(() => _isSocialLoading = false);
+        return;
+      }
+
+      final GoogleSignInAuthentication auth = await account.authentication;
+      final String? idToken = auth.idToken;
+
+      if (idToken == null) {
+        debugPrint('[SocialLogin] Google idToken is null');
+        _showErrorSnackBar("Google sign-in failed. Please try again.");
+        setState(() => _isSocialLoading = false);
+        return;
+      }
+
+      debugPrint('[SocialLogin] Google idToken obtained, calling lookup...');
+      await _processSocialLogin('GOOGLE', idToken,
+        firstName: account.displayName?.split(' ').first,
+        lastName: account.displayName?.split(' ').skip(1).join(' '),
+      );
+    } catch (e, stack) {
+      debugPrint('[SocialLogin] Google error: $e\n$stack');
+      _showErrorSnackBar("Google sign-in failed. Please try again.");
+    }
+
+    if (mounted) setState(() => _isSocialLoading = false);
+  }
 
   // -------------------------------------------------------
-  // NAVIGATE TO DISCLAIMER → SPLASH → HOME
+  // APPLE SIGN-IN
+  // -------------------------------------------------------
+  Future<void> _signInWithApple() async {
+    setState(() => _isSocialLoading = true);
+
+    try {
+      final credential = await SignInWithApple.getAppleIDCredential(
+        scopes: [
+          AppleIDAuthorizationScopes.email,
+          AppleIDAuthorizationScopes.fullName,
+        ],
+      );
+
+      final String? idToken = credential.identityToken;
+      if (idToken == null) {
+        debugPrint('[SocialLogin] Apple identityToken is null');
+        _showErrorSnackBar("Apple sign-in failed. Please try again.");
+        setState(() => _isSocialLoading = false);
+        return;
+      }
+
+      debugPrint('[SocialLogin] Apple idToken obtained, calling lookup...');
+      await _processSocialLogin('APPLE', idToken,
+        firstName: credential.givenName,
+        lastName: credential.familyName,
+      );
+    } catch (e, stack) {
+      debugPrint('[SocialLogin] Apple error: $e\n$stack');
+      if (e.toString().contains('canceled') || e.toString().contains('cancelled')) {
+        // User cancelled — do nothing
+      } else {
+        _showErrorSnackBar("Apple sign-in failed. Please try again.");
+      }
+    }
+
+    if (mounted) setState(() => _isSocialLoading = false);
+  }
+
+  // -------------------------------------------------------
+  // PROCESS SOCIAL LOGIN (common for Google & Apple)
+  // -------------------------------------------------------
+  Future<void> _processSocialLogin(String provider, String idToken, {String? firstName, String? lastName}) async {
+    try {
+      ApiService apiService = ApiService();
+      final response = await apiService.socialLookup(provider, idToken);
+      debugPrint('[SocialLogin] lookup status: ${response.statusCode}, body: ${response.body}');
+
+      final data = jsonDecode(response.body);
+
+      if (response.statusCode == 202 && data['data']?['linked'] == true) {
+        // Already linked — log in directly
+        final token = data['data']['token'];
+        final phone = data['data']['phone_number'];
+        await _handleAuthSuccess(token, phone);
+      } else if (response.statusCode == 200 && data['data']?['linked'] == false) {
+        // Not linked — need phone number
+        _socialProvider = provider;
+        _socialIdToken = idToken;
+        _socialFirstName = firstName ?? data['data']?['social_info']?['first_name'];
+        _socialLastName = lastName ?? data['data']?['social_info']?['last_name'];
+
+        _showPhoneCollectionDialog();
+      } else {
+        _showErrorSnackBar(data['message'] ?? "Social login failed.");
+      }
+    } catch (e, stack) {
+      debugPrint('[SocialLogin] processSocialLogin error: $e\n$stack');
+      _showErrorSnackBar("Network error. Please try again.");
+    }
+  }
+
+  // -------------------------------------------------------
+  // PHONE COLLECTION DIALOG (after social sign-in)
+  // -------------------------------------------------------
+  void _showPhoneCollectionDialog() {
+    final phoneCollectCtrl = TextEditingController();
+    String? phoneCollectError;
+    bool submitting = false;
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (dialogCtx, setStatePopup) {
+            return Dialog(
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+              child: Padding(
+                padding: const EdgeInsets.all(22),
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text("Link Phone Number",
+                          style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+
+                      SizedBox(height: 10),
+
+                      Text("Enter your phone number to complete sign-in.",
+                          style: TextStyle(color: Colors.grey[600]),
+                          textAlign: TextAlign.center),
+
+                      SizedBox(height: 20),
+
+                      TextField(
+                        controller: phoneCollectCtrl,
+                        maxLength: 10,
+                        keyboardType: TextInputType.number,
+                        inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                        decoration: InputDecoration(
+                          counterText: "",
+                          labelText: "Phone Number",
+                          prefixText: "+91 ",
+                          errorText: phoneCollectError,
+                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
+                        ),
+                      ),
+
+                      SizedBox(height: 22),
+
+                      SizedBox(
+                        height: 50,
+                        width: double.infinity,
+                        child: ElevatedButton(
+                          style: ElevatedButton.styleFrom(
+                            padding: EdgeInsets.zero,
+                            alignment: Alignment.center,
+                          ),
+                          onPressed: submitting
+                              ? null
+                              : () async {
+                            final phone = phoneCollectCtrl.text.trim();
+
+                            if (phone.length != 10) {
+                              setStatePopup(() => phoneCollectError = "Enter a valid 10-digit phone number");
+                              return;
+                            }
+
+                            setStatePopup(() {
+                              phoneCollectError = null;
+                              submitting = true;
+                            });
+
+                            try {
+                              ApiService apiService = ApiService();
+                              final response = await apiService.socialComplete(
+                                provider: _socialProvider!,
+                                idToken: _socialIdToken!,
+                                phoneNumber: phone,
+                                firstName: _socialFirstName,
+                                lastName: _socialLastName,
+                              );
+
+                              debugPrint('[SocialLogin] complete status: ${response.statusCode}, body: ${response.body}');
+                              final data = jsonDecode(response.body);
+
+                              if (response.statusCode == 202) {
+                                // Success — token received
+                                final token = data['data']['token'];
+                                final isNew = data['data']['is_new_user'] == true;
+                                Navigator.pop(dialogCtx);
+                                await _handleAuthSuccess(token, phone, isNewUser: isNew);
+                              } else if (response.statusCode == 200 && data['data']?['otp_required'] == true) {
+                                // OTP required — show OTP popup
+                                Navigator.pop(dialogCtx);
+                                _showSocialOtpPopup(phone);
+                              } else {
+                                setStatePopup(() {
+                                  submitting = false;
+                                  phoneCollectError = data['message'] ?? "Failed. Please try again.";
+                                });
+                              }
+                            } catch (e) {
+                              setStatePopup(() {
+                                submitting = false;
+                                phoneCollectError = "Network error. Please try again.";
+                              });
+                            }
+                          },
+                          child: Center(
+                            child: submitting
+                                ? SizedBox(width: 22, height: 22,
+                                child: CircularProgressIndicator(strokeWidth: 2.5, color: Colors.white))
+                                : Text("Continue"),
+                          ),
+                        ),
+                      ),
+
+                      TextButton(
+                        onPressed: () => Navigator.pop(dialogCtx),
+                        child: Text("Cancel"),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  // -------------------------------------------------------
+  // OTP POPUP FOR SOCIAL LOGIN (when OTP is required)
+  // -------------------------------------------------------
+  void _showSocialOtpPopup(String phone) {
+    final List<TextEditingController> otpControllers =
+    List.generate(4, (_) => TextEditingController());
+
+    String? otpError;
+    bool verifying = false;
+    int secondsLeft = 30;
+    bool canResend = false;
+    Timer? timer;
+    bool timerStarted = false;
+
+    void startTimer(StateSetter setStatePopup) {
+      timer?.cancel();
+      secondsLeft = 30;
+      canResend = false;
+      timer = Timer.periodic(Duration(seconds: 1), (t) {
+        if (secondsLeft == 0) {
+          t.cancel();
+          setStatePopup(() => canResend = true);
+        } else {
+          setStatePopup(() => secondsLeft--);
+        }
+      });
+    }
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (dialogCtx, setStatePopup) {
+            if (!timerStarted) {
+              timerStarted = true;
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                startTimer(setStatePopup);
+              });
+            }
+
+            return Dialog(
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+              child: Padding(
+                padding: const EdgeInsets.all(22),
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text("Verify OTP",
+                          style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+                      SizedBox(height: 10),
+                      Text("OTP sent to +91 $phone",
+                          style: TextStyle(color: Colors.grey[600])),
+                      SizedBox(height: 25),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: List.generate(4, (i) {
+                          return _otpBox(
+                            index: i,
+                            controller: otpControllers[i],
+                            onChanged: (value) {
+                              if (value.length == 1 && i < 3) {
+                                FocusScope.of(dialogCtx).nextFocus();
+                              }
+                              if (value.isEmpty && i > 0) {
+                                FocusScope.of(dialogCtx).previousFocus();
+                              }
+                            },
+                          );
+                        }),
+                      ),
+                      if (otpError != null)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 8),
+                          child: Text(otpError!, style: TextStyle(color: Colors.red, fontSize: 13)),
+                        ),
+                      SizedBox(height: 25),
+                      SizedBox(
+                        height: 50,
+                        width: double.infinity,
+                        child: ElevatedButton(
+                          style: ElevatedButton.styleFrom(padding: EdgeInsets.zero, alignment: Alignment.center),
+                          onPressed: verifying
+                              ? null
+                              : () async {
+                            final otp = otpControllers.map((c) => c.text).join();
+                            setStatePopup(() => otpError = null);
+                            if (otp.length != 4) {
+                              setStatePopup(() => otpError = "Enter valid 4-digit OTP");
+                              return;
+                            }
+                            setStatePopup(() => verifying = true);
+
+                            try {
+                              ApiService apiService = ApiService();
+                              final response = await apiService.socialComplete(
+                                provider: _socialProvider!,
+                                idToken: _socialIdToken!,
+                                phoneNumber: phone,
+                                otp: otp,
+                                firstName: _socialFirstName,
+                                lastName: _socialLastName,
+                              );
+
+                              final data = jsonDecode(response.body);
+                              if (response.statusCode == 202) {
+                                final token = data['data']['token'];
+                                final isNew = data['data']['is_new_user'] == true;
+                                timer?.cancel();
+                                Navigator.pop(dialogCtx);
+                                await _handleAuthSuccess(token, phone, isNewUser: isNew);
+                              } else {
+                                setStatePopup(() {
+                                  verifying = false;
+                                  otpError = data['message'] ?? "Verification failed.";
+                                });
+                              }
+                            } catch (e) {
+                              setStatePopup(() {
+                                verifying = false;
+                                otpError = "Network error. Please try again.";
+                              });
+                            }
+                          },
+                          child: Center(
+                            child: verifying
+                                ? SizedBox(width: 22, height: 22,
+                                child: CircularProgressIndicator(strokeWidth: 2.5, color: Colors.white))
+                                : Text("Verify OTP"),
+                          ),
+                        ),
+                      ),
+                      SizedBox(height: 15),
+                      canResend
+                          ? TextButton(
+                        onPressed: () async {
+                          // Re-trigger social complete without OTP to re-send
+                          ApiService apiService = ApiService();
+                          await apiService.socialComplete(
+                            provider: _socialProvider!,
+                            idToken: _socialIdToken!,
+                            phoneNumber: phone,
+                            firstName: _socialFirstName,
+                            lastName: _socialLastName,
+                          );
+                          startTimer(setStatePopup);
+                        },
+                        child: Text("Resend OTP"),
+                      )
+                          : Text("Resend in ${secondsLeft}s",
+                          style: TextStyle(color: Colors.grey)),
+                      TextButton(
+                        onPressed: () {
+                          timer?.cancel();
+                          Navigator.pop(dialogCtx);
+                        },
+                        child: Text("Cancel"),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  // -------------------------------------------------------
+  // NAVIGATE TO DISCLAIMER -> SPLASH -> HOME
   // -------------------------------------------------------
   void _navigateToDisclaimer() {
     Navigator.pushAndRemoveUntil(
@@ -481,8 +923,16 @@ class _WelcomeScreenState extends State<WelcomeScreen>
   }
 
   // -------------------------------------------------------
-  // CUSTOM 4 DIGIT BOX ANIMATED INPUT
+  // HELPERS
   // -------------------------------------------------------
+  void _showErrorSnackBar(String message) {
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(message)),
+      );
+    }
+  }
+
   Widget _otpBox({
     required int index,
     required TextEditingController controller,
@@ -525,7 +975,7 @@ class _WelcomeScreenState extends State<WelcomeScreen>
                 ClipRRect(
                   borderRadius: BorderRadius.circular(16),
                   child: AspectRatio(
-                    aspectRatio: 1, // 1:1 ratio
+                    aspectRatio: 1,
                     child: Image.asset(
                       'assets/images/tidi_welcome.png',
                       width: double.infinity,
@@ -560,7 +1010,7 @@ class _WelcomeScreenState extends State<WelcomeScreen>
                   ),
                 ),
 
-                SizedBox(height: 32),
+                SizedBox(height: 20),
 
                 SizedBox(
                   width: double.infinity,
@@ -569,7 +1019,7 @@ class _WelcomeScreenState extends State<WelcomeScreen>
                         minimumSize: Size(double.infinity, 55),
                         shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(14))),
-                    onPressed: isLoading ? null : onContinue,
+                    onPressed: (isLoading || _isSocialLoading) ? null : onContinue,
                     child: isLoading
                         ? CircularProgressIndicator(color: Colors.white)
                         : Text("Continue",
@@ -577,6 +1027,69 @@ class _WelcomeScreenState extends State<WelcomeScreen>
                             fontSize: 18, fontWeight: FontWeight.w600)),
                   ),
                 ),
+
+                const SizedBox(height: 20),
+
+                // Divider
+                Row(
+                  children: [
+                    Expanded(child: Divider(color: Colors.grey[300])),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      child: Text("or", style: TextStyle(color: Colors.grey[500], fontSize: 14)),
+                    ),
+                    Expanded(child: Divider(color: Colors.grey[300])),
+                  ],
+                ),
+
+                const SizedBox(height: 20),
+
+                // Google Sign-In button
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    style: OutlinedButton.styleFrom(
+                      minimumSize: Size(double.infinity, 52),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14)),
+                      side: BorderSide(color: Colors.grey[300]!),
+                    ),
+                    onPressed: (isLoading || _isSocialLoading) ? null : _signInWithGoogle,
+                    icon: _isSocialLoading && _socialProvider == 'GOOGLE'
+                        ? SizedBox(width: 20, height: 20,
+                        child: CircularProgressIndicator(strokeWidth: 2))
+                        : Text("G", style: TextStyle(
+                        fontSize: 20, fontWeight: FontWeight.bold,
+                        color: Colors.blue[700])),
+                    label: Text("Sign in with Google",
+                        style: TextStyle(fontSize: 16, color: colors.onSurface)),
+                  ),
+                ),
+
+                // Apple Sign-In button (iOS only)
+                if (Platform.isIOS) ...[
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      style: OutlinedButton.styleFrom(
+                        minimumSize: Size(double.infinity, 52),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14)),
+                        side: BorderSide(color: Colors.grey[300]!),
+                        backgroundColor: Colors.black,
+                      ),
+                      onPressed: (isLoading || _isSocialLoading) ? null : _signInWithApple,
+                      icon: _isSocialLoading && _socialProvider == 'APPLE'
+                          ? SizedBox(width: 20, height: 20,
+                          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                          : Icon(Icons.apple, size: 24, color: Colors.white),
+                      label: Text("Sign in with Apple",
+                          style: TextStyle(fontSize: 16, color: Colors.white)),
+                    ),
+                  ),
+                ],
+
                 const SizedBox(height: 16),
 
                 Center(
@@ -644,27 +1157,27 @@ class _WelcomeScreenState extends State<WelcomeScreen>
   static const String termsMarkdown = '''
 ## Terms & Conditions
 
-• This app provides market-related information only  
-• No execution of trades is done through the app  
-• Users must comply with SEBI regulations  
-• Misuse of information is strictly prohibited  
+• This app provides market-related information only
+• No execution of trades is done through the app
+• Users must comply with SEBI regulations
+• Misuse of information is strictly prohibited
 ''';
 
   static const String privacyMarkdown = '''
 ## Privacy Policy
 
-• We collect minimal user data  
-• No personal data is sold to third parties  
-• Data is encrypted and securely stored  
-• PAN & KYC data is never stored in plain text  
+• We collect minimal user data
+• No personal data is sold to third parties
+• Data is encrypted and securely stored
+• PAN & KYC data is never stored in plain text
 ''';
 
   static const String refundMarkdown = '''
 ## Refund Policy
 
-• Membership fees once paid are non-refundable  
-• Refunds may be issued only in case of duplicate payment  
-• PMS-related refunds are governed by separate PMS agreements  
+• Membership fees once paid are non-refundable
+• Refunds may be issued only in case of duplicate payment
+• PMS-related refunds are governed by separate PMS agreements
 ''';
 
 
