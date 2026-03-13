@@ -618,32 +618,28 @@ class ApiService {
   // Social Auth APIs (Google / Apple Sign-In)
   // ---------------------------------------------------------------------------
 
-  /// Check if a social account is already linked to a user.
+  /// Check if a Firebase account is already linked to a user.
   /// Returns 202 + token if linked, 200 + social_info if not linked.
-  Future<http.Response> socialLookup(String provider, String idToken) async {
+  /// Works for Google, Apple, and Email/Password — all go through Firebase.
+  Future<http.Response> firebaseLookup(String firebaseIdToken) async {
     return _resilientHttp(() => http.post(
       Uri.parse(apiUrl + 'api/auth/social/lookup'),
       headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({
-        'provider': provider,
-        'id_token': idToken,
-      }),
+      body: jsonEncode({'id_token': firebaseIdToken}),
     ).timeout(const Duration(seconds: 15)));
   }
 
-  /// Complete social login: link social account to existing/new user.
+  /// Complete Firebase login: link Firebase account to existing/new user.
   /// Returns 202 + token on success, 200 + otp_required if OTP needed.
-  Future<http.Response> socialComplete({
-    required String provider,
-    required String idToken,
+  Future<http.Response> firebaseComplete({
+    required String firebaseIdToken,
     required String phoneNumber,
     String? otp,
     String? firstName,
     String? lastName,
   }) async {
     final body = <String, dynamic>{
-      'provider': provider,
-      'id_token': idToken,
+      'id_token': firebaseIdToken,
       'phone_number': phoneNumber,
     };
     if (otp != null) body['otp'] = otp;
