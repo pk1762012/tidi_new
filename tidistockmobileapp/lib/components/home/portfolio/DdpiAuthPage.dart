@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:tidistockmobileapp/models/broker_connection.dart';
 import 'package:tidistockmobileapp/service/AqApiService.dart';
+import 'package:tidistockmobileapp/service/BrokerCryptoService.dart';
 import 'package:tidistockmobileapp/widgets/customScaffold.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
@@ -84,6 +85,7 @@ class _DdpiAuthPageState extends State<DdpiAuthPage> {
   }
 
   /// Zerodha: POST auth-sell → get auth_url → open in WebView
+  /// Matches prod DdpiModal.js: sends decrypted apiKey + secretKey + accessToken.
   Future<void> _zerodhaFlow() async {
     final accessToken = widget.broker.jwtToken;
     if (accessToken == null || accessToken.isEmpty) {
@@ -94,8 +96,26 @@ class _DdpiAuthPageState extends State<DdpiAuthPage> {
       return;
     }
 
+    // Decrypt apiKey/secretKey (stored encrypted with CryptoJS AES) — matching prod
+    String? decryptedApiKey;
+    String? decryptedSecretKey;
+    try {
+      if (widget.broker.apiKey != null && widget.broker.apiKey!.isNotEmpty) {
+        decryptedApiKey = BrokerCryptoService.instance
+            .decryptCredential(widget.broker.apiKey!);
+      }
+      if (widget.broker.secretKey != null && widget.broker.secretKey!.isNotEmpty) {
+        decryptedSecretKey = BrokerCryptoService.instance
+            .decryptCredential(widget.broker.secretKey!);
+      }
+    } catch (e) {
+      debugPrint('[EdisAuth:Zerodha] credential decryption failed (using as-is): $e');
+    }
+
     final response = await AqApiService.instance.zerodhaAuthSell(
       accessToken: accessToken,
+      apiKey: decryptedApiKey,
+      secretKey: decryptedSecretKey,
     );
     debugPrint('[EdisAuth:Zerodha] auth-sell status=${response.statusCode}');
 

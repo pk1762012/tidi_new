@@ -384,12 +384,20 @@ class _BrokerCredentialPageState extends State<BrokerCredentialPage> {
   void _handleOAuthResponse(http.Response resp) {
     try {
       final data = jsonDecode(resp.body);
-      final url = data['response']?['loginUrl'] ??
-          data['response']?['login_url'] ??
-          data['loginUrl'] ??
-          data['response'];
+      // data['response'] can be a Map (with loginUrl) or a direct URL string
+      final responseVal = data['response'];
+      final String? url;
+      if (responseVal is Map) {
+        url = responseVal['loginUrl'] as String? ??
+            responseVal['login_url'] as String? ??
+            data['loginUrl'] as String?;
+      } else if (responseVal is String) {
+        url = responseVal;
+      } else {
+        url = data['loginUrl'] as String?;
+      }
 
-      if (url != null && url is String && url.startsWith('http')) {
+      if (url != null && url.startsWith('http')) {
         // Upstox: check for error_code in the auth URL (matching RGX upstoxModal.js)
         if (widget.brokerConfig.key == 'upstox' &&
             (url.contains('error_code') || url.contains('error_message'))) {

@@ -35,7 +35,7 @@ class _IpoListingPageState extends State<IpoListingPage>
   List<dynamic> recentlyClosedIpos = [];
   int totalFromApi = -1; // -1 = not yet loaded, 0 = server returned empty
 
-  // GMP data from scraped source
+  // GMP data from scraped source (fallback until ipoalerts GMP addon is active)
   Map<String, dynamic> _gmpByName = {};
 
   late TabController _tabController;
@@ -217,22 +217,6 @@ class _IpoListingPageState extends State<IpoListingPage>
           });
 
           debugPrint('[IPO] Open: ${openIpos.length}, Upcoming: ${upcomingIpos.length}, RecentlyClosed: ${recentlyClosedIpos.length}');
-
-          // Log GMP matches (if GMP data already loaded)
-          if (_gmpByName.isNotEmpty) {
-            final allIpos = [...filteredOpen, ...filteredUpcoming, ...filteredClosed];
-            int matchCount = 0;
-            for (final ipo in allIpos) {
-              final gmp = _getGmpValue(ipo);
-              if (gmp != null) {
-                matchCount++;
-                debugPrint('[IPO+GMP] Match: ${ipo['name']} -> $gmp');
-              }
-            }
-            debugPrint('[IPO+GMP] Total matches: $matchCount / ${allIpos.length} IPOs (gmpByName has ${_gmpByName.length} entries)');
-          } else {
-            debugPrint('[IPO+GMP] GMP data not yet loaded (_gmpByName is empty)');
-          }
         },
       );
     } catch (e) {
@@ -247,7 +231,7 @@ class _IpoListingPageState extends State<IpoListingPage>
   }
 
   // ==========================================================
-  // Fetch GMP data (scraped)
+  // Fetch GMP data (scraped — fallback for plans without GMP addon)
   // ==========================================================
 
   Future<void> fetchGmp() async {
@@ -259,15 +243,10 @@ class _IpoListingPageState extends State<IpoListingPage>
       final response = await http.get(url).timeout(const Duration(seconds: 15));
       debugPrint('[GMP] Response status: ${response.statusCode}, bodyLen: ${response.body.length}');
 
-      if (response.statusCode != 200) {
-        debugPrint('[GMP] Non-200 response: ${response.body.substring(0, (response.body.length > 200 ? 200 : response.body.length))}');
-        return;
-      }
+      if (response.statusCode != 200) return;
 
       final decoded = jsonDecode(response.body);
       final List list = decoded is List ? decoded : [];
-      debugPrint('[GMP] Parsed ${list.length} GMP entries');
-
       if (list.isEmpty) return;
 
       final Map<String, dynamic> map = {};
@@ -283,15 +262,8 @@ class _IpoListingPageState extends State<IpoListingPage>
         _gmpByName = map;
       });
       debugPrint('[GMP] Stored ${map.length} GMP entries in _gmpByName');
-
-      // Log first few entries for verification
-      final keys = map.keys.take(5).toList();
-      for (final k in keys) {
-        debugPrint('[GMP]   "$k" -> gmpValue=${map[k]?['gmpValue']}');
-      }
-    } catch (e, stack) {
+    } catch (e) {
       debugPrint('[GMP] Fetch error: $e');
-      debugPrint('[GMP] Stack: $stack');
     }
   }
 
@@ -299,7 +271,6 @@ class _IpoListingPageState extends State<IpoListingPage>
   // GMP helpers
   // ==========================================================
 
-  /// Normalize a company name for matching: strip common suffixes and extra spaces.
   String _normalizeName(String name) {
     String n = name.toLowerCase().trim();
     for (final suffix in [' limited', ' ltd', ' pvt', ' private', ' india', ' corporation', ' company']) {
@@ -308,29 +279,26 @@ class _IpoListingPageState extends State<IpoListingPage>
     return n.replaceAll(RegExp(r'\s+'), ' ').trim();
   }
 
-  /// Try to get GMP value — first from ipoalerts data, then from scraped data
+  /// Try to get GMP value — first from ipoalerts embedded data, then from scraped data.
   dynamic _getGmpValue(dynamic ipo) {
-    // 1. From ipoalerts GMP addon (if ever enabled)
+    // 1. From ipoalerts GMP addon (when enabled)
     final apiGmp = ipo['gmp']?['aggregations']?['mean'];
     if (apiGmp != null) return apiGmp;
 
-    // 2. From scraped data — fuzzy match by company name
+    // 2. Fallback: fuzzy match from scraped GMP data
     final name = (ipo['name'] ?? '').toString().trim().toLowerCase();
     if (name.isEmpty) return null;
 
-    // Try exact match first
     if (_gmpByName.containsKey(name)) {
       return _gmpByName[name]?['gmpValue'];
     }
 
-    // Try containment match on raw names
     for (final entry in _gmpByName.entries) {
       if (entry.key.contains(name) || name.contains(entry.key)) {
         return entry.value['gmpValue'];
       }
     }
 
-    // Try normalized match (strip "Limited", "Ltd", "India", etc.)
     final normName = _normalizeName(name);
     if (normName.isEmpty) return null;
 

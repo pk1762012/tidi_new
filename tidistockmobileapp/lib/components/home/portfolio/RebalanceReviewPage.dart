@@ -22,11 +22,17 @@ class RebalanceReviewPage extends StatefulWidget {
   /// Passed from CurrentHoldingsPreviewPage (matching prod flow order).
   final int? rebalanceFlag;
 
+  /// Symbols held by the user as confirmed in Step 2 (CurrentHoldingsPreviewPage).
+  /// When non-null and empty, all SELL orders are filtered out since user holds nothing.
+  /// Matches prod flow where handleCheckStatus validates holdings before rebalance.
+  final Set<String>? heldSymbols;
+
   const RebalanceReviewPage({
     super.key,
     required this.portfolio,
     required this.email,
     this.rebalanceFlag,
+    this.heldSymbols,
   });
 
   @override
@@ -284,6 +290,10 @@ class _RebalanceReviewPageState extends State<RebalanceReviewPage> {
       // Check for upcoming corporate actions (matching alphab2b)
       await _checkUpcomingCorporateActions(serverActions);
 
+      // Filter sell actions for stocks user doesn't hold (matching prod flow
+      // where handleCheckStatus validates holdings before rebalance/calculate)
+      _filterSellsAgainstHoldings(serverActions);
+
       setState(() {
         actions = serverActions;
         loading = false;
@@ -294,6 +304,9 @@ class _RebalanceReviewPageState extends State<RebalanceReviewPage> {
     // ── CLIENT-SIDE FALLBACK ──
     debugPrint('[RebalanceReview] Server-side calculation unavailable, using client-side fallback');
     final computed = _computeClientSideActions(history);
+
+    // Filter sell actions for stocks user doesn't hold
+    _filterSellsAgainstHoldings(computed);
 
     setState(() {
       actions = computed;
@@ -324,6 +337,33 @@ class _RebalanceReviewPageState extends State<RebalanceReviewPage> {
       }
     } catch (e) {
       debugPrint('[RebalanceReview] corporate action check error: $e');
+    }
+  }
+
+  /// Filter sell actions for stocks user doesn't actually hold.
+  /// Uses heldSymbols from Step 2 (CurrentHoldingsPreviewPage) which already
+  /// did the prod handleCheckStatus min(modelQty, brokerQty) cross-reference.
+  /// If heldSymbols is empty → user has no holdings → remove all SELL actions.
+  void _filterSellsAgainstHoldings(List<_RebalanceAction> actionList) {
+    if (widget.heldSymbols == null) return; // no Step 2 data, skip filter
+
+    final held = widget.heldSymbols!;
+    final removedSymbols = <String>[];
+
+    actionList.removeWhere((action) {
+      if (action.type != _ActionType.sell) return false;
+      final sym = action.symbol.toUpperCase();
+      if (!held.contains(sym)) {
+        removedSymbols.add(action.symbol);
+        return true;
+      }
+      return false;
+    });
+
+    if (removedSymbols.isNotEmpty) {
+      debugPrint(
+          '[RebalanceReview] Filtered ${removedSymbols.length} sell action(s) — '
+          'not in Step 2 holdings: ${removedSymbols.join(', ')}');
     }
   }
 

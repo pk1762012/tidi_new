@@ -42,6 +42,7 @@ class _BrokerAuthPageState extends State<BrokerAuthPage> {
   bool get _isAngelOne => _brokerLower == 'angel one' || _brokerLower == 'angelone';
   bool get _isGroww => _brokerLower == 'groww';
   bool get _isIifl => _brokerLower == 'iifl securities' || _brokerLower == 'iifl';
+  bool get _isAliceBlue => _brokerLower == 'aliceblue';
 
   @override
   void initState() {
@@ -59,6 +60,8 @@ class _BrokerAuthPageState extends State<BrokerAuthPage> {
         loginUrl = _getAngelOneLoginUrl();
       } else if (_isIifl) {
         loginUrl = _getIiflLoginUrl();
+      } else if (_isAliceBlue) {
+        loginUrl = _getAliceBlueLoginUrl();
       } else if (_isGroww) {
         loginUrl = await _getGrowwLoginUrl();
       } else {
@@ -134,6 +137,12 @@ class _BrokerAuthPageState extends State<BrokerAuthPage> {
     // Use configurable redirect URL matching RGX (strip https://)
     final redirectUrl = AqApiService.instance.brokerRedirectUrl.replaceFirst('https://', '');
     return 'https://markets.iiflcapital.com/?v=1&appkey=$appKey&redirect_url=$redirectUrl';
+  }
+
+  /// AliceBlue: OAuth redirect to ant.aliceblueonline.com with appcode.
+  /// Matching prod AllBrokerList.js handleAliceBlueConnect().
+  String _getAliceBlueLoginUrl() {
+    return 'https://ant.aliceblueonline.com/?appcode=7WMf5NotZe';
   }
 
   /// Groww: CCXT GET /groww/login/oauth → returns redirect URL.
@@ -228,6 +237,7 @@ class _BrokerAuthPageState extends State<BrokerAuthPage> {
         url.contains('auth_code') ||
         url.contains('access_token') ||
         url.contains('status=success') ||
+        url.contains('user_broker=AliceBlue') ||
         url.contains('stock-recommendation') ||
         url.contains('zerodha/callback') ||
         url.contains('motilal-oswal/callback') ||
@@ -277,6 +287,26 @@ class _BrokerAuthPageState extends State<BrokerAuthPage> {
 
       if (_isZerodha && requestToken != null) {
         await _handleZerodhaCallback(requestToken);
+        return;
+      }
+
+      // AliceBlue returns user_broker=AliceBlue&status=0&access_token=...&client_id=...
+      // Matching prod connectBroker.js lines 259-335
+      if (_isAliceBlue) {
+        final status = uri.queryParameters['status'];
+        final accessToken = uri.queryParameters['access_token'];
+        final clientId = uri.queryParameters['client_id'];
+
+        if (status == '0' && accessToken != null && clientId != null) {
+          await _handleAliceBlueCallback(accessToken, clientId);
+          return;
+        }
+        // status == '1' means connection failed
+        final errorMsg = uri.queryParameters['error'] ?? 'AliceBlue authentication failed.';
+        setState(() {
+          _status = 'error';
+          _errorMessage = errorMsg;
+        });
         return;
       }
 
@@ -506,6 +536,36 @@ class _BrokerAuthPageState extends State<BrokerAuthPage> {
       broker: 'Groww',
       brokerData: {
         'jwtToken': authCode,
+        'status': 'connected',
+      },
+    );
+
+    await _onConnectionSuccess();
+  }
+
+  /// AliceBlue: save OAuth access_token + client_id.
+  /// Matching prod connectBroker.js: PUT api/user/connect-broker with jwtToken + clientCode.
+  Future<void> _handleAliceBlueCallback(String accessToken, String clientId) async {
+    debugPrint('[BrokerAuth:AliceBlue] saving access_token + client_id...');
+
+    final uid = await AqApiService.instance.getUserObjectId(widget.email);
+    if (uid != null) {
+      await AqApiService.instance.connectCredentialBroker(
+        uid: uid,
+        userBroker: 'AliceBlue',
+        credentials: {
+          'jwtToken': accessToken,
+          'clientCode': clientId,
+        },
+      );
+    }
+
+    await AqApiService.instance.connectBrokerByEmail(
+      email: widget.email,
+      broker: 'AliceBlue',
+      brokerData: {
+        'jwtToken': accessToken,
+        'clientCode': clientId,
         'status': 'connected',
       },
     );

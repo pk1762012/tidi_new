@@ -271,26 +271,101 @@ class ApiService {
     );
   }
 
-  Future<http.Response> getIPO() async {
-    String? token = await _getToken();
-    return http.get(
-      Uri.parse(apiUrl + 'api/ipo'),
-      headers: {
-        'Authorization': 'Bearer $token',
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-      },
-    );
+  // ── IPO Alerts API (ipoalerts.in) ────────────────────────────
+
+  static const String _ipoAlertsBaseUrl = 'https://api.ipoalerts.in';
+  static const String _ipoAlertsApiKey =
+      'db3da0321450e5f12bfb1421a433d31a88c0e55f0edae9c8e7736fb300ecedf2';
+
+  /// Fetch all IPOs for a given [status] with pagination from ipoalerts.in.
+  /// For closed/listed, limits to recent 60 days to avoid fetching thousands.
+  Future<List<dynamic>> _fetchIpoAlertsStatus(String status) async {
+    final List<dynamic> allIpos = [];
+    int page = 1;
+    int totalPages = 1;
+    const int pageSize = 3; // API enforces max limit=3
+    // Cap pages: open/upcoming are small; closed/listed use date filter
+    final int maxPages = (status == 'closed') ? 10 : 5;
+
+    // Build date filter for closed/listed to avoid paginating through years of data
+    String dateFilter = '';
+    if (status == 'closed' || status == 'listed') {
+      final now = DateTime.now();
+      final from = now.subtract(const Duration(days: 30));
+      final fmt = (DateTime d) =>
+          '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+      dateFilter = '&startDate=${fmt(from)}&endDate=${fmt(now)}';
+    }
+
+    do {
+      final uri = Uri.parse(
+        '$_ipoAlertsBaseUrl/ipos?status=$status&limit=$pageSize&page=$page$dateFilter',
+      );
+      debugPrint('[IPO] Fetching: $uri');
+      try {
+        final response = await http.get(uri, headers: {
+          'x-api-key': _ipoAlertsApiKey,
+        }).timeout(const Duration(seconds: 20));
+
+        debugPrint('[IPO] $status page $page -> ${response.statusCode} (${response.body.length} bytes)');
+
+        if (response.statusCode != 200) {
+          debugPrint('[IPO] $status error: ${response.body.length > 300 ? response.body.substring(0, 300) : response.body}');
+          break;
+        }
+
+        final decoded = jsonDecode(response.body);
+        final List ipos = decoded['ipos'] ?? [];
+        allIpos.addAll(ipos);
+
+        totalPages = decoded['meta']?['totalPages'] ?? 1;
+        debugPrint('[IPO] $status page $page: got ${ipos.length} ipos, totalPages=$totalPages');
+        page++;
+      } catch (e) {
+        debugPrint('[IPO] $status page $page exception: $e');
+        break;
+      }
+    } while (page <= totalPages && page <= maxPages);
+
+    return allIpos;
   }
 
-  Future<http.Response> getIPOGmp() async {
-    String? token = await _getToken();
-    return http.get(
-      Uri.parse(apiUrl + 'api/ipo/gmp'),
-      headers: {
-        'Authorization': 'Bearer $token',
-        'Content-Type': 'application/json',
-      },
+  /// Fetch IPOs from ipoalerts.in for all relevant statuses and return a
+  /// synthetic [http.Response] containing the combined list.
+  Future<http.Response> getIPO() async {
+    debugPrint('[IPO] Fetching from ipoalerts.in...');
+
+    final results = await Future.wait([
+      _fetchIpoAlertsStatus('open'),
+      _fetchIpoAlertsStatus('upcoming'),
+      _fetchIpoAlertsStatus('listed'),
+      _fetchIpoAlertsStatus('closed'),
+    ]);
+
+    final combined = <dynamic>[
+      ...results[0],
+      ...results[1],
+      ...results[2],
+      ...results[3],
+    ];
+
+    // Normalise type: "EQ" → "Mainboard", "SME" stays as-is
+    for (final ipo in combined) {
+      if (ipo is Map) {
+        final t = (ipo['type'] ?? '').toString().toUpperCase();
+        ipo['type'] = (t == 'EQ') ? 'Mainboard' : ipo['type'];
+      }
+    }
+
+    debugPrint('[IPO] ipoalerts total: open=${results[0].length}, '
+        'upcoming=${results[1].length}, listed=${results[2].length}, '
+        'closed=${results[3].length} => ${combined.length}');
+
+    final jsonBody = jsonEncode(combined);
+    return http.Response.bytes(
+      utf8.encode(jsonBody),
+      200,
+      headers: {'content-type': 'application/json; charset=utf-8'},
     );
   }
 
@@ -827,7 +902,7 @@ class ApiService {
     );
   }
 
-  /// Cached IPO list.
+  /// Cached IPO list (from ipoalerts.in).
   Future<void> getCachedIPO({
     required void Function(dynamic data, {required bool fromCache}) onData,
   }) {
@@ -836,43 +911,12 @@ class ApiService {
       fetcher: () => getIPO(),
       onData: onData,
       parseResponse: (r) {
-        debugPrint('[IPO] RAW status=${r.statusCode} bodyLen=${r.body.length}');
-        debugPrint('[IPO] RAW body (first 500): ${r.body.length > 500 ? r.body.substring(0, 500) : r.body}');
         final decoded = jsonDecode(r.body);
-        debugPrint('[IPO] Decoded type: ${decoded.runtimeType}');
-        // Handle flat list [...] from Grails respond
         if (decoded is List) return decoded;
-        // Handle wrapped response {"data": [...]} or similar
         if (decoded is Map) {
-          debugPrint('[IPO] Map keys: ${decoded.keys.toList()}');
-          if (decoded['data'] is List) return decoded['data'];
           if (decoded['ipos'] is List) return decoded['ipos'];
-          if (decoded['result'] is List) return decoded['result'];
-          if (decoded['results'] is List) return decoded['results'];
-          if (decoded['items'] is List) return decoded['items'];
-          // Grails might wrap as numbered/keyed map — extract values
-          debugPrint('[IPO] WARN: Unknown Map wrapper, keys=${decoded.keys.toList()}');
-          final extracted = decoded.values.whereType<Map>().toList();
-          debugPrint('[IPO] Extracted ${extracted.length} items from Map values');
-          return extracted;
+          if (decoded['data'] is List) return decoded['data'];
         }
-        debugPrint('[IPO] Unexpected response type: ${decoded.runtimeType} body=${r.body.length > 300 ? r.body.substring(0, 300) : r.body}');
-        return [];
-      },
-    );
-  }
-
-  /// Cached IPO GMP data (scraped from investorgain.com).
-  Future<void> getCachedIPOGmp({
-    required void Function(dynamic data, {required bool fromCache}) onData,
-  }) {
-    return CacheService.instance.fetchWithCache(
-      key: 'api/ipo/gmp',
-      fetcher: () => getIPOGmp(),
-      onData: onData,
-      parseResponse: (r) {
-        final decoded = jsonDecode(r.body);
-        if (decoded is List) return decoded;
         return [];
       },
     );

@@ -270,33 +270,12 @@ class BrokerRegistry {
     ),
 
     // ── AliceBlue ───────────────────────────────────────────────────────
+    // Matching prod: OAuth redirect to ant.aliceblueonline.com (not credential form)
     BrokerConfig(
       name: 'AliceBlue',
       key: 'aliceblue',
       logoAsset: 'assets/images/brokers/aliceblue.png',
-      authType: BrokerAuthType.credential,
-      youtubeVideoId: 'YaONYqsiwGQ',
-      fields: [
-        BrokerFieldConfig(
-          label: 'User ID',
-          key: 'clientCode',
-          placeholder: 'Enter User ID',
-        ),
-        BrokerFieldConfig(
-          label: 'API Key',
-          key: 'apiKey',
-          placeholder: 'Enter API key',
-        ),
-      ],
-      instructionSteps: [
-        'Login to Alice Blue at ant.aliceblueonline.com\n'
-            '  Use your phone number, password, and TOTP/OTP.',
-        'Accept Risk Disclosure: If prompted, click "Proceed".',
-        'Get API Key: Go to "Apps" tab → Select "API Key" → Copy it.',
-        'Get User ID: Click profile icon → "Your Profile/Settings" → Copy Client ID.',
-      ],
-      instructionNote:
-          'Note: API Key is valid for 24 hours only. You will need to generate a new one daily.',
+      authType: BrokerAuthType.oauth,
     ),
 
     // ── Kotak ───────────────────────────────────────────────────────────

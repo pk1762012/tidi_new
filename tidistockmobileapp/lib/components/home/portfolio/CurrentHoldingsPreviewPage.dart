@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:tidistockmobileapp/models/broker_connection.dart';
 import 'package:tidistockmobileapp/models/model_portfolio.dart';
 import 'package:tidistockmobileapp/service/AqApiService.dart';
 import 'package:tidistockmobileapp/widgets/customScaffold.dart';
@@ -204,6 +205,9 @@ class _CurrentHoldingsPreviewPageState
 
           if (orderResults.isNotEmpty) {
             _parseOrderResults(orderResults);
+            // Cross-reference with live broker holdings (matching prod
+            // handleCheckStatus: finalQty = Math.min(modelQty, brokerQty))
+            await _capHoldingsAtBrokerQty();
             if (mounted) setState(() => _loading = false);
             return;
           }
@@ -231,7 +235,112 @@ class _CurrentHoldingsPreviewPageState
       debugPrint('[MPStatus] getSubscriptionRawAmount error: $e');
     }
 
+    // Cross-reference with live broker holdings for fallback path too
+    await _capHoldingsAtBrokerQty();
+
     if (mounted) setState(() => _loading = false);
+  }
+
+  /// Cross-reference model holdings with live broker holdings.
+  /// Matches prod handleCheckStatus() in RebalanceCard.js:
+  ///   1. Fetch live broker holdings via fetchAllHoldings()
+  ///   2. Build brokerMap keyed by symbol|exchange
+  ///   3. For each model holding: finalQty = Math.min(modelQty, brokerQty)
+  ///   4. If stock not in broker → qty = 0 → filtered out
+  Future<void> _capHoldingsAtBrokerQty() async {
+    if (widget.userBroker == null ||
+        widget.userBroker!.toLowerCase() == 'dummybroker' ||
+        _stocks.isEmpty) return;
+
+    try {
+      // Fetch broker credentials (matching prod: uses stored broker state)
+      final brokerResp = await AqApiService.instance.getConnectedBrokers(widget.email);
+      if (brokerResp.statusCode != 200) return;
+
+      final brokerData = jsonDecode(brokerResp.body);
+      final connections = BrokerConnection.parseApiResponse(brokerData);
+      final broker = connections
+          .where((b) => b.isEffectivelyConnected && b.broker == widget.userBroker)
+          .firstOrNull;
+      if (broker == null || broker.jwtToken == null) return;
+
+      // Fetch live broker holdings (matching prod fetchAllHoldings)
+      final holdingsResp = await AqApiService.instance.fetchAllHoldings(
+        broker: broker.broker,
+        userEmail: widget.email,
+        jwtToken: broker.jwtToken,
+        clientCode: broker.clientCode,
+        sid: broker.sid,
+        serverId: broker.serverId,
+      );
+      if (holdingsResp.statusCode != 200 || !mounted) return;
+
+      final holdingsData = jsonDecode(holdingsResp.body);
+
+      // Handle different response structures from various brokers
+      // (matching prod handleCheckStatus lines 326-335)
+      List<dynamic> brokerHoldings = [];
+      if (holdingsData is List) {
+        brokerHoldings = holdingsData;
+      } else if (holdingsData is Map) {
+        if (holdingsData['data'] is List) {
+          brokerHoldings = holdingsData['data'];
+        } else if (holdingsData['holdings'] is List) {
+          brokerHoldings = holdingsData['holdings'];
+        } else if (holdingsData['holding'] is List) {
+          brokerHoldings = holdingsData['holding'];
+        }
+      }
+
+      if (brokerHoldings.isEmpty) {
+        // Broker has no holdings at all — clear everything
+        _stocks.clear();
+        if (mounted) setState(() {});
+        debugPrint('[MPStatus] Broker has 0 holdings — cleared all model holdings');
+        return;
+      }
+
+      // Build broker map keyed by SYMBOL|EXCHANGE (matching prod lines 339-347)
+      final brokerMap = <String, int>{};
+      for (final bh in brokerHoldings) {
+        if (bh is! Map) continue;
+        final sym = (bh['symbol'] ?? bh['tradingSymbol'] ?? bh['tradingsymbol'] ?? '')
+            .toString().toUpperCase();
+        final exch = (bh['exchange'] ?? 'NSE').toString().toUpperCase();
+        final qty = bh['quantity'] ?? bh['qty'] ?? 0;
+        final iQty = (qty is num) ? qty.toInt() : int.tryParse(qty.toString()) ?? 0;
+        if (iQty > 0) {
+          brokerMap['$sym|$exch'] = (brokerMap['$sym|$exch'] ?? 0) + iQty;
+        }
+      }
+
+      // For each model holding, cap at broker's actual quantity
+      // (matching prod lines 350-364)
+      for (final stock in _stocks) {
+        final sym = stock.symbol.toUpperCase();
+        final exch = stock.exchange.toUpperCase();
+        final key = '$sym|$exch';
+        final brokerQty = brokerMap[key];
+
+        if (brokerQty != null) {
+          // Take the lower of model qty and broker qty
+          if (brokerQty < stock.quantity) {
+            stock.quantity = brokerQty;
+          }
+        } else {
+          // Stock not in broker at all — user may have sold it entirely
+          stock.quantity = 0;
+        }
+      }
+      // Remove stocks with 0 or negative quantity (matching prod .filter(h => Number(h.quantity) > 0))
+      _stocks.removeWhere((s) => s.quantity <= 0);
+
+      if (mounted) setState(() {});
+      debugPrint('[MPStatus] After broker cross-ref: ${_stocks.length} holdings remain');
+    } catch (e) {
+      debugPrint('[MPStatus] _capHoldingsAtBrokerQty error: $e');
+      // On error, fall back to model data as-is (matching prod catch block)
+    }
   }
 
   void _parseOrderResults(List<dynamic> orderResults) {
@@ -523,6 +632,9 @@ class _CurrentHoldingsPreviewPageState
     if (widget.onProceed != null) {
       widget.onProceed!();
     } else {
+      // Pass held symbols to Step 3 so it can filter sell orders for unheld stocks
+      // (matching prod flow where handleCheckStatus validates holdings before rebalance)
+      final heldSymbols = _stocks.map((s) => s.symbol.toUpperCase()).toSet();
       Navigator.push(
         context,
         MaterialPageRoute(
@@ -530,6 +642,7 @@ class _CurrentHoldingsPreviewPageState
             portfolio: widget.portfolio,
             email: widget.email,
             rebalanceFlag: widget.rebalanceFlag,
+            heldSymbols: heldSymbols,
           ),
         ),
       );

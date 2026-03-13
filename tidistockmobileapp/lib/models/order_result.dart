@@ -30,9 +30,12 @@ class OrderResult {
       quantity: (json['quantity'] ?? json['filledQuantity'] ?? json['filled_quantity'] ?? json['tradedQty'] ?? json['qty'] ?? 0).toInt(),
       price: _safeDouble(json['averageEntryPrice'] ?? json['averagePrice'] ?? json['average_price'] ?? json['avgPrice'] ?? json['avg_price'] ?? json['executedPrice'] ?? json['tradedPrice'] ?? json['price']),
       orderId: (json['orderId'] ?? json['order_id'] ?? json['uniqueOrderId'] ?? '').toString(),
-      // Check all possible status field names returned by different brokers
-      status: _parseStatus(
-          json['orderStatus'] ?? json['order_status'] ?? json['trade_place_status'] ?? json['status']),
+      // Check all possible status field names returned by different brokers.
+      // Also check rebalance_status — prod MPStatusModal.js treats
+      // rebalance_status "failed"/"failure" as failed (lines 38-39).
+      status: _parseStatusWithRebalance(
+          json['orderStatus'] ?? json['order_status'] ?? json['trade_place_status'] ?? json['status'],
+          json['rebalance_status']),
       exchange: json['exchange'],
       productType: json['productType'] ?? json['product_type'],
       orderType: json['orderType'] ?? json['order_type'],
@@ -45,6 +48,20 @@ class OrderResult {
     if (value is num) return value.toDouble();
     if (value is String) return double.tryParse(value);
     return null;
+  }
+
+  /// Combines orderStatus and rebalance_status to determine final status.
+  /// Matches prod MPStatusModal.js isStockFailed() which checks both fields.
+  static String _parseStatusWithRebalance(dynamic orderStatus, dynamic rebalanceStatus) {
+    final parsed = _parseStatus(orderStatus);
+    if (parsed != 'pending') return parsed;
+    // If orderStatus is ambiguous/pending but rebalance_status signals failure,
+    // treat as failed (matching prod MPStatusModal.js lines 38-39).
+    if (rebalanceStatus != null) {
+      final rs = rebalanceStatus.toString().toLowerCase().trim();
+      if (rs == 'failed' || rs == 'failure') return 'failed';
+    }
+    return parsed;
   }
 
   static String _parseStatus(dynamic status) {

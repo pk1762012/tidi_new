@@ -250,7 +250,7 @@ class AqApiService {
       key: 'aq/ccxt/performance:$advisor:$modelName',
       fetcher: () => http.post(
         Uri.parse('${ccxtUrl}rebalance/v2/get-portfolio-performance'),
-        headers: {'Content-Type': 'application/json'},
+        headers: _headers(),
         body: jsonEncode({'advisor': advisor, 'modelName': modelName}),
       ).timeout(const Duration(seconds: 10)),
     );
@@ -271,7 +271,7 @@ class AqApiService {
     );
     return CacheService.instance.cachedGet(
       key: 'aq/ccxt/index-data:$symbol:$startDate:$endDate',
-      fetcher: () => http.get(uri, headers: {'Content-Type': 'application/json'})
+      fetcher: () => http.get(uri, headers: _headers())
           .timeout(const Duration(seconds: 10)),
     );
   }
@@ -785,11 +785,20 @@ class AqApiService {
 
   /// Zerodha: POST ccxt/zerodha/auth-sell — initiates DDPI/TPIN sell authorization.
   /// Returns { status: 0, auth_url: "https://..." } on success.
-  Future<http.Response> zerodhaAuthSell({required String accessToken}) async {
+  /// Matches prod DdpiModal.js: sends decrypted apiKey, secretKey, and accessToken.
+  Future<http.Response> zerodhaAuthSell({
+    required String accessToken,
+    String? apiKey,
+    String? secretKey,
+  }) async {
     return http.post(
       Uri.parse('${ccxtUrl}zerodha/auth-sell'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({'accessToken': accessToken}),
+      headers: _headers(),
+      body: jsonEncode({
+        if (apiKey != null) 'apiKey': apiKey,
+        if (secretKey != null) 'secretKey': secretKey,
+        'accessToken': accessToken,
+      }),
     );
   }
 
@@ -913,21 +922,16 @@ class AqApiService {
     required String advisor,
     required String uniqueId,
     required List<Map<String, dynamic>> trades,
-    // Broker-specific credential fields
-    String? apiKey,
-    String? secretKey,
-    String? jwtToken,
-    String? clientCode,
+    // Matching prod: server fetches credentials from DB.
+    // Frontend only sends accessToken for fresh OAuth session tokens.
     String? accessToken,
-    String? viewToken,
-    String? sid,
-    String? serverId,
-    String? consumerKey,
-    String? consumerSecret,
   }) async {
     return http.post(
       Uri.parse('${ccxtUrl}rebalance/process-trade'),
       headers: _headers(),
+      // Matching prod UpdateRebalanceModal.js: credentials (apiKey, secretKey)
+      // are fetched from DB server-side. Frontend only sends accessToken
+      // for fresh OAuth session tokens.
       body: jsonEncode({
         'user_broker': broker,
         'user_email': email,
@@ -936,16 +940,7 @@ class AqApiService {
         'modelName': modelName,
         'advisor': advisor,
         'unique_id': uniqueId,
-        if (apiKey != null) 'apiKey': apiKey,
-        if (secretKey != null) 'secretKey': secretKey,
-        if (jwtToken != null) 'jwtToken': jwtToken,
-        if (clientCode != null) 'clientId': clientCode,
         if (accessToken != null) 'accessToken': accessToken,
-        if (viewToken != null) 'viewToken': viewToken,
-        if (sid != null) 'sid': sid,
-        if (serverId != null) 'serverId': serverId,
-        if (consumerKey != null) 'consumerKey': consumerKey,
-        if (consumerSecret != null) 'consumerSecret': consumerSecret,
       }),
     ).timeout(const Duration(seconds: 120));
   }
@@ -1495,6 +1490,78 @@ class AqApiService {
       headers: _headers(),
       body: jsonEncode(body),
     ).timeout(const Duration(seconds: 15));
+  }
+
+  /// Fetch live broker holdings via broker-specific CCXT endpoint.
+  /// Matches prod AllHoldings.js fetchAllHoldings() — calls POST {broker}/all-holdings.
+  Future<http.Response> fetchAllHoldings({
+    required String broker,
+    required String userEmail,
+    String? jwtToken,
+    String? clientCode,
+    String? sid,
+    String? serverId,
+  }) async {
+    if (jwtToken == null || jwtToken.isEmpty) {
+      return http.Response('{"error":"no jwtToken"}', 401);
+    }
+
+    String? url;
+    Map<String, dynamic> body = {'accessToken': jwtToken, 'userEmail': userEmail};
+
+    switch (broker) {
+      case 'IIFL Securities':
+        url = '${ccxtUrl}iifl/all-holdings';
+        break;
+      case 'ICICI Direct':
+        url = '${ccxtUrl}icici/all-holdings';
+        body['exchange'] = 'NSE';
+        break;
+      case 'Upstox':
+        url = '${ccxtUrl}upstox/all-holdings';
+        break;
+      case 'Angel One':
+        url = '${ccxtUrl}angelone/all-holdings';
+        break;
+      case 'Motilal Oswal':
+        url = '${ccxtUrl}motilal-oswal/all-holdings';
+        if (clientCode != null) body['clientCode'] = clientCode;
+        break;
+      case 'Zerodha':
+        url = '${ccxtUrl}zerodha/all-holdings';
+        break;
+      case 'Hdfc Securities':
+        url = '${ccxtUrl}hdfc/all-holdings';
+        break;
+      case 'Kotak':
+        url = '${ccxtUrl}kotak/all-holdings';
+        if (sid != null) body['sid'] = sid;
+        body['serverId'] = serverId ?? '';
+        break;
+      case 'Dhan':
+        url = '${ccxtUrl}dhan/all-holdings';
+        if (clientCode != null) body['clientId'] = clientCode;
+        break;
+      case 'Groww':
+        url = '${ccxtUrl}groww/all-holdings';
+        break;
+      case 'AliceBlue':
+        url = '${ccxtUrl}aliceblue/all-holdings';
+        if (clientCode != null) body['clientId'] = clientCode;
+        break;
+      case 'Fyers':
+        url = '${ccxtUrl}fyers/all-holdings';
+        if (clientCode != null) body['clientId'] = clientCode;
+        break;
+      default:
+        return http.Response('{"error":"unsupported broker"}', 400);
+    }
+
+    return http.post(
+      Uri.parse(url),
+      headers: _headers(),
+      body: jsonEncode(body),
+    ).timeout(const Duration(seconds: 20));
   }
 
   /// Fetch repair trades for model portfolios.

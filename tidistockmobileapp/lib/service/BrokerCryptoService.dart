@@ -50,6 +50,32 @@ class BrokerCryptoService {
     return base64.encode(output);
   }
 
+  /// Decrypt a credential value encrypted with CryptoJS.AES.encrypt(value, "ApiKeySecret").
+  /// Mirrors the RGX checkValidApiAnSecret() decryption function in DdpiModal.js.
+  String decryptCredential(String ciphertext) {
+    final bytes = base64.decode(ciphertext);
+    // OpenSSL format: "Salted__" (8 bytes) + salt (8 bytes) + ciphertext
+    if (bytes.length < 16 ||
+        String.fromCharCodes(bytes.sublist(0, 8)) != 'Salted__') {
+      // Not encrypted (already plaintext) — return as-is
+      return ciphertext;
+    }
+    final salt = bytes.sublist(8, 16);
+    final encrypted = bytes.sublist(16);
+
+    final keyIv = _evpBytesToKey(utf8.encode(_passphrase), salt, 32, 16);
+    final key = encrypt_lib.Key(Uint8List.fromList(keyIv[0]));
+    final iv = encrypt_lib.IV(Uint8List.fromList(keyIv[1]));
+    final encrypter = encrypt_lib.Encrypter(
+      encrypt_lib.AES(key, mode: encrypt_lib.AESMode.cbc),
+    );
+
+    return encrypter.decrypt(
+      encrypt_lib.Encrypted(Uint8List.fromList(encrypted)),
+      iv: iv,
+    );
+  }
+
   /// EVP_BytesToKey: derives key and IV from passphrase + salt using MD5.
   /// This matches the OpenSSL / CryptoJS key derivation algorithm.
   List<List<int>> _evpBytesToKey(

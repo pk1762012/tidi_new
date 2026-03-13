@@ -196,11 +196,6 @@ class OrderExecutionService {
     _lastUsedBrokerName = brokerName;
     final apiKey = credBroker.apiKey ?? '';
     final jwtToken = credBroker.jwtToken ?? '';
-    final clientCode = credBroker.clientCode;
-    final secretKey = credBroker.secretKey;
-    final viewToken = credBroker.viewToken;
-    final sid = credBroker.sid;
-    final serverId = credBroker.serverId;
 
     // Generate unique_id matching RGX pattern
     final uniqueId = '${modelId}_${DateTime.now().millisecondsSinceEpoch}_$email';
@@ -276,6 +271,7 @@ class OrderExecutionService {
     }
 
     // 4. Non-Zerodha: call CCXT rebalance/process-trade
+    // Matching prod: only send accessToken. Server fetches credentials from DB.
     final response = await AqApiService.instance.processTrade(
       email: email,
       broker: brokerName,
@@ -284,18 +280,14 @@ class OrderExecutionService {
       advisor: advisor,
       uniqueId: uniqueId,
       trades: trades,
-      apiKey: apiKey.isNotEmpty ? apiKey : null,
-      secretKey: secretKey,
-      jwtToken: jwtToken.isNotEmpty ? jwtToken : null,
-      clientCode: clientCode,
-      viewToken: viewToken,
-      sid: sid,
-      serverId: serverId,
+      accessToken: jwtToken.isNotEmpty ? jwtToken : null,
     );
 
-    // 5. Parse results — save raw details for post-execution API calls
+    // 5. Parse results
     final results = <OrderResult>[];
-    List<Map<String, dynamic>> rawTradeDetails = [];
+
+    debugPrint('[OrderExecution] process-trade HTTP ${response.statusCode}');
+    debugPrint('[OrderExecution] process-trade BODY: ${response.body}');
 
     if (response.statusCode == 200) {
       final data = jsonDecode(response.body);
@@ -306,27 +298,43 @@ class OrderExecutionService {
         throw Exception('session expired for $brokerName. Please reconnect your broker.');
       }
 
-      // Check nested data wrapper (API may return { data: { tradeDetails: [...] } })
+      // Extract order results — prod reads response.data.results (line 648 UpdateRebalanceModal.js).
+      // Prioritize 'results' key to match prod, then fall back to other keys.
       final innerData = data is Map ? data['data'] : null;
-      final tradeDetails = data['tradeDetails'] ??
-          data['response'] ??
-          data['order_results'] ??
-          data['results'] ??
-          (innerData is Map ? (innerData['tradeDetails'] ?? innerData['order_results'] ?? innerData['results']) : null) ??
-          (innerData is Map && innerData['user_net_pf_model'] is Map ? innerData['user_net_pf_model']['order_results'] : null) ??
+
+      // Helper: pick the first key whose value is a non-empty List
+      List? _pickList(Map<String, dynamic> m, List<String> keys) {
+        for (final k in keys) {
+          final v = m[k];
+          if (v is List && v.isNotEmpty) return v;
+        }
+        return null;
+      }
+
+      final tradeDetails = (data is Map
+              ? _pickList(Map<String, dynamic>.from(data),
+                  ['results', 'tradeDetails', 'order_results'])
+              : null) ??
+          (innerData is Map
+              ? _pickList(Map<String, dynamic>.from(innerData),
+                  ['results', 'tradeDetails', 'order_results'])
+              : null) ??
+          (innerData is Map && innerData['user_net_pf_model'] is Map
+              ? (innerData['user_net_pf_model']['order_results'] as List?)
+              : null) ??
           [];
 
-      if (tradeDetails is List && tradeDetails.isNotEmpty) {
-        rawTradeDetails = tradeDetails
-            .map((e) => e is Map ? Map<String, dynamic>.from(e) : <String, dynamic>{})
-            .toList();
+      debugPrint('[OrderExecution] tradeDetails type=${tradeDetails.runtimeType} length=${tradeDetails.length}');
 
+      if (tradeDetails.isNotEmpty) {
         for (int i = 0; i < tradeDetails.length; i++) {
+          debugPrint('[OrderExecution] tradeDetails[$i]: ${tradeDetails[i]}');
           final result = OrderResult.fromJson(
             tradeDetails[i] is Map
                 ? Map<String, dynamic>.from(tradeDetails[i])
                 : <String, dynamic>{},
           );
+          debugPrint('[OrderExecution] parsed result[$i]: status=${result.status} message=${result.message}');
           results.add(result);
           onOrderUpdate(i + 1, orders.length, result);
         }
@@ -369,62 +377,12 @@ class OrderExecutionService {
       }
     }
 
-    // ── Post-execution pipeline (matching RGX RebalanceModal.js) ──
+    // ── Post-execution pipeline (matching prod UpdateRebalanceModal.js) ──
+    // Note: updatePortfolioAfterExecution and updateSubscriberExecution are
+    // handled internally by the backend's process-trade endpoint.
+    // Frontend only needs to enqueue the status-check poller.
 
-    final successCount = results.where((r) => r.isSuccess).length;
-    final executionStatus = successCount == results.length
-        ? 'executed'
-        : (successCount > 0 ? 'partial' : 'pending');
-
-    // 6. model-portfolio-db-update (RGX calls this first)
-    try {
-      final orderResultsForDb = rawTradeDetails.isNotEmpty
-          ? rawTradeDetails
-          : results.map((r) => r.toApiJson()).toList();
-      await AqApiService.instance.updatePortfolioAfterExecution(
-        modelId: modelId,
-        orderResults: orderResultsForDb,
-        userEmail: email,
-        userBroker: brokerName,
-      );
-    } catch (e) {
-      debugPrint('[OrderExecution] updatePortfolioAfterExecution failed: $e');
-    }
-
-    // 7. update/subscriber-execution
-    try {
-      await AqApiService.instance.updateSubscriberExecution(
-        email: email,
-        modelName: modelName,
-        advisor: advisor,
-        broker: brokerName,
-        executionStatus: executionStatus,
-      );
-    } catch (e) {
-      debugPrint('[OrderExecution] updateSubscriberExecution failed: $e');
-    }
-
-    // 8. record-publisher-results (Fyers publisher flow — matches RGX)
-    if (brokerName.toLowerCase() == 'fyers') {
-      try {
-        await AqApiService.instance.recordPublisherResults(
-          modelName: modelName,
-          modelId: modelId,
-          uniqueId: uniqueId,
-          advisor: advisor,
-          orderResults: rawTradeDetails.isNotEmpty
-              ? rawTradeDetails
-              : results.map((r) => r.toApiJson()).toList(),
-          email: email,
-          broker: brokerName,
-        );
-        debugPrint('[OrderExecution] recordPublisherResults success (Fyers)');
-      } catch (e) {
-        debugPrint('[OrderExecution] recordPublisherResults failed: $e');
-      }
-    }
-
-    // 9. add-user/status-check-queue (always last)
+    // 6. add-user/status-check-queue (matching prod — only post-execution call)
     try {
       await AqApiService.instance.addToStatusCheckQueue(
         email: email,
